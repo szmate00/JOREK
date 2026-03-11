@@ -886,6 +886,7 @@ enddo
 ! -------------- particle groups ---------------
 n_part_groups = 0
 part_groups_in_use(:) = 'non'
+proj_collection_period = 1
 
 part_group_configs(:)%Z                 = 1
 part_group_configs(:)%mass              = 0.d0
@@ -915,11 +916,18 @@ part_group_configs(:)%kin_bg_coll_type       = 'Homma2020'
 part_group_configs(:)%homma2020_alpha        = 1.5d0
 part_group_configs(:)%ics_group_idx          = -1
 
-!----- specific to ics and ncs 
+!----- specific to rep 
 part_group_configs(:)%num_re                 = 0.d0
 part_group_configs(:)%re_energy              = 0.d0
 part_group_configs(:)%re_std_energy          = 0.d0
 part_group_configs(:)%re_pitch               = 0.d0
+
+!----- specific to epf
+part_group_configs(:)%T_maxwell              = 0.d0
+part_group_configs(:)%n_phi_planes           = 0
+part_group_configs(:)%n_particles_total      = 0.d0
+
+
 
 do i=1, n_part_groups_max
   do j=1, n_valves_max

@@ -1048,6 +1048,7 @@ write(*,'(1x,a)',advance='no') ' USE_CATALYST : '
     write(*,*) "  use_ncs               = ", use_ncs
     write(*,*) "  use_ics               = ", use_ics
     write(*,*) "  use_rep               = ", use_rep
+    write(*,*) "  use_epf               = ", use_epf
     write(*,*) "  use_kin_recomb_global = ", use_kin_recomb_global
 
     write(*,HEADER_FMT) '=========== Particle Groups ============'
@@ -1122,11 +1123,19 @@ write(*,'(1x,a)',advance='no') ' USE_CATALYST : '
 
       ! rep (runaway electrons, only pressure coupling for now) -----
       if (sim%groups(group_num)%coupling_scheme .eq. 'rep') then
-        write(*,REAL_FMT) 'n_re,                   ',part_group_configs(group_num)%num_re
+        write(*,REAL_FMT) 'num_re,                 ',part_group_configs(group_num)%num_re
         write(*,REAL_FMT) 're_energy,              ',part_group_configs(group_num)%re_energy
         write(*,REAL_FMT) 're_std_energy,          ',part_group_configs(group_num)%re_std_energy
         write(*,REAL_FMT) 're_pitch,               ',part_group_configs(group_num)%re_pitch
-      endif     
+      endif
+
+      ! epf (energetic particles, full pressure tensor coupling)
+      if (sim%groups(group_num)%coupling_scheme .eq. 'epf') then
+        write(*,REAL_FMT) 'T_maxwell,              ',part_group_configs(group_num)%T_maxwell
+        write(*,INTG_FMT) 'n_phi_planes,           ',part_group_configs(group_num)%n_phi_planes
+        write(*,REAL_FMT) 'n_particles_total,      ',part_group_configs(group_num)%n_particles_total
+        write(*,INTG_FMT) 'proj_collection_period, ',proj_collection_period
+      endif
 
 
       ! wall interactions

@@ -17,7 +17,7 @@ logical :: use_ics               = .false. !< use kinetic impurity particles
 logical :: use_rep               = .false. !< use pressure coupling scheme for runaway electrons
 logical :: use_epc               = .false. !< use current coupling scheme for energetic particles                          [PLACEHOLDER, NOT YET IMPLEMENTED]
 logical :: use_epp               = .false. !< use pressure coupling scheme for energetic particles                         [PLACEHOLDER, NOT YET IMPLEMENTED]
-logical :: use_epf               = .false. !< use full anisotropic pressure tensor coupling scheme for energetic particles [PLACEHOLDER, NOT YET IMPLEMENTED]
+logical :: use_epf               = .false. !< use full anisotropic pressure tensor coupling scheme for energetic particles
 logical :: use_kin_recomb_global = .false. !< whether recombination is required (has effect on both fluid and kinetic side)
 integer :: n_ics                 = 0       !< number of ics groups in the simulation
 contains
@@ -43,6 +43,13 @@ subroutine check_compatibility_and_determine_coupling_schemes()
         part_group_configs(group_num)%ics_group_idx = n_ics
       case ('rep')
         use_rep = .true.
+      case ('epc')
+        use_epc = .true.
+      case ('epp')
+        use_epp = .true.
+      case ('epf')
+        call check_compatibility_epf(group_num)
+        use_epf = .true.
       case ('non')
         
       case default
@@ -75,14 +82,6 @@ subroutine check_compatibility_ncs(group_num)
     write(*,*) "ERROR: incompatible setting enabled for group '", part_group_configs(group_num)%id, "': "
     write(*,*) "  Currently kinetic neutrals are not compatible with fluid neutrals/impurities."
     write(*,*) "  Please recompile with with_neutrals and with_impurities=.false."
-    stop
-  endif
-
-  !> currently ncs particles are not compatible with two temperature
-  if (with_TiTe) then
-    write(*,*) "ERROR: incompatible setting enabled for group '", part_group_configs(group_num)%id, "': "
-    write(*,*) "  Currently kinetic neutrals are not compatible with two temperature models, "
-    write(*,*) "  Please recompile with with_TiTe=.false."
     stop
   endif
   
@@ -125,6 +124,55 @@ subroutine check_compatibility_ics(group_num)
   endif
 
 end subroutine check_compatibility_ics
+
+subroutine check_compatibility_epf(group_num)
+  implicit none
+  integer :: group_num
+
+  !> currently epf particles must be of type 'particle_kinetic_leapfrog'
+  if (trim(part_group_configs(group_num)%type) /= 'particle_kinetic_leapfrog') then
+    write(*,*) "ERROR: incompatible setting enabled for group '", part_group_configs(group_num)%id, "': "
+    write(*,*) "  Currently only type = 'particle_kinetic_leapfrog' is supported for"
+    write(*,*) "  groups with coupling scheme 'ncs'"
+    stop
+  endif
+
+  !> currently epf particles are not compatible with fluid neutrals and fluid impurities
+  if (with_neutrals .or. with_impurities) then
+    write(*,*) "ERROR: incompatible setting enabled for group '", part_group_configs(group_num)%id, "': "
+    write(*,*) "  Currently kinetic neutrals are not compatible with fluid neutrals/impurities."
+    write(*,*) "  Please recompile with with_neutrals and with_impurities=.false."
+    stop
+  endif
+
+  !> currently epf particles are not compatible with two temperature
+  if (with_TiTe) then
+    write(*,*) "ERROR: incompatible setting enabled for group '", part_group_configs(group_num)%id, "': "
+    write(*,*) "  Currently kinetic neutrals are not compatible with two temperature models, "
+    write(*,*) "  Please recompile with with_TiTe=.false."
+    stop
+  endif
+
+  !> Check initialisation parameters
+  if (trim(part_group_configs(group_num)%init_function) .eq. 'maxwell') then
+    if (part_group_configs(group_num)%T_maxwell .eq. 0.d0) then
+      write(*,*) "ERROR: Maxwell initialisation chosen, but no temperature supplied"
+      write(*,*) "  please set part_group_configs()%T_maxwell"
+      stop
+    endif
+    if (part_group_configs(group_num)%n_phi_planes .eq. 0) then
+      write(*,*) "ERROR: Maxwell initialisation chosen, but n_phi_planes = 0"
+      write(*,*) "  needs to be at least 1, please set part_group_configs()%n_phi_planes"
+      stop
+    endif
+  endif
+  if (part_group_configs(group_num)%n_particles_total .eq. 0.d0) then
+    write(*,*) "ERROR: n_particles_total = 0, this is how weights are set"
+    write(*,*) "  please set part_group_configs()%n_particles_total"
+    stop
+  endif
+
+end subroutine check_compatibility_epf
 
 !> compares the name of a given coupling variable associated with a coupling scheme (i.e. assessed_var) 
 !> with the list of coupling variables already used by the simulation (i.e. coupling_vars). If the 
@@ -185,6 +233,12 @@ subroutine determine_coupling_variables()
     enddo
   endif
 
+  if (use_epf) then
+    do i=1, size(epf_var_names)
+      call assess_and_accumulate_variable(epf_var_names(i), coupling_var_idx, coupling_vars)
+    enddo
+  endif
+
   !> additional coupling schemes will be added here in future PRs (e.g. use_epp, use_epf)  
     
   !> assign indices to the coupling variables and determine n_aux_var
@@ -196,8 +250,15 @@ subroutine determine_coupling_variables()
         rho_idx_kin = final_var_idx
       case ("mom_par")
         mom_par_idx_kin = final_var_idx
+#ifdef WITH_TiTe
+      case ("E_Te")
+        E_Te_idx_kin = final_var_idx
+      case ("E_Ti")
+        E_Ti_idx_kin = final_var_idx
+#else
       case ("E")
         E_idx_kin = final_var_idx
+#endif
       case ("P_par")
         P_par_idx_kin  = final_var_idx
       case ("P_perp")
@@ -206,6 +267,21 @@ subroutine determine_coupling_variables()
         j_Phi_idx_kin = final_var_idx
       case ("imp_q")
         continue       !< do nothing as already handled above in use_ics loop
+      !> epf coupling vars
+      case ("rho_ep")
+        rho_ep_idx_kin = final_var_idx
+      case ("PI_RR")
+        PI_RR_idx_kin = final_var_idx
+      case ("PI_ZZ")
+        PI_ZZ_idx_kin = final_var_idx
+      case ("PI_PHIPHI")
+        PI_PHIPHI_idx_kin = final_var_idx
+      case ("PI_RZ")
+        PI_RZ_idx_kin = final_var_idx
+      case ("PI_RPHI")
+        PI_RPHI_idx_kin = final_var_idx
+      case ("PI_ZPHI")
+        PI_ZPHI_idx_kin = final_var_idx
       case default
         write(*,*) "Error: no match found for coupling variable: ", coupling_vars(i),", please check coupling_variables.f90 and recompile"
         stop

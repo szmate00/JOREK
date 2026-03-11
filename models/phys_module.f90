@@ -1038,7 +1038,9 @@ module phys_module
   ! ------------------------------------------------
   !> @name Particle group settings
   integer            :: n_part_groups                !< number of particle groups being used
-  integer, parameter :: n_part_groups_max = 20       !< maximum number of particle groups     
+  integer, parameter :: n_part_groups_max = 20       !< maximum number of particle groups
+  integer            :: proj_collection_period       !< projections collected every proj_collection_period steps - only impletemeted for coupling scheme epf
+                                                     !< speed-up scheme - eg proj_collection_period=10 then projections collected every 10th particle step
   
   !> Contains configuration and settings relating to a particle group
   type :: type_part_group_config
@@ -1098,6 +1100,15 @@ module phys_module
     real*8              :: re_energy               !< energy [eV] of the runaway electrons in the group
     real*8              :: re_std_energy           !< standard deviation of the energy [eV] of the runaway electrons in the group
     real*8              :: re_pitch                !< pitch between RE momentum and magnetic field line (i.e. p_re_par/p_re_tot)
+
+    ! =============== for energetic particles ('epc', 'epp', 'epf' coupling schemes) ==========
+    real*8              :: T_maxwell               !< Maxwellian temperature [eV] for the energetic particles
+    integer             :: n_phi_planes            !< number of times to copy initialised particles around phi.
+                                                   !< for example n_phi_planes=4, n_particles=1e4 then only 250 particles are initialised
+                                                   !< each particle is then copied multiple (3) times around the torus with angle 2pi/n_phi_planes (= pi/2)
+                                                   !< if n_phi_planes=int*n_period then projected particle quantities are initialised as 0 for n_tor>1
+    real*8              :: n_particles_total       !< Total number of particles to simulate (ie sum(weights)) !!NOT n_particles - total number of super/numeric-particles
+
 
   end type type_part_group_config
 

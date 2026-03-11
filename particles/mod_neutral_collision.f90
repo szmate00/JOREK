@@ -82,7 +82,8 @@ subroutine neutral_self_collision(this, sim, dt, nodes, elements)
   type(indices_in_elm),            dimension(:,:,:), allocatable :: i_pa_bin       !< object containing all this element's particle indices as arrays per bin (s bin,t bin, phi bin)
   type(random_draw)                                              :: i_random       !< particle index list (1 to n_pa_bin) to draw from to determine next random particle for pairing. Already used indices are at the front. (n_pa_bin)
 
-  integer, parameter :: i_neutral_n=5 !< index in aux nodes list of neutral density
+  integer, parameter :: i_neutral_n=6 !< index in aux nodes list of neutral density
+
   integer, parameter :: aim_pa_per_bin = 50 !< wanted amount of super particles in one collisional bin (element is split up to satisfy this). Bigger means better statistics of particle density, but also loss of locality. Much smaller than 50 (like 2-10 or so) is not advised because the momenta of the particles in the bin might get correlated over time
   
   integer, dimension(:),       allocatable :: i_pa_elm      !< global particle indices of the particles in this element (pa_in_elm)
