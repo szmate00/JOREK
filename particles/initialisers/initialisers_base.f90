@@ -743,7 +743,9 @@ subroutine initialise_particles_H_mu_psi(particles, fields, rng_base, mass, T_ma
   call rng%initialize(8, random_seed(), 1, 1, ifail, round_off_n_streams_in=rng_n_streams_round_off)
 
   ! Preparatory work: get R_axis, Z_axis
-  call find_axis(my_id, fields%node_list, fields%element_list, psi_axis, R_axis, Z_axis, i_elm, s_axis, t_axis, ifail)
+  if (.not. init_uniform_space) then
+    call find_axis(my_id, fields%node_list, fields%element_list, psi_axis, R_axis, Z_axis, i_elm, s_axis, t_axis, ifail)
+  end if
 
   ! Preset i_elm to 0 so that by default particles are lost
   particles(:)%i_elm = 0
@@ -1200,7 +1202,9 @@ subroutine initialise_particles_H_mu_psi_phiplanes(particles, fields, rng_base, 
   call rng%initialize(8, random_seed(), 1, 1, ifail, round_off_n_streams_in=rng_n_streams_round_off)
 
   ! Preparatory work: get R_axis, Z_axis
-  call find_axis(my_id, fields%node_list, fields%element_list, psi_axis, R_axis, Z_axis, i_elm, s_axis, t_axis, ifail)
+  if (.not. init_uniform_space) then
+    call find_axis(my_id, fields%node_list, fields%element_list, psi_axis, R_axis, Z_axis, i_elm, s_axis, t_axis, ifail)
+  end if
 
   ! Preset i_elm to 0 so that by default particles are lost
   particles(:)%i_elm = 0

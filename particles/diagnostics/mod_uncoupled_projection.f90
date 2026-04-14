@@ -130,6 +130,9 @@ contains
       write(*,*) n_tor_local*this%n_dof,  this%rhs_vec%n
     endif
 
+    if (associated(this%rhs_vec%val)) then
+      deallocate(this%rhs_vec%val); this%rhs_vec%val => Null()
+    endif
     allocate(this%rhs_vec%val(this%rhs_vec%n*this%rhs_vec%nrhs))
     this%rhs_vec%val = 0.d0
 

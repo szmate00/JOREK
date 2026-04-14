@@ -43,6 +43,7 @@ use mod_coupling_settings, only: use_kin_recomb_global
 use mod_initialise_particles
 use equil_info
 use mod_output_file_routines, only: write_to_outputfile
+use mod_impurity,        only: init_imp_adas
 
 use phys_module, only: index_now
 use phys_module, only: tstep,tstep_n,restart_particles, restart, t_start, nout
@@ -53,6 +54,7 @@ use phys_module, only: deuterium_adas,sqrt_mu0_over_rho0
 use phys_module, only: filter_perp, filter_hyper, filter_par, filter_perp_n0, filter_hyper_n0, filter_par_n0
 use phys_module, only: apply_dirichlet_proj, part_group_configs, init_particles_only
 use phys_module, only: use_manual_random_seed, manual_seed
+use phys_module, only: use_imp_adas, nimp_bg 
 
 use mod_particle_group_id, only: matching_part_config_indices
 
@@ -148,6 +150,16 @@ endif ! (restart_particles)
 
 ! Read Open ADAS data for plasma fluid
 if (deuterium_adas .and. use_kin_recomb_global) ad_deuterium =  read_adf11(sim%my_id,'96_h') !< move to core (jorek2_main for particles)
+
+#if (defined WITH_Impurities)
+  ! --- Read ADAS data and generate coronal equilibrium if needed
+  call init_imp_adas(sim%my_id)
+#else
+  if (use_imp_adas .and. (nimp_bg(1) > 0.d0)) then
+    call init_imp_adas(sim%my_id)
+  endif
+#endif
+
 
 ! --- Setting up random numbers for ionisation probability
 seed = random_seed()
