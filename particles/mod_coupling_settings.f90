@@ -459,6 +459,7 @@ subroutine determine_coupling_variables()
 
   n_aux_var = final_var_idx
   n_aux_var = n_aux_var + 5 ! temporary as diag projections not yet created
+  if (use_ics) n_aux_var = max(n_aux_var, 9) ! ensure slot 9 (weight*Z^2 for Z_eff) is available
 
 end subroutine determine_coupling_variables
 

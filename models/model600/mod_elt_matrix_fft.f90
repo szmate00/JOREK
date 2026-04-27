@@ -164,6 +164,7 @@ real*8     :: m_i_over_m_imp, m_imp
 !   -Mean impurity ionization state
 real*8     :: Z_imp, dZ_imp_dT, d2Z_imp_dT2, T0_Zimp, alpha_Zimp, Z_eff, dZ_eff_dT, eta_coef, deta_coef_dZeff
 real*8     :: dZ_eff_dr0, dZ_eff_drimp0, Z_eff_imp, dZ_eff_imp_dT
+real*8     :: kin_nZ, kin_nZ2, kin_ne_JOREK   ! kinetic ICS projections for Z_eff
 !   -Coefficients related to Z_imp (with_TiTe)
 real*8     :: alpha_i, dalpha_i_dT, d2alpha_i_dT2
 real*8     :: alpha_e, dalpha_e_dT, d2alpha_e_dT2, alpha_e_bis, alpha_e_tri
@@ -1117,6 +1118,21 @@ do i=1,n_vertex_max
             dalpha_e_dT = 0.d0
           endif
 
+          ! --- Compute Z_eff from kinetic ICS projections (overrides default Z_eff=1 when use_ics active)
+          if (use_ics .and. .not. with_impurities) then
+            ! slot ics_indices_kin(j) = sum(n_j*Z_j) [m^-3 SI], slot 9 = sum(n_j*Z_j^2) [m^-3 SI]
+            kin_nZ = 0.d0
+            do j = 1, n_ics
+              kin_nZ = kin_nZ + eq_aux_g(mp, ics_indices_kin(j), ms, mt)
+            end do
+            kin_nZ2       = eq_aux_g(mp, 9, ms, mt)
+            kin_ne_JOREK  = r0_corr + max(0.d0, kin_nZ) / (central_density * 1.d20)
+            if (kin_ne_JOREK > 0.d0 .and. kin_nZ2 > 0.d0) then
+              Z_eff      = (r0_corr + kin_nZ2 / (central_density * 1.d20)) / kin_ne_JOREK
+              Z_eff      = max(1.d0, Z_eff)
+              dZ_eff_dr0 = (1.d0 - Z_eff) / kin_ne_JOREK
+            endif
+          endif
 
           ! --- Normalized coulomb logarithm for resistivity
           call coulomb_log_ei(T_or_Te, T_or_Te_corr, r0, r0_corr, rimp0, rimp0_corr, alpha_e, lnA, dalpha_e_dT, &

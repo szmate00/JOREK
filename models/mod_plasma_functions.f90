@@ -185,7 +185,7 @@ module mod_plasma_functions
       if (present(d2eta_d2T))   d2eta_d2T  = 0.d0
     endif
 
-    if (with_impurities) then 
+    if (with_impurities .or. Z_eff > 1.d0) then
 
       eta_coef     = Z_eff*(1.+1.198*Z_eff+0.222*Z_eff**2)/(1.+2.966*Z_eff+0.753*Z_eff**2)
       eta_coef     = eta_coef / ((1.+1.198+0.222)/(1.+2.966+0.753))

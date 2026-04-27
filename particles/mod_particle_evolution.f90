@@ -111,6 +111,7 @@ contains
         jorek_feedback%rhs(:,:,:,:,imp_q_idx)     = jorek_feedback%rhs(:,:,:,:,imp_q_idx)       + feedback_rhs(:,:,:,:,imp_q_idx)       / (sim%tstep_fluid_si/tstep_part_adj)
         jorek_feedback%rhs(:,:,:,:,7)             = jorek_feedback%rhs(:,:,:,:,7)               + feedback_rhs(:,:,:,:,7)               / sim%tstep_fluid_si                  !< extra projection (impurity radiated power)
         jorek_feedback%rhs(:,:,:,:,8)             = jorek_feedback%rhs(:,:,:,:,8)               + feedback_rhs(:,:,:,:,8)               / (sim%tstep_fluid_si/tstep_part_adj) !< extra projection (impurity density)
+        jorek_feedback%rhs(:,:,:,:,9)             = jorek_feedback%rhs(:,:,:,:,9)               + feedback_rhs(:,:,:,:,9)               / (sim%tstep_fluid_si/tstep_part_adj) !< extra projection (weight*Z^2, for Z_eff)
       endif
     endif
 
@@ -675,9 +676,10 @@ contains
                 feedback_rhs(m,l,i_elm_old,i_tor,E_idx_kin)       = feedback_rhs(m,l,i_elm_old,i_tor,E_idx_kin)       + HZ(i_tor) * E_fb
 #endif
                 feedback_rhs(m,l,i_elm_old,i_tor,mom_par_idx_kin) = feedback_rhs(m,l,i_elm_old,i_tor,mom_par_idx_kin) + HZ(i_tor) * mom_par_fb
-                feedback_rhs(m,l,i_elm_old,i_tor,imp_q_idx)       = feedback_rhs(m,l,i_elm_old,i_tor,imp_q_idx)       + HZ(i_tor) * imp_q_fb       ! impurity charge density
+                feedback_rhs(m,l,i_elm_old,i_tor,imp_q_idx)       = feedback_rhs(m,l,i_elm_old,i_tor,imp_q_idx)       + HZ(i_tor) * imp_q_fb       ! impurity charge density (weight*Z)
                 feedback_rhs(m,l,i_elm_old,i_tor,7)               = feedback_rhs(m,l,i_elm_old,i_tor,7)               + HZ(i_tor) * imp_P_rad_fb   ! impurity radiated power [to be moved to diag feedback]
                 feedback_rhs(m,l,i_elm_old,i_tor,8)               = feedback_rhs(m,l,i_elm_old,i_tor,8)               + HZ(i_tor) * imp_density_fb ! impurity density [to be moved to diag feedback]
+                feedback_rhs(m,l,i_elm_old,i_tor,9)               = feedback_rhs(m,l,i_elm_old,i_tor,9)               + HZ(i_tor) * imp_density_fb * real(particle_tmp%q,8)**2 ! weight*Z^2 for Z_eff
               enddo
             enddo
           enddo
