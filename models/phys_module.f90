@@ -652,6 +652,10 @@ module phys_module
   real*8  :: D_neutral_y          !< Neutral particle diffusivity in Z-direction
   real*8  :: D_neutral_p          !< Neutral particle diffusivity in phi-direction
   logical :: ZKpar_T_dependent    !< Use a temperature dependent parallel heat diffusivity
+  logical :: flux_lim             !< Enable Spitzer-Haerm parallel heat flux limiter
+  real*8  :: alpha_flux_lim       !< Free-streaming coefficient for ZK_par   (single-T)
+  real*8  :: alpha_flux_lim_e     !< Free-streaming coefficient for ZK_e_par (TiTe electron channel)
+  real*8  :: alpha_flux_lim_i     !< Free-streaming coefficient for ZK_i_par (TiTe ion channel)
   real*8  :: HW_coef(10)   = 0.d0 !< Coefficients for Hasegawa-Wakatani fluctuation term
 
   !> @name Numerical heat and particle diffusivity profiles

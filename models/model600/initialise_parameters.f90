@@ -117,7 +117,9 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 fix_axis_nodes,                                     &
                 adaptive_time, equil, bench_without_plot,           &
                 eta_T_dependent, visco_T_dependent, T_max_visco,    &
-                zkpar_T_dependent, T_max_eta, T_max_eta_ohm,        & 
+                zkpar_T_dependent, flux_lim,                          &
+                alpha_flux_lim, alpha_flux_lim_e, alpha_flux_lim_i,  &
+                T_max_eta, T_max_eta_ohm,                           &
                 heatsource_psin, heatsource_sig,                    &
                 heatsource_e_psin, heatsource_e_sig,                &
                 heatsource_i_psin, heatsource_i_sig,                &

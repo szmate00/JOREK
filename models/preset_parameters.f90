@@ -238,6 +238,10 @@ subroutine preset_parameters
   ZK_i_par     = 1.d0
   ZK_e_par     = 1.d0
   ZK_par_max   = 1.d20
+  flux_lim         = .false.
+  alpha_flux_lim   = 1.d0
+  alpha_flux_lim_e = 1.d0
+  alpha_flux_lim_i = 1.d0
   D_perp(1:5)  = (/ 1.d-5, 0.d0, 0.d0, 99.d0, 99.d0 /)
   D_par        = 0.d0
   V_pinch_gauss = 0.d0

@@ -60,6 +60,7 @@ real*8     :: Bgrad_rho_star_psi, Bgrad_rho_psi, Bgrad_rho_rho, Bgrad_vpar_vpar,
 real*8     :: Bgrad_rho_k_star, Bgrad_T_k_star, Bgrad_Ti_Ti_n, Bgrad_Te_Te_n, Bgrad_T_T_n, Bgrad_rho_rho_n
 real*8     :: Bgrad_rhoimp, Bgrad_rhoimp_psi, Bgrad_rhoimp_rhoimp, Bgrad_rhoimp_rhoimp_n
 real*8     :: ZK_par_T, dZK_par_dT, ZKi_par_T, dZKi_par_dT, ZKe_par_T, dZKe_par_dT
+real*8     :: BB2_fl, BgradT_fl, BgradTi_fl, BgradTe_fl, q_fl_norm, fl_fac
 real*8     :: D_prof, D_par_local, ZK_prof, ZKi_prof, ZKe_prof, psi_norm, theta, zeta, delta_u_x, delta_u_y, delta_ps_x, delta_ps_y
 real*8     :: D_prof_imp, D_par_local_imp
 real*8     :: V_prof_pinch, psi_grad2
@@ -1461,6 +1462,44 @@ do i=1,n_vertex_max
           ! For shock capturing stabilization
           tau_sc = 0.d0
           if (use_sc) call calculate_sc_quantities()
+
+          ! --- Heat flux limiter: kappa_lim = kappa_SH / (1 + |q_SH/q_fl|)
+          ! q_fl = alpha * n * T^1.5 / sqrt(m_particle);  ratio in JOREK units:
+          ! |q_SH/q_fl| = ZK * |B.gradT| * sqrt(m_e * m_i) / ((gamma-1) * alpha * n * T^1.5)
+          ! for electrons (dominant SH channel); ions use m_i instead of sqrt(m_e*m_i).
+          if (flux_lim) then
+            BB2_fl = (F0*F0 + ps0_x*ps0_x + ps0_y*ps0_y) / BigR**2
+            if (with_TiTe) then
+              BgradTe_fl = abs(F0/BigR * Te0_p + Te0_x*ps0_y - Te0_y*ps0_x) / BigR
+              BgradTi_fl = abs(F0/BigR * Ti0_p + Ti0_x*ps0_y - Ti0_y*ps0_x) / BigR
+              ! Electron channel: free-streaming velocity = sqrt(Te/m_e)
+              q_fl_norm  = ZKe_par_T * BigR * BgradTe_fl / sqrt(BB2_fl) &
+                           * sqrt(MASS_ELECTRON * central_mass * ATOMIC_MASS_UNIT) &
+                           / ((GAMMA - 1.d0) * alpha_flux_lim_e &
+                              * r0_corr * Te0_corr**1.5d0)
+              fl_fac     = 1.d0 / (1.d0 + q_fl_norm)
+              dZKe_par_dT = fl_fac**2 * (dZKe_par_dT + 1.5d0 * ZKe_par_T * q_fl_norm / Te0_corr)
+              ZKe_par_T   = ZKe_par_T * fl_fac
+              ! Ion channel: free-streaming velocity = sqrt(Ti/m_i)
+              q_fl_norm  = ZKi_par_T * BigR * BgradTi_fl / sqrt(BB2_fl) &
+                           * (central_mass * ATOMIC_MASS_UNIT) &
+                           / ((GAMMA - 1.d0) * alpha_flux_lim_i &
+                              * r0_corr * Ti0_corr**1.5d0)
+              fl_fac     = 1.d0 / (1.d0 + q_fl_norm)
+              dZKi_par_dT = fl_fac**2 * (dZKi_par_dT + 1.5d0 * ZKi_par_T * q_fl_norm / Ti0_corr)
+              ZKi_par_T   = ZKi_par_T * fl_fac
+            else
+              BgradT_fl  = abs(F0/BigR * T0_p + T0_x*ps0_y - T0_y*ps0_x) / BigR
+              ! Single-T: SH conductivity is electron-dominated; free-streaming velocity = sqrt(T/2/m_e)
+              q_fl_norm  = ZK_par_T * BigR * BgradT_fl / sqrt(BB2_fl) &
+                           * sqrt(MASS_ELECTRON * central_mass * ATOMIC_MASS_UNIT) &
+                           / ((GAMMA - 1.d0) * alpha_flux_lim &
+                              * r0_corr * T0_corr**1.5d0)
+              fl_fac     = 1.d0 / (1.d0 + q_fl_norm)
+              dZK_par_dT  = fl_fac**2 * (dZK_par_dT + 1.5d0 * ZK_par_T * q_fl_norm / T0_corr)
+              ZK_par_T    = ZK_par_T * fl_fac
+            end if
+          end if
 
 !--------------------------------------------------------
 
