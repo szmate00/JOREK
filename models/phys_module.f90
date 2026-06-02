@@ -1091,6 +1091,8 @@ module phys_module
     character(len=9)    :: kin_bg_coll_type        !< choose type of heat flux used in collisions, either Homma2013 or Homma2020 at the moment
     real*8              :: homma2020_alpha         !< alpha factor in Homma2020 heat flux to limit,
                                                    !< recommended value is 1.5 for ion heat flux, see Homma 2020 and Fundamenski 2005
+    real*8              :: D_perp_anom_ics         !< [m^2/s] anomalous (turbulent) cross-field diffusion coefficient D_AN for the impurities.
+                                                   !< Adds a random walk step perpendicular to the flux surface each particle timestep, as in IMPGYRO. Default 0 (off).
     integer             :: ics_group_idx           !< internal index given to this specific impurities group, used to obtain the variable index of charge density
                                                    !< projectons specific to this group, as we require a charge density projection for each impurities group for coupling
                                              

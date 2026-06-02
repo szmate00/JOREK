@@ -38,6 +38,7 @@ type :: particle_group
   logical            :: use_kin_bg_collisions = .false.     !< switch on collisions with the background plasma
   character(len=9)   :: kin_bg_coll_type      = 'Homma2020' !< method to calculate heat flux in kin_bg_collision
   real*8             :: homma2020_alpha       = 1.5d0       !< flux limiting factor alpha for Homma2020 heat flux
+  real*8             :: D_perp_anom_ics       = 0.d0        !< [m^2/s] anomalous cross-field diffusion coefficient D_AN (random walk perp. to flux surface)
   integer            :: ics_group_idx         = -1          !< internal index given to this specific impurities group
 
   class(particle_base), dimension(:), allocatable :: particles
@@ -116,6 +117,7 @@ subroutine configure_particle_groups(sim)
       sim%groups(i)%use_kin_bg_collisions  =  config%use_kin_bg_collisions
       sim%groups(i)%kin_bg_coll_type       =  config%kin_bg_coll_type
       sim%groups(i)%homma2020_alpha        =  config%homma2020_alpha
+      sim%groups(i)%D_perp_anom_ics        =  config%D_perp_anom_ics
       sim%groups(i)%ics_group_idx          =  config%ics_group_idx
     
       if (len_trim(config%atom_data_suffix) > 0) then

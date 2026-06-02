@@ -1100,6 +1100,7 @@ write(*,'(1x,a)',advance='no') ' USE_CATALYST : '
           write(*,LOGI_FMT) 'use_kin_bg_collisions,  ',sim%groups(group_num)%use_kin_bg_collisions
           write(*,CHAR_FMT) 'kin_bg_coll_type,  ',sim%groups(group_num)%kin_bg_coll_type
           write(*,REAL_FMT) 'homma2020_alpha,  ',sim%groups(group_num)%homma2020_alpha
+          write(*,REAL_FMT) 'D_perp_anom_ics,  ',sim%groups(group_num)%D_perp_anom_ics
         endif
 
         write(*,CHAR_FMT) 'atom_data_suffix,       ',trim(part_group_configs(group_num)%atom_data_suffix)

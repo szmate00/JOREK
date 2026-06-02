@@ -227,6 +227,12 @@ subroutine check_no_ics_params(group_num)
     call MPI_ABORT(MPI_COMM_WORLD, 1, ierr)
   endif
 
+  if (part_group_configs(group_num)%D_perp_anom_ics /= 0.d0) then
+    write(*,*) "ERROR: incompatible setting enabled for group '", part_group_configs(group_num)%id, "':"
+    write(*,*) "  D_perp_anom_ics can only be set for groups with coupling scheme 'ics'"
+    call MPI_ABORT(MPI_COMM_WORLD, 1, ierr)
+  endif
+
   if (part_group_configs(group_num)%ics_group_idx /= -1) then
     write(*,*) "ERROR: incompatible setting enabled for group '", part_group_configs(group_num)%id, "':"
     write(*,*) "  ics_group_idx can only be set for groups with coupling scheme 'ics'"

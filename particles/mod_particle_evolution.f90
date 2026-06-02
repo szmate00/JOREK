@@ -298,9 +298,12 @@ contains
     integer(kind=1) :: q_b
     integer, parameter :: n_coll=20
     real*8    :: ran(6), ran2(6,n_coll), q(3), m_b
-    real*8    :: coulomb_log, kTb, n_b, v_b(3,n_coll) 
+    real*8    :: coulomb_log, kTb, n_b, v_b(3,n_coll)
     real*8, dimension(1) :: P, P_s, P_t, P_phi, P_time
     real*8    :: delta_E_kin
+
+    !> anomalous (turbulent) radial diffusion
+    real*8    :: diff_ran(2), diff_xi(2), diff_step, B_pol_norm
 
     !> System variables ------------------------------
     type(particle_kinetic_leapfrog) :: particle_tmp
@@ -359,7 +362,8 @@ contains
     !$omp density_source, mom_par_source, energy_source, v_old, v_new, T_eV, imp_P_line_rad_fb,           &
     !$omp m_b, kTb,coulomb_log ,n_b,v_b, ran, ran2, q_b, q, E_fb_Te, E_fb_Ti,                             &
     !$omp P, P_s, P_t, P_phi, P_time, limits, limits_coll, energy_source_Te, energy_source_Ti,            &
-    !$omp vvector, ran_norm, imp_q_idx_temp, T_e_raw, T_i_raw, n_e_raw, delta_E_kin, i_tor, n)            &
+    !$omp vvector, ran_norm, imp_q_idx_temp, T_e_raw, T_i_raw, n_e_raw, delta_E_kin, i_tor, n,            &
+    !$omp diff_ran, diff_xi, diff_step, B_pol_norm)                                                       &
     !$omp reduction(+:feedback_rhs,n_lost_ion,p_lost_plt,p_lost_cx,p_lost_ion,n_super_ionized)
     do j=1,size(sim%groups(group_num)%particles,1)
       particle_tmp = sim%groups(group_num)%particles(j)
@@ -690,6 +694,26 @@ contains
         !> =============================== PUSH PARTICLE ====================================
         if (particle_tmp%i_elm .gt. 0) then
           call boris_push_cylindrical(particle_tmp, sim%groups(group_num)%mass, E, B, tstep_part_adj)
+
+          !> ----- ANOMALOUS RADIAL DIFFUSION (impurities) -----
+          !> Adds a random walk step perpendicular to the flux surface to mimic turbulent
+          !> cross-field transport, following IMPGYRO (Homma et al.):
+          !>   r -> r + sqrt(2 * D_AN * dt) * xi * e_r,   xi ~ N(0,1)
+          !> e_r is the unit vector perpendicular to the flux surface in the (R,Z) plane.
+          !> grad(psi) is perpendicular to the poloidal field B_pol=(B_R,B_Z), so e_r = (B_Z,-B_R)/|B_pol|
+          !> (the sign of e_r is irrelevant since xi is a symmetric normal sample).
+          !> All quantities are SI: D_perp_anom_ics [m^2/s], tstep_part_adj [s], position [m].
+          if (sim%groups(group_num)%coupling_scheme == 'ics' .and. sim%groups(group_num)%D_perp_anom_ics .gt. 0.d0) then
+            B_pol_norm = sqrt(B(1)**2 + B(2)**2)
+            if (B_pol_norm .gt. 0.d0) then
+              call rng(i_rng)%next(diff_ran)
+              diff_xi   = boxmueller_transform(diff_ran)
+              diff_step = sqrt(2.d0 * sim%groups(group_num)%D_perp_anom_ics * tstep_part_adj) * diff_xi(1)
+              particle_tmp%x(1) = particle_tmp%x(1) + diff_step * B(2) / B_pol_norm
+              particle_tmp%x(2) = particle_tmp%x(2) - diff_step * B(1) / B_pol_norm
+            endif
+          endif
+
           call find_RZ_nearby(sim%fields%node_list, sim%fields%element_list, rz_old(1), rz_old(2), st_old(1), st_old(2), i_elm_old, &
                               particle_tmp%x(1), particle_tmp%x(2), particle_tmp%st(1), particle_tmp%st(2), particle_tmp%i_elm, ifail)
         end if
