@@ -1120,13 +1120,9 @@ do i=1,n_vertex_max
 
           ! --- Compute Z_eff from kinetic ICS projections (overrides default Z_eff=1 when use_ics active)
           if (use_ics .and. .not. with_impurities) then
-            ! slot ics_indices_kin(j) = sum(n_j*Z_j) [m^-3 SI], slot 9 = sum(n_j*Z_j^2) [m^-3 SI]
-            kin_nZ = 0.d0
-            do j = 1, n_ics
-              kin_nZ = kin_nZ + eq_aux_g(mp, ics_indices_kin(j), ms, mt)
-            end do
+            kin_nZ        = max(0.d0, eq_aux_g(mp, 5, ms, mt))
             kin_nZ2       = eq_aux_g(mp, 9, ms, mt)
-            kin_ne_JOREK  = r0_corr + max(0.d0, kin_nZ) / (central_density * 1.d20)
+            kin_ne_JOREK  = r0_corr + kin_nZ / (central_density * 1.d20)
             if (kin_ne_JOREK > 0.d0 .and. kin_nZ2 > 0.d0) then
               Z_eff      = (r0_corr + kin_nZ2 / (central_density * 1.d20)) / kin_ne_JOREK
               Z_eff      = max(1.d0, Z_eff)
