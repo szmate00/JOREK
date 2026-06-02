@@ -1112,7 +1112,7 @@ do i=1,n_vertex_max
             
           end if ! (with_TiTe) *********************************************************************
 
-          if (.not. with_impurities) then
+          if (.not. with_impurities .or. .not. use_ics) then
             Z_eff       = 1.d0
             alpha_e     = 0.d0
             dalpha_e_dT = 0.d0
