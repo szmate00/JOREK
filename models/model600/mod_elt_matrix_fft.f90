@@ -104,6 +104,7 @@ real*8     :: Pe0, Pe0_s, Pe0_t, Pe0_x, Pe0_y, Pe0_p, Pe0_ss, Pe0_st, Pe0_tt, Pe
 real*8     :: Vpar0, Vpar0_s, Vpar0_t, Vpar0_p, Vpar0_x, Vpar0_y, Vpar0_ss, Vpar0_st, Vpar0_tt, Vpar0_xx, Vpar0_yy,Vpar0_xy
 real*8     :: BigR_x, vv2, eta_T, visco_T, deta_dT, d2eta_d2T, dvisco_dT, d2visco_dT2, visco_num_T, eta_num_T, W_dia, W_dia_rho, W_dia_Ti
 real*8     :: visco_T_heating, dvisco_dT_heating, d2visco_dT2_heating
+real*8     :: dens_visc
 real*8     :: eta_T_ohm, deta_dT_ohm, d2eta_d2T_ohm, deta_num_dT,  dvisco_num_dT, D_perp_num_psin, ZK_perp_num_psin, ZK_i_perp_num_psin, ZK_e_perp_num_psin
 real*8     :: deta_dr0, deta_drimp0, deta_dr0_ohm, deta_drimp0_ohm
 real*8     :: lnA, dlnA_dT, d2lnA_dT2, dlnA_dr0, dlnA_drimp0
@@ -1146,6 +1147,17 @@ do i=1,n_vertex_max
           call viscosity(visco,         T_or_Te, T_or_Te_corr,T_or_Te_0, visco_T,         dvisco_dT,         d2visco_dT2        )
           call viscosity(visco_heating, T_or_Te, T_or_Te_corr,T_or_Te_0, visco_T_heating, dvisco_dT_heating, d2visco_dT2_heating)
 
+          ! --- Kinematic viscosity option: interpret 'visco' as a kinematic viscosity by scaling the
+          !     perpendicular viscous term with the local (positivity-corrected) mass density (mu = rho*nu)
+          !     via the factor dens_visc (= 1 in the default dynamic case). Only the perpendicular momentum
+          !     viscosity is affected; the diamagnetic viscosity and the viscous heating (visco_heating)
+          !     keep their original (dynamic) treatment.
+          if (visco_kinematic) then
+            dens_visc = r0_corr
+          else
+            dens_visc = 1.d0
+          endif
+
           ! --- Normalized poloidal flux
           psi_norm = get_psi_n( ps0, y_g(ms,mt))
           
@@ -1549,9 +1561,9 @@ do i=1,n_vertex_max
                          - r0_hat * BigR**2 * w0 * (v_s * u0_t - v_t * u0_s)                                       * tstep * factor(var_u,1) &
                          + v * (ps0_s * zj0_t - ps0_t * zj0_s )                                                    * tstep * factor(var_u,2) &
 
-                         - visco_T * BigR**2.0 * (v_x * w0_x + v_y * w0_y)  * visco_fact_old     * BigR  * xjac * tstep * factor(var_u,3) &
-                         - 2.d0 * visco_T * BigR * w0 * v_x                 * visco_fact_new     * BigR  * xjac * tstep * factor(var_u,3) &
-                         - visco_T *  (v_x * u0_xpp + v_y * u0_ypp)         * visco_fact_new     * BigR  * xjac * tstep * factor(var_u,3) &
+                         - visco_T * dens_visc * BigR**2.0 * (v_x * w0_x + v_y * w0_y)  * visco_fact_old     * BigR  * xjac * tstep * factor(var_u,3) &
+                         - 2.d0 * visco_T * dens_visc * BigR * w0 * v_x                 * visco_fact_new     * BigR  * xjac * tstep * factor(var_u,3) &
+                         - visco_T * dens_visc *  (v_x * u0_xpp + v_y * u0_ypp)         * visco_fact_new     * BigR  * xjac * tstep * factor(var_u,3) &
 
                          - v * F0 / BigR * zj0_p                                                            * xjac * tstep * factor(var_u,2) &
                          + BigR**2 * (v_s * p0_t - v_t * p0_s)                                                     * tstep * factor(var_u,4) &
@@ -2491,15 +2503,15 @@ do i=1,n_vertex_max
                               * BigR * xjac * theta * tstep
                   endif
                   !---------------------------------------- NEO
-                  amat_nn(var_u,var_u) = visco_T *  (v_x * u_xpp + v_y * u_ypp)  * visco_fact_new   * BigR * xjac * theta * tstep 
+                  amat_nn(var_u,var_u) = visco_T * dens_visc *  (v_x * u_xpp + v_y * u_ypp)  * visco_fact_new   * BigR * xjac * theta * tstep
 
                   amat(var_u,var_zj)   = - v * (ps0_s * zj_t  - ps0_t * zj_s)                                              * theta * tstep
                                                                                                                     
                   amat_n(var_u,var_zj) = + F0 / BigR * v * zj_p  * xjac                                                    * theta * tstep
                                                                                                                     
                   amat(var_u,var_w) = r0_hat * BigR**2 * w  * ( v_s * u0_t - v_t * u0_s)                                   * theta * tstep &
-                                    + BigR**2.d0 * ( v_x * w_x + v_y * w_y) * visco_T * visco_fact_old  * BigR * xjac   * theta * tstep &
-                                    + 2.d0 * BigR * w *  v_x                * visco_T * visco_fact_new  * BigR * xjac   * theta * tstep &
+                                    + BigR**2.d0 * ( v_x * w_x + v_y * w_y) * visco_T * dens_visc * visco_fact_old  * BigR * xjac   * theta * tstep &
+                                    + 2.d0 * BigR * w *  v_x                * visco_T * dens_visc * visco_fact_new  * BigR * xjac   * theta * tstep &
  
                                     + v * tauIC*2. * BigR**4 * (Pi0_s * w_t - Pi0_t * w_s)                                 * theta * tstep &
                                                                                                                     
@@ -2551,6 +2563,15 @@ do i=1,n_vertex_max
                                         + BigR**3 * (rho * (2.d0*r0 +(alpha_e-1.)*rimp0) * Srec_T) * (v_x * u0_x + v_y * u0_y)   * xjac * theta * tstep &
                                         )
 
+                  ! --- Implicit density coupling from the kinematic perpendicular viscosity (mu = rho*nu):
+                  !     d/drho of the perpendicular viscous term, with d(dens_visc)/d(rho-dof) = dr0_corr_dn * rho.
+                  if (visco_kinematic) then
+                    amat(var_u,var_rho) = amat(var_u,var_rho) &
+                         + visco_T * dr0_corr_dn * rho * BigR**2.0 * (v_x * w0_x + v_y * w0_y) * visco_fact_old * BigR * xjac * theta * tstep &
+                         + visco_T * dr0_corr_dn * rho * 2.d0 * BigR * w0 * v_x                * visco_fact_new * BigR * xjac * theta * tstep &
+                         + visco_T * dr0_corr_dn * rho * (v_x * u0_xpp + v_y * u0_ypp)         * visco_fact_new * BigR * xjac * theta * tstep
+                  endif
+
                   if ( NEO ) then
                     amat(var_u,var_rho) = amat(var_u,var_rho) &
                          - amu_neo_prof(ms,mt)*BB2/((Btheta2+epsil)**2) * (ps0_x*v_x + ps0_y*v_y) * (rho*(ps0_x*u0_x+ps0_y*u0_y) &
@@ -2594,9 +2615,9 @@ do i=1,n_vertex_max
                     amat(var_u,var_Te) = - BigR**2 * (v_s * r0_t * Te   - v_t * r0_s * Te)           * theta * tstep  &
                                 - BigR**2 * (v_s * r0   * Te_t - v_t * r0   * Te_s)         * theta * tstep  &
 
-                                + dvisco_dT * Te * ( v_x * w0_x + v_y * w0_y ) * BigR**3.d0 * visco_fact_old * xjac * theta * tstep  &
-                                + dvisco_dT * Te * 2.d0 * v_x * w0             * BigR**2.d0 * visco_fact_new * xjac * theta * tstep  &
-                                + dvisco_dT * Te * (v_x*u0_xpp + v_y*u0_ypp)   * BigR       * visco_fact_new * xjac * theta * tstep  &
+                                + dvisco_dT * dens_visc * Te * ( v_x * w0_x + v_y * w0_y ) * BigR**3.d0 * visco_fact_old * xjac * theta * tstep  &
+                                + dvisco_dT * dens_visc * Te * 2.d0 * v_x * w0             * BigR**2.d0 * visco_fact_new * xjac * theta * tstep  &
+                                + dvisco_dT * dens_visc * Te * (v_x*u0_xpp + v_y*u0_ypp)   * BigR       * visco_fact_new * xjac * theta * tstep  &
 
                                 - d2visco_dT2*Te * bigR * W_dia   * (v_x*Ti0_x + v_y*Ti0_y)  * xjac * theta * tstep  &
                                 - dvisco_dT*Te   * bigR * W_dia   * (v_xx + v_x/bigR + v_yy) * xjac * theta * tstep  &
@@ -2620,9 +2641,9 @@ do i=1,n_vertex_max
                                                       - (T_xy * r0 + T_x*r0_y + T_y*r0_x + T*r0_xy) * (u0_xx - u0_yy))  &
                                                     * xjac * theta * tstep                                                  &
 
-                              + dvisco_dT * T * ( v_x * w0_x + v_y * w0_y ) * BigR**3.d0 * visco_fact_old * xjac * theta * tstep  &
-                              + dvisco_dT * T * 2.d0 * v_x * w0             * BigR**2.d0 * visco_fact_new * xjac * theta * tstep  &
-                              + dvisco_dT * T * (v_x*u0_xpp + v_y*u0_ypp)   * BigR       * visco_fact_new * xjac * theta * tstep  &
+                              + dvisco_dT * dens_visc * T * ( v_x * w0_x + v_y * w0_y ) * BigR**3.d0 * visco_fact_old * xjac * theta * tstep  &
+                              + dvisco_dT * dens_visc * T * 2.d0 * v_x * w0             * BigR**2.d0 * visco_fact_new * xjac * theta * tstep  &
+                              + dvisco_dT * dens_visc * T * (v_x*u0_xpp + v_y*u0_ypp)   * BigR       * visco_fact_new * xjac * theta * tstep  &
 
                               ! --- Contributions of the diamagnetic viscosity 
                               - dvisco_dT     * bigR * W_dia_Ti * (v_x*Ti0_x + v_y*Ti0_y)  * xjac * theta * tstep  &
