@@ -25,6 +25,7 @@ module phys_module
   real*8  :: eta_rst              !< eta value from restart file
   logical :: visco_T_dependent    !< Viscosity dependent on temperature? Otherwise constant.
   logical :: visco_kinematic      !< If true, 'visco' is interpreted as a kinematic viscosity: the perpendicular viscous term is scaled by the local (corrected) mass density (mu = rho*nu). Otherwise 'visco' is the dynamic viscosity.
+  logical :: visco_par_kinematic  !< If true, 'visco_par' is interpreted as a kinematic viscosity: the cross-field viscous term acting on the parallel flow is scaled by the local (corrected) mass density (mu = rho*nu). Otherwise 'visco_par' is the dynamic viscosity.
   logical :: visco_old_setup      !< If true, the old perp. viscosity treatment is used for compatibility (old visco depends on R^2)
   real*8  :: visco_par            !< Cross B-field viscosity acting on parallel flow (normalized)
   real*8  :: visco_par_par        !< B-field Parallel viscosity acting on parallel flow (normalized)
