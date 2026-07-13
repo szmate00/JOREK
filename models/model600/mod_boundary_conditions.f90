@@ -28,7 +28,7 @@ subroutine boundary_conditions( my_id, node_list, element_list, bnd_node_list, l
                                 xcase2, R_axis, Z_axis, psi_axis, psi_bnd,                &
                                 R_xpoint, Z_xpoint, psi_xpoint, a_mat)
 
-use constants, only : PI, MU_ZERO, ATOMIC_MASS_UNIT
+use constants, only : PI, MU_ZERO, ATOMIC_MASS_UNIT, EL_CHG
 use mod_assembly, only : boundary_conditions_add_one_entry, boundary_conditions_add_RHS
 use data_structure
 use vacuum, ONLY: is_freebound
@@ -37,7 +37,8 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        RMP_start_time, tstep, RMP_har_cos, RMP_har_sin, T_min,                                             &
        mach_one_bnd_integral, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,                            &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
-       bcs, loop_voltage, central_density, central_mass 
+       bcs, loop_voltage, central_density, central_mass,                                                   &
+       U_sheath, lambda_sheath, U_sheath_relax_time
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -90,6 +91,7 @@ real*8  :: delta_psi_rmp, delta_psi_rmp_dR, delta_psi_rmp_dZ, delta_psi_rmp_ds, 
 real*8  :: R_mid, Z_mid, R_center, Z_center, direction2, normal(2), normal_direction(2), grad_s(2), grad_t(2)
 real*8  :: factor, factor_b, factor_bb, c_1, c_2, c_3, bn, dl, dl_b
 real*8  :: cs0, cs0_T, cs0_TT, cs0_TTT
+real*8  :: c_sheath_u, alpha_sheath, rhs_sheath, t_norm_si
 real*8  :: bn_b, bn_b_abs, hfact_b, hfact_bb, bn_1, bn_2, ps2_b, element_size_2
 integer :: ilarge_vp, ilarge_vp2, bnd_type
 integer :: kp, j, err, itest, i_mid, i_bnd, idir, iv_dir, iv_perp_dir, k_max
@@ -156,6 +158,21 @@ end if RMPspectrum
 
 zbig        = 1.d12
 zbig_backup = zbig
+
+! --- Sheath potential boundary condition for u (U_sheath): the boundary potential
+! --- follows the local electron temperature, Phi_bnd = lambda_sheath*k_B*Te/e above
+! --- the grounded wall (floating-sheath condition). In JOREK units this is the
+! --- linear constraint u_bnd = c_sheath_u*Te, using the conversions
+! --- Phi[V] = F0*u/t_norm and k_B*Te[J] = Te_jorek/(MU_ZERO*n_norm) with
+! --- n_norm = central_density*1e20 (cf. particles/mod_fields.f90). Assumes a pure
+! --- plasma (n_e = n_i = rho/m_i).
+if (U_sheath) then
+  t_norm_si  = sqrt(MU_ZERO * central_density*1.d20 * central_mass*ATOMIC_MASS_UNIT)
+  c_sheath_u = lambda_sheath * t_norm_si / (EL_CHG * F0 * MU_ZERO * central_density*1.d20)
+  if (.not. with_TiTe) c_sheath_u = 0.5d0 * c_sheath_u ! Te = T/2 in the single-temperature model
+  alpha_sheath = 1.d0
+  if (U_sheath_relax_time .gt. tstep) alpha_sheath = tstep / U_sheath_relax_time
+endif
 
 ! --- calculate node_indices
 call calculate_node_indices(node_indices)
@@ -314,7 +331,8 @@ do i=1, n_local_elms !=== do elements
           !---------------------------------------------------------------------------------------------------                      
 
           if (  ( (k == var_psi     ) .and. bcs(bnd_type)%dirichlet%psi     )  .or.  &
-                ( (k == var_u       ) .and. bcs(bnd_type)%dirichlet%u       )  .or.  &
+                ( (k == var_u       ) .and. bcs(bnd_type)%dirichlet%u                &
+                                      .and. (.not. U_sheath)                )  .or.  &
                 ( (k == var_zj      ) .and. bcs(bnd_type)%dirichlet%zj      )  .or.  &
                 ( (k == var_w       ) .and. bcs(bnd_type)%dirichlet%w       )  .or.  &
                 ( (k == var_rho     ) .and. bcs(bnd_type)%dirichlet%rho     )  .or.  &
@@ -347,10 +365,63 @@ do i=1, n_local_elms !=== do elements
                        zbig, index_min, index_max, a_mat)
               enddo
             enddo
-            
+
 
           endif
-          
+
+
+          ! --- Sheath potential BC on u: replaces the plain Dirichlet condition by
+          ! --- the implicit constraint u = c_sheath_u*Te (single-temperature model:
+          ! --- u = c_sheath_u*T with c_sheath_u already halved), so the boundary
+          ! --- potential follows the local electron temperature. On open field
+          ! --- lines (targets), where Te evolves freely, this is the floating-
+          ! --- sheath condition used at the targets in SOLPS-ITER and edge
+          ! --- turbulence codes; on closed-flux-surface boundaries, where Te is
+          ! --- held by its own Dirichlet BC, u is effectively fixed at the
+          ! --- consistent value. As for the Dirichlet BC, the node value and the
+          ! --- derivatives tangential to the boundary are constrained; normal
+          ! --- derivatives remain free. The constraint is linear, so it is imposed
+          ! --- DOF-by-DOF and harmonic-by-harmonic.
+          if ( (k == var_u) .and. U_sheath .and. bcs(bnd_type)%dirichlet%u ) then
+
+            do kk = 1,(n_order+1)/2
+              if ( (iv_dir .eq. 3) .and. (kk .gt. 1) ) cycle ! do only t-derivatives and node value
+              do ll = 1,(n_order+1)/2
+                if ( (iv_dir .eq. 2) .and. (ll .gt. 1) ) cycle ! do only s-derivatives and node value
+                index_tmp  = node_indices(kk,ll)
+                index_node = node_list%node(inode)%index(index_tmp)
+
+                call boundary_conditions_add_one_entry(                 &
+                       index_node, k, in, index_node, k, in,            &
+                       zbig, index_min, index_max, a_mat)
+
+                if ( with_TiTe ) then
+                  call boundary_conditions_add_one_entry(               &
+                         index_node, k, in, index_node, var_Te, in,     &
+                         - zbig * c_sheath_u,                           &
+                         index_min, index_max, a_mat)
+                  rhs_sheath = - zbig * alpha_sheath                                                &
+                               * ( node_list%node(inode)%values(in,index_tmp,var_u)                 &
+                                 - c_sheath_u * node_list%node(inode)%values(in,index_tmp,var_Te) )
+                else
+                  call boundary_conditions_add_one_entry(               &
+                         index_node, k, in, index_node, var_T, in,      &
+                         - zbig * c_sheath_u,                           &
+                         index_min, index_max, a_mat)
+                  rhs_sheath = - zbig * alpha_sheath                                                &
+                               * ( node_list%node(inode)%values(in,index_tmp,var_u)                 &
+                                 - c_sheath_u * node_list%node(inode)%values(in,index_tmp,var_T) )
+                endif
+
+                call boundary_conditions_add_RHS(                       &
+                       index_node, k, in, index_min, index_max,         &
+                       RHS_loc, rhs_sheath,                             &
+                       a_mat%i_tor_min, a_mat%i_tor_max)
+              enddo
+            enddo
+
+          endif
+
 
           if ( (.not. is_freebound(in,k)) ) then
             if ( ( loop_voltage .ne. 0.d0 ) ) then

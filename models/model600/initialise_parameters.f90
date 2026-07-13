@@ -208,6 +208,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 fluid_configs, init_particles_only,                 &
                 find_RZ_nearby_iter, find_RZ_nearby_tol,            &
                 min_sheath_angle, bcs, part_kill_ratio,             &
+                U_sheath, lambda_sheath, U_sheath_relax_time,       &
                 use_sc, add_sources_in_sc, visco_sc_num,            &
                 D_perp_sc_num, D_par_sc_num, ZK_perp_sc_num,        &
                 ZK_par_sc_num, ZK_i_perp_sc_num, ZK_i_par_sc_num,   &

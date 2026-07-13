@@ -830,7 +830,13 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   if ( vpar_smoothing ) then
     write(*,REAL_FMT) 'vpar_smoothing_coef   ', vpar_smoothing_coef(:)
   end if
-  write(*,REAL_FMT) 'min_sheath_angle      ', min_sheath_angle     
+  write(*,REAL_FMT) 'min_sheath_angle      ', min_sheath_angle
+
+  write(*,LOGI_FMT) 'U_sheath              ', U_sheath
+  if ( U_sheath ) then
+    write(*,REAL_FMT) 'lambda_sheath         ', lambda_sheath
+    write(*,REAL_FMT) 'U_sheath_relax_time   ', U_sheath_relax_time
+  end if
 
   write(*,LOGI_FMT) 'bc_natural_open       ', bc_natural_open
   write(*,LOGI_FMT) 'produce_live_data     ', produce_live_data

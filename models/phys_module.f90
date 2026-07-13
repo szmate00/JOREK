@@ -42,7 +42,9 @@ module phys_module
   real*8  :: eta_spitzer          !< Spitzer resistivity in the core (considering main ion charge Z=1, effective ion charge Zeff=1)
   real*8  :: lnA_center           !< Coulomb logarithm in the core (used for the resistivity function)
   logical :: Wdia                 !< Include diamagnetic flows in viscosity terms? (see [[wdia|here]])
-  logical :: U_sheath             !< Use Stangeby BCs for electric potential
+  logical :: U_sheath             !< Impose the sheath potential BC on u: Phi_bnd = lambda_sheath*k_B*Te/e w.r.t. the grounded wall (model333: hard-coded Stangeby variant; model600: uses lambda_sheath)
+  real*8  :: lambda_sheath        !< Sheath potential factor: floating (zero-current) sheath gives Lambda = 0.5*ln[(mi/me)/(2pi*(1+Ti/Te))], ~2.84 for D with Ti=Te (model600 U_sheath BC)
+  real*8  :: U_sheath_relax_time  !< Relaxation time (JOREK units) for the U_sheath BC: boundary mismatch u-c*Te decays on this timescale (<= tstep means enforced immediately)
   logical :: renormalise          !< Set true to give all input MHD parameters in S.I. units (ie. renormalise them before equations)
   real*8  :: gamma_sheath         !< sheath boundary condition on open fieldlines (JOREK units); you can also provide gamma_stangeby in normal units instead!
   real*8  :: gamma_stangeby       !< Sheath tranmission coefficient given by P. Stangeby in (The plasma boundary of magnetic fusion devices)

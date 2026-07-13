@@ -506,6 +506,8 @@ subroutine preset_parameters
 
   
   U_sheath = .false.
+  lambda_sheath = 2.84d0       ! floating-sheath potential factor for deuterium with Ti=Te
+  U_sheath_relax_time = 0.d0   ! <= tstep: sheath potential BC enforced without relaxation
   renormalise = .false.
   tauIC = 0.d0
   Wdia  = .false.
