@@ -44,8 +44,9 @@ module phys_module
   logical :: Wdia                 !< Include diamagnetic flows in viscosity terms? (see [[wdia|here]])
   logical :: U_sheath             !< Impose the sheath potential BC on u: Phi_bnd = lambda_sheath*k_B*Te/e w.r.t. the grounded wall (model333: hard-coded Stangeby variant; model600: uses lambda_sheath)
   real*8  :: lambda_sheath        !< Sheath potential factor: floating (zero-current) sheath gives Lambda = 0.5*ln[(mi/me)/(2pi*(1+Ti/Te))], ~2.84 for D with Ti=Te (model600 U_sheath BC)
-  real*8  :: U_sheath_relax_time  !< Relaxation time (JOREK units) for the U_sheath BC: boundary mismatch u-c*Te decays on this timescale (<= tstep means enforced immediately)
+  real*8  :: U_sheath_relax_time  !< Response time (JOREK units) of the U_sheath BC: u_bnd follows c*Te as du/dt=(c*Te-u)/tau, low-pass filtering fast Te fluctuations (<= tstep means instantaneous)
   logical :: U_sheath_static      !< Use the U_sheath BC with Te frozen at the first matrix assembly of the run: static, physically motivated boundary potential without the dynamic sheath response (model600)
+  logical :: U_sheath_current     !< Impose the sheath current-voltage characteristic j.n = e*n*cs*(b.n)*(1-exp(lambda_sheath-e*Phi/k*Te)) as a penalized boundary integral on u at open (mach1) boundary types; needs bc_natural_open (model600)
   logical :: renormalise          !< Set true to give all input MHD parameters in S.I. units (ie. renormalise them before equations)
   real*8  :: gamma_sheath         !< sheath boundary condition on open fieldlines (JOREK units); you can also provide gamma_stangeby in normal units instead!
   real*8  :: gamma_stangeby       !< Sheath tranmission coefficient given by P. Stangeby in (The plasma boundary of magnetic fusion devices)

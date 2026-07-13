@@ -50,7 +50,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        mach_one_bnd_integral, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,                            &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                                   &
-       U_sheath, lambda_sheath, U_sheath_relax_time, U_sheath_static
+       U_sheath, lambda_sheath, U_sheath_relax_time, U_sheath_static, U_sheath_current, bc_natural_open
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -95,6 +95,7 @@ integer :: ilarge2, kv, kT, kTi, kTe, ku, kn, ilarge_vv, ilarge_vT, ilarge_vus, 
 integer :: ilarge_vsvs, ilarge_vsTs, ilarge_vsT, ilarge_vut, ilarge_vtvt, ilarge_vtTt, ilarge_vtT
 integer :: ierr
 logical :: apply_psi_BC, apply_current_BC, s_constant_boundary, t_constant_boundary, apply_cs, apply_dirichlet_1234, apply_dirichlet_all
+logical :: u_bc_by_current
 
 real*8, allocatable :: psi_RMP_cos1(:),dpsi_RMP_cos_dR1(:),dpsi_RMP_cos_dZ1(:)
 real*8, allocatable :: psi_RMP_sin1(:),dpsi_RMP_sin_dR1(:),dpsi_RMP_sin_dZ1(:)
@@ -290,6 +291,13 @@ do i=1, n_local_elms !=== do elements
 
       bnd_type = node_list%node(inode)%boundary
 
+      ! --- On open (mach1) boundary types, u gets the sheath current-voltage BC as
+      ! --- a boundary integral (mod_boundary_matrix_open) instead of a Dirichlet-
+      ! --- type condition; guarded on bc_natural_open so that a misconfigured
+      ! --- input falls back to the Dirichlet-type conditions instead of leaving u
+      ! --- unconstrained
+      u_bc_by_current = U_sheath_current .and. bc_natural_open .and. bcs(bnd_type)%mach1
+
       do in=a_mat%i_tor_min, a_mat%i_tor_max  ! === do n_tor
       
         if (keep_n0_const  .and.  in .eq. 1 ) then
@@ -382,7 +390,8 @@ do i=1, n_local_elms !=== do elements
 
           if (  ( (k == var_psi     ) .and. bcs(bnd_type)%dirichlet%psi     )  .or.  &
                 ( (k == var_u       ) .and. bcs(bnd_type)%dirichlet%u                &
-                                      .and. (.not. U_sheath)                )  .or.  &
+                                      .and. (.not. U_sheath)                         &
+                                      .and. (.not. u_bc_by_current)         )  .or.  &
                 ( (k == var_zj      ) .and. bcs(bnd_type)%dirichlet%zj      )  .or.  &
                 ( (k == var_w       ) .and. bcs(bnd_type)%dirichlet%w       )  .or.  &
                 ( (k == var_rho     ) .and. bcs(bnd_type)%dirichlet%rho     )  .or.  &
@@ -434,7 +443,8 @@ do i=1, n_local_elms !=== do elements
           ! --- BC, the node value and the derivatives tangential to the boundary
           ! --- are constrained; normal derivatives remain free. The constraint is
           ! --- linear, so it is imposed DOF-by-DOF and harmonic-by-harmonic.
-          if ( (k == var_u) .and. U_sheath .and. bcs(bnd_type)%dirichlet%u ) then
+          if ( (k == var_u) .and. U_sheath .and. bcs(bnd_type)%dirichlet%u           &
+                            .and. (.not. u_bc_by_current)                  ) then
 
             do kk = 1,(n_order+1)/2
               if ( (iv_dir .eq. 3) .and. (kk .gt. 1) ) cycle ! do only t-derivatives and node value
@@ -459,9 +469,15 @@ do i=1, n_local_elms !=== do elements
                     rhs_sheath = 0.d0
                   endif
                 else if ( with_TiTe ) then
+                  ! the coupling to Te is scaled by alpha_sheath as well, so that
+                  ! U_sheath_relax_time is a true response time of the boundary
+                  ! potential: u^(n+1) = (1-alpha)*u^n + alpha*c*Te^(n+1), the
+                  ! implicit discretization of du/dt = (c*Te - u)/tau. Fast Te
+                  ! fluctuations at the targets are then low-pass filtered instead
+                  ! of being transferred to u within a single step.
                   call boundary_conditions_add_one_entry(               &
                          index_node, k, in, index_node, var_Te, in,     &
-                         - zbig * c_sheath_u,                           &
+                         - zbig * alpha_sheath * c_sheath_u,            &
                          index_min, index_max, a_mat)
                   rhs_sheath = - zbig * alpha_sheath                                                &
                                * ( node_list%node(inode)%values(in,index_tmp,var_u)                 &
@@ -469,7 +485,7 @@ do i=1, n_local_elms !=== do elements
                 else
                   call boundary_conditions_add_one_entry(               &
                          index_node, k, in, index_node, var_T, in,      &
-                         - zbig * c_sheath_u,                           &
+                         - zbig * alpha_sheath * c_sheath_u,            &
                          index_min, index_max, a_mat)
                   rhs_sheath = - zbig * alpha_sheath                                                &
                                * ( node_list%node(inode)%values(in,index_tmp,var_u)                 &

@@ -838,6 +838,10 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,REAL_FMT) 'U_sheath_relax_time   ', U_sheath_relax_time
     write(*,LOGI_FMT) 'U_sheath_static       ', U_sheath_static
   end if
+  write(*,LOGI_FMT) 'U_sheath_current      ', U_sheath_current
+  if ( U_sheath_current .and. (.not. bc_natural_open) ) then
+    write(*,*) 'WARNING: U_sheath_current requires bc_natural_open; the sheath current BC stays inactive'
+  end if
 
   write(*,LOGI_FMT) 'bc_natural_open       ', bc_natural_open
   write(*,LOGI_FMT) 'produce_live_data     ', produce_live_data

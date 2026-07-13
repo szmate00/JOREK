@@ -56,6 +56,8 @@ real*8     :: Ti0, Ti0_s, Ti0_t, Ti0_x, Ti0_y, Ti0_p
 real*8     :: Te0, Te0_s, Te0_t, Te0_x, Te0_y, Te0_p
 real*8     :: r0, r0_s, r0_t, r0_p, r0_x, r0_y, rho, rho_s, rho_t, rho_x, rho_y
 real*8     :: c_1, c_2, c_3, c_angle, neutral_source
+real*8     :: c_shu, c_shj, t_norm_sh, u0_sh, zj0_sh, px_sh, py_sh, pl_sh
+real*8     :: jn_hat, chi_sh, exp_sh, exp_sh_lin, bn_eff, G_sh, djn_dzj, uu, zjj
 real*8     :: element_size_ij, element_size_kl, element_size_perp
 real*8     :: grad_t(2), B0_R, B0_Z, factor_cs_bnd_integral
 logical    :: xpoint2
@@ -75,6 +77,17 @@ rhs_ij = 0.d0
 amat   = 0.d0
 
 c_angle = min_sheath_angle     * PI / 180.d0 ! --- angle factor for minimum heat and particle fluxes (in radians here)
+
+! --- Normalization constants for the sheath current-voltage BC on u (U_sheath_current):
+! --- e*Phi/(k_B*Te) = u/(c_shu*Te_jorek) with Phi[V] = F0*u/t_norm and
+! --- k_B*Te[J] = Te_jorek/(MU_ZERO*n_norm) (cf. particles/mod_fields.f90); the
+! --- boundary-crossing current density is normalized by the ion saturation current
+! --- e*n*c_s via c_shj (n_norm = central_density*1e20; pure plasma n_e=n_i=rho/m_i).
+if (U_sheath_current) then
+  t_norm_sh = sqrt(MU_ZERO * central_density*1.d20 * central_mass*ATOMIC_MASS_UNIT)
+  c_shu     = t_norm_sh / (EL_CHG * F0 * MU_ZERO * central_density*1.d20)
+  c_shj     = c_shu * F0**2
+endif
 
 !--------------------- reorder the nodes to have the same direction as full element (maybe not necesary)
 if ((vertex(1) .eq. 3) .and. (vertex(2) .eq. 4)) then
@@ -137,6 +150,11 @@ do i_var=1, n_var
   if ( (i_var==var_Te  ) .and. (bcs(bnd_type1)%natural%Te   .or. bcs(bnd_type2)%natural%Te  ))  apply_natural_bc(i_var)=.true.
   if ( (i_var==var_rhon) .and. (bcs(bnd_type1)%natural%rhon .or. bcs(bnd_type2)%natural%rhon))  apply_natural_bc(i_var)=.true.
   if ( (i_var==var_vpar) .and. (bcs(bnd_type1)%natural%vpar .or. bcs(bnd_type2)%natural%vpar))  apply_natural_bc(i_var)=.true.
+  ! --- Sheath current-voltage BC on u: only on edges where BOTH nodes are of an
+  ! --- open (mach1) boundary type, so that it never overlaps with a Dirichlet
+  ! --- condition on u at a node of an adjacent closed boundary segment
+  if ( (i_var==var_u   ) .and. U_sheath_current                                              &
+                         .and. bcs(bnd_type1)%mach1 .and. bcs(bnd_type2)%mach1             )  apply_natural_bc(i_var)=.true.
 enddo
 
 do i=1,2    ! sum over 2 verices
@@ -320,6 +338,36 @@ do ms=1, n_gauss
     factor_cs_bnd_integral = 0.d0
     if (mach_one_bnd_integral) factor_cs_bnd_integral = 1.d0
 
+    ! --- Sheath current-voltage BC on u (U_sheath_current): penalized boundary
+    ! --- integral imposing the dimensionless constraint
+    ! ---   G_sh = j.n/(e*n*c_s) - (|b.n| + c_angle)*(1 - exp(lambda_sheath - e*Phi/k*Te)) = 0
+    ! --- with the boundary-crossing current density built from the parallel current
+    ! --- (via zj) and the diamagnetic current (via grad p), cf. the halo current
+    ! --- diagnostic in mod_poloidal_currents. The c_angle floor on |b.n| makes the
+    ! --- constraint degenerate gracefully into the floating condition u = c*Te at
+    ! --- grazing incidence. The exponent is clipped for FPE safety, and its
+    ! --- linearization is floored to keep the u-block invertible at deep ion
+    ! --- saturation. B, its direction and grad p are treated as frozen in the
+    ! --- linearization (as for the other natural BCs).
+    if (U_sheath_current) then
+      u0_sh  = eq_g(mp,var_u ,ms)
+      zj0_sh = eq_g(mp,var_zj,ms)
+
+      px_sh  = r0_x*(Ti0_corr+Te0_corr) + r0_corr*(Ti0_x+Te0_x)
+      py_sh  = r0_y*(Ti0_corr+Te0_corr) + r0_corr*(Ti0_y+Te0_y)
+      pl_sh  = px_sh*normal(2) - py_sh*normal(1)      ! grad p . (e_phi x n)
+
+      jn_hat = - c_shj * ( zj0_sh*bdotn/BigR + pl_sh/Btot ) / (BigR*Btot*r0_corr*cs0)
+
+      chi_sh     = u0_sh / (c_shu * Te0_corr)
+      exp_sh     = exp( max( min( lambda_sheath - chi_sh, 8.d0 ), -80.d0 ) )
+      exp_sh_lin = max( exp_sh, 3.d-2 )
+      bn_eff     = abs(bdotn) + c_angle
+
+      G_sh    = jn_hat - bn_eff * (1.d0 - exp_sh)
+      djn_dzj = - c_shj * bdotn / (BigR**2 * Btot * r0_corr * cs0)
+    endif
+
     do i=1,2                ! loop over nodes
 
       do j=1,2              ! loop over basis functions
@@ -368,6 +416,12 @@ do ms=1, n_gauss
             endif ! with_neutrals
 
           endif ! with_vpar
+
+          ! --- Sheath current-voltage BC on u through penalized boundary integral
+          if ( U_sheath_current .and. apply_natural_bc(var_u) ) then
+            rhs_ij(var_u) = - v * G_sh * dl * Zbig
+          endif
+
           index_ij = n_tor_local*n_var*n_degrees*(vertex(i)-1) + n_tor_local * n_var * (j2-1) + im - i_tor_min +1  ! index in the ELM matrix
 
           do i_var = 1, n_var
@@ -490,6 +544,28 @@ do ms=1, n_gauss
                   endif ! with neutrals
 
                 endif   ! with_vpar
+
+                ! --- Sheath current-voltage BC on u: linearization of G_sh w.r.t.
+                ! --- u (through e*Phi/k*Te), zj (parallel current), rho and the
+                ! --- temperatures (saturation current); grad p and B frozen
+                if ( U_sheath_current .and. apply_natural_bc(var_u) ) then
+                  uu  = psi
+                  zjj = psi
+
+                  amat(var_u,var_u)   = - v * bn_eff * exp_sh_lin / (c_shu*Te0_corr) * uu  * dl * Zbig
+                  amat(var_u,var_zj)  =   v * djn_dzj                                * zjj * dl * Zbig
+                  amat(var_u,var_rho) = - v * jn_hat / r0_corr                       * rho * dl * Zbig
+
+                  if (with_TiTe) then
+                    amat(var_u,var_Te) =   v * (   bn_eff * exp_sh_lin * chi_sh / Te0_corr        &
+                                                 - jn_hat * gamma / (2.d0*cs0**2) ) * Te * dl * Zbig
+                    amat(var_u,var_Ti) = - v *     jn_hat * gamma / (2.d0*cs0**2)   * Ti * dl * Zbig
+                  else
+                    amat(var_u,var_T)  =   v * (   0.5d0 * bn_eff * exp_sh_lin * chi_sh / Te0_corr &
+                                                 - jn_hat * gamma / (2.d0*cs0**2) ) * T  * dl * Zbig
+                  endif
+                endif
+
                 index_kl = n_tor_local*n_var*n_degrees*(vertex(k)-1) + n_tor_local * n_var * (l2-1) + in - i_tor_min +1  ! index in the ELM matrix
 
                 ! --- Add contributions to ELM matrix                 
