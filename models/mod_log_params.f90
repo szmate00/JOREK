@@ -836,6 +836,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   if ( U_sheath ) then
     write(*,REAL_FMT) 'lambda_sheath         ', lambda_sheath
     write(*,REAL_FMT) 'U_sheath_relax_time   ', U_sheath_relax_time
+    write(*,LOGI_FMT) 'U_sheath_static       ', U_sheath_static
   end if
 
   write(*,LOGI_FMT) 'bc_natural_open       ', bc_natural_open

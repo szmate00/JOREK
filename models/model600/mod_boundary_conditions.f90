@@ -1,4 +1,12 @@
 module mod_boundary_conditions
+
+implicit none
+
+!> Boundary Te DOFs frozen at the first matrix assembly of the run, used as the
+!> target values of the static U_sheath variant (see U_sheath_static). Dimensions:
+!> (n_tor, n_degrees, n_bnd_nodes); re-frozen if the boundary node count changes.
+real*8, allocatable :: Te_bnd_frozen(:,:,:)
+
 contains
 
 !*******************************************************************************
@@ -38,7 +46,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        mach_one_bnd_integral, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,                            &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                                   &
-       U_sheath, lambda_sheath, U_sheath_relax_time
+       U_sheath, lambda_sheath, U_sheath_relax_time, U_sheath_static
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -172,6 +180,31 @@ if (U_sheath) then
   if (.not. with_TiTe) c_sheath_u = 0.5d0 * c_sheath_u ! Te = T/2 in the single-temperature model
   alpha_sheath = 1.d0
   if (U_sheath_relax_time .gt. tstep) alpha_sheath = tstep / U_sheath_relax_time
+
+  ! --- Static variant (U_sheath_static): the target values u = c_sheath_u*Te use
+  ! --- the Te DOFs frozen at the first matrix assembly of this run (re-frozen from
+  ! --- the imported state after a restart!). This gives a physically motivated but
+  ! --- time-independent boundary potential without the dynamic sheath response and
+  ! --- without the Jacobian coupling to Te.
+  if (U_sheath_static) then
+    if (allocated(Te_bnd_frozen)) then
+      if (size(Te_bnd_frozen,3) .ne. bnd_node_list%n_bnd_nodes) then
+        deallocate(Te_bnd_frozen)
+        if (my_id .eq. 0) write(*,*) 'NOTE [U_sheath_static]: boundary node count changed; re-freezing sheath Te values'
+      endif
+    endif
+    if (.not. allocated(Te_bnd_frozen)) then
+      allocate(Te_bnd_frozen(n_tor, n_degrees, bnd_node_list%n_bnd_nodes))
+      do j=1, bnd_node_list%n_bnd_nodes
+        inode = bnd_node_list%bnd_node(j)%index_jorek
+        if ( with_TiTe ) then
+          Te_bnd_frozen(:,:,j) = node_list%node(inode)%values(:,:,var_Te)
+        else
+          Te_bnd_frozen(:,:,j) = node_list%node(inode)%values(:,:,var_T)
+        endif
+      enddo
+    endif
+  endif
 endif
 
 ! --- calculate node_indices
@@ -378,10 +411,12 @@ do i=1, n_local_elms !=== do elements
           ! --- sheath condition used at the targets in SOLPS-ITER and edge
           ! --- turbulence codes; on closed-flux-surface boundaries, where Te is
           ! --- held by its own Dirichlet BC, u is effectively fixed at the
-          ! --- consistent value. As for the Dirichlet BC, the node value and the
-          ! --- derivatives tangential to the boundary are constrained; normal
-          ! --- derivatives remain free. The constraint is linear, so it is imposed
-          ! --- DOF-by-DOF and harmonic-by-harmonic.
+          ! --- consistent value. With U_sheath_static, the frozen initial Te is
+          ! --- used instead: same boundary potential structure, but constant in
+          ! --- time and without the dynamic sheath response. As for the Dirichlet
+          ! --- BC, the node value and the derivatives tangential to the boundary
+          ! --- are constrained; normal derivatives remain free. The constraint is
+          ! --- linear, so it is imposed DOF-by-DOF and harmonic-by-harmonic.
           if ( (k == var_u) .and. U_sheath .and. bcs(bnd_type)%dirichlet%u ) then
 
             do kk = 1,(n_order+1)/2
@@ -395,7 +430,13 @@ do i=1, n_local_elms !=== do elements
                        index_node, k, in, index_node, k, in,            &
                        zbig, index_min, index_max, a_mat)
 
-                if ( with_TiTe ) then
+                if ( U_sheath_static ) then
+                  ! static variant: drive u towards the frozen sheath value; no Te coupling
+                  rhs_sheath = - zbig * alpha_sheath                                                &
+                               * ( node_list%node(inode)%values(in,index_tmp,var_u)                 &
+                                 - c_sheath_u                                                       &
+                                   * Te_bnd_frozen(in,index_tmp,node_list%node(inode)%boundary_index) )
+                else if ( with_TiTe ) then
                   call boundary_conditions_add_one_entry(               &
                          index_node, k, in, index_node, var_Te, in,     &
                          - zbig * c_sheath_u,                           &
