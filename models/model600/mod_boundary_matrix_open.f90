@@ -58,6 +58,7 @@ real*8     :: r0, r0_s, r0_t, r0_p, r0_x, r0_y, rho, rho_s, rho_t, rho_x, rho_y
 real*8     :: c_1, c_2, c_3, c_angle, neutral_source
 real*8     :: c_shu, c_shj, t_norm_sh, u0_sh, zj0_sh, px_sh, py_sh, pl_sh
 real*8     :: jn_hat, chi_sh, exp_sh, exp_sh_lin, bn_eff, G_sh, djn_dzj, uu, zjj
+real*8     :: alpha_shc, djn_fact
 real*8     :: element_size_ij, element_size_kl, element_size_perp
 real*8     :: grad_t(2), B0_R, B0_Z, factor_cs_bnd_integral
 logical    :: xpoint2
@@ -87,6 +88,11 @@ if (U_sheath_current) then
   t_norm_sh = sqrt(MU_ZERO * central_density*1.d20 * central_mass*ATOMIC_MASS_UNIT)
   c_shu     = t_norm_sh / (EL_CHG * F0 * MU_ZERO * central_density*1.d20)
   c_shj     = c_shu * F0**2
+
+  ! --- response-time damping, cf. the U_sheath relaxation: the boundary moves a
+  ! --- fraction alpha of the way towards the current-voltage balance per step
+  alpha_shc = 1.d0
+  if (U_sheath_relax_time .gt. tstep) alpha_shc = tstep / U_sheath_relax_time
 endif
 
 !--------------------- reorder the nodes to have the same direction as full element (maybe not necesary)
@@ -357,15 +363,33 @@ do ms=1, n_gauss
       py_sh  = r0_y*(Ti0_corr+Te0_corr) + r0_corr*(Ti0_y+Te0_y)
       pl_sh  = px_sh*normal(2) - py_sh*normal(1)      ! grad p . (e_phi x n)
 
+      bn_eff = abs(bdotn) + c_angle
+
       jn_hat = - c_shj * ( zj0_sh*bdotn/BigR + pl_sh/Btot ) / (BigR*Btot*r0_corr*cs0)
+
+      ! --- clip the demanded current to the range the sheath characteristic can
+      ! --- actually deliver (95% of ion saturation on one side, the exponent cap
+      ! --- on the other), so that G_sh = 0 always has a solution: without the
+      ! --- clip, an over-saturated demand (e.g. the diamagnetic current at the
+      ! --- strike point, which can reach O(1) of the saturation current) leaves a
+      ! --- finite residual that the penalty row converts into an unbounded push
+      ! --- on u. In the clipped state the current-derivatives are switched off
+      ! --- (djn_fact) and the potential parks at chi = lambda - ln(1+jn/bn_eff).
+      djn_fact = 1.d0
+      if ( jn_hat .lt. -0.95d0*bn_eff ) then
+        jn_hat   = -0.95d0*bn_eff
+        djn_fact = 0.d0
+      else if ( jn_hat .gt. 0.95d0*bn_eff*(exp(8.d0)-1.d0) ) then
+        jn_hat   = 0.95d0*bn_eff*(exp(8.d0)-1.d0)
+        djn_fact = 0.d0
+      endif
 
       chi_sh     = u0_sh / (c_shu * Te0_corr)
       exp_sh     = exp( max( min( lambda_sheath - chi_sh, 8.d0 ), -80.d0 ) )
       exp_sh_lin = max( exp_sh, 3.d-2 )
-      bn_eff     = abs(bdotn) + c_angle
 
       G_sh    = jn_hat - bn_eff * (1.d0 - exp_sh)
-      djn_dzj = - c_shj * bdotn / (BigR**2 * Btot * r0_corr * cs0)
+      djn_dzj = - c_shj * bdotn / (BigR**2 * Btot * r0_corr * cs0) * djn_fact
     endif
 
     do i=1,2                ! loop over nodes
@@ -418,8 +442,10 @@ do ms=1, n_gauss
           endif ! with_vpar
 
           ! --- Sheath current-voltage BC on u through penalized boundary integral
+          ! --- (residual damped by alpha_shc: u moves a fraction alpha of the way
+          ! --- towards the balance per step, U_sheath_relax_time = response time)
           if ( U_sheath_current .and. apply_natural_bc(var_u) ) then
-            rhs_ij(var_u) = - v * G_sh * dl * Zbig
+            rhs_ij(var_u) = - v * alpha_shc * G_sh * dl * Zbig
           endif
 
           index_ij = n_tor_local*n_var*n_degrees*(vertex(i)-1) + n_tor_local * n_var * (j2-1) + im - i_tor_min +1  ! index in the ELM matrix
@@ -552,17 +578,20 @@ do ms=1, n_gauss
                   uu  = psi
                   zjj = psi
 
-                  amat(var_u,var_u)   = - v * bn_eff * exp_sh_lin / (c_shu*Te0_corr) * uu  * dl * Zbig
-                  amat(var_u,var_zj)  =   v * djn_dzj                                * zjj * dl * Zbig
-                  amat(var_u,var_rho) = - v * jn_hat / r0_corr                       * rho * dl * Zbig
+                  ! the (u,u) tangent is kept at full strength while the residual
+                  ! and the couplings carry alpha_shc: per step, u moves a fraction
+                  ! alpha of the way towards the current-voltage balance
+                  amat(var_u,var_u)   = - v * bn_eff * exp_sh_lin / (c_shu*Te0_corr)             * uu  * dl * Zbig
+                  amat(var_u,var_zj)  =   v * alpha_shc * djn_dzj                                * zjj * dl * Zbig
+                  amat(var_u,var_rho) = - v * alpha_shc * djn_fact * jn_hat / r0_corr            * rho * dl * Zbig
 
                   if (with_TiTe) then
-                    amat(var_u,var_Te) =   v * (   bn_eff * exp_sh_lin * chi_sh / Te0_corr        &
-                                                 - jn_hat * gamma / (2.d0*cs0**2) ) * Te * dl * Zbig
-                    amat(var_u,var_Ti) = - v *     jn_hat * gamma / (2.d0*cs0**2)   * Ti * dl * Zbig
+                    amat(var_u,var_Te) =   v * alpha_shc * (   bn_eff * exp_sh_lin * chi_sh / Te0_corr        &
+                                                 - djn_fact * jn_hat * gamma / (2.d0*cs0**2) ) * Te * dl * Zbig
+                    amat(var_u,var_Ti) = - v * alpha_shc *     djn_fact * jn_hat * gamma / (2.d0*cs0**2)   * Ti * dl * Zbig
                   else
-                    amat(var_u,var_T)  =   v * (   0.5d0 * bn_eff * exp_sh_lin * chi_sh / Te0_corr &
-                                                 - jn_hat * gamma / (2.d0*cs0**2) ) * T  * dl * Zbig
+                    amat(var_u,var_T)  =   v * alpha_shc * (   0.5d0 * bn_eff * exp_sh_lin * chi_sh / Te0_corr &
+                                                 - djn_fact * jn_hat * gamma / (2.d0*cs0**2) ) * T  * dl * Zbig
                   endif
                 endif
 
