@@ -3,9 +3,13 @@ module mod_boundary_conditions
 implicit none
 
 !> Boundary Te DOFs frozen at the first matrix assembly of the run, used as the
-!> target values of the static U_sheath variant (see U_sheath_static). Dimensions:
-!> (n_tor, n_degrees, n_bnd_nodes); re-frozen if the boundary node count changes.
-real*8, allocatable :: Te_bnd_frozen(:,:,:)
+!> target values of the static U_sheath variant (see U_sheath_static), and the map
+!> from global node index to the corresponding slot in Te_bnd_frozen (0 for
+!> non-boundary nodes). Re-frozen if the grid changes. Deliberately self-contained:
+!> bnd_node_list/boundary_index are NOT used, since they do not reliably cover all
+!> boundary node types on wall-aligned grids (types are updated after define_boundary).
+real*8,  allocatable :: Te_bnd_frozen(:,:,:) !< (n_tor, n_degrees, number of boundary nodes)
+integer, allocatable :: sheath_bnd_map(:)    !< (n_nodes)
 
 contains
 
@@ -187,22 +191,35 @@ if (U_sheath) then
   ! --- time-independent boundary potential without the dynamic sheath response and
   ! --- without the Jacobian coupling to Te.
   if (U_sheath_static) then
-    if (allocated(Te_bnd_frozen)) then
-      if (size(Te_bnd_frozen,3) .ne. bnd_node_list%n_bnd_nodes) then
-        deallocate(Te_bnd_frozen)
-        if (my_id .eq. 0) write(*,*) 'NOTE [U_sheath_static]: boundary node count changed; re-freezing sheath Te values'
+    if (allocated(sheath_bnd_map)) then
+      if (size(sheath_bnd_map) .ne. node_list%n_nodes) then
+        deallocate(sheath_bnd_map)
+        if (allocated(Te_bnd_frozen)) deallocate(Te_bnd_frozen)
+        if (my_id .eq. 0) write(*,*) 'NOTE [U_sheath_static]: grid changed; re-freezing sheath Te values'
       endif
     endif
-    if (.not. allocated(Te_bnd_frozen)) then
-      allocate(Te_bnd_frozen(n_tor, n_degrees, bnd_node_list%n_bnd_nodes))
-      do j=1, bnd_node_list%n_bnd_nodes
-        inode = bnd_node_list%bnd_node(j)%index_jorek
-        if ( with_TiTe ) then
-          Te_bnd_frozen(:,:,j) = node_list%node(inode)%values(:,:,var_Te)
-        else
-          Te_bnd_frozen(:,:,j) = node_list%node(inode)%values(:,:,var_T)
+    if (.not. allocated(sheath_bnd_map)) then
+      allocate(sheath_bnd_map(node_list%n_nodes))
+      sheath_bnd_map = 0
+      j = 0
+      do inode=1, node_list%n_nodes
+        if (node_list%node(inode)%boundary .ne. 0) then
+          j = j + 1
+          sheath_bnd_map(inode) = j
         endif
       enddo
+      allocate(Te_bnd_frozen(n_tor, n_degrees, max(j,1)))
+      Te_bnd_frozen = 0.d0
+      do inode=1, node_list%n_nodes
+        if (sheath_bnd_map(inode) .gt. 0) then
+          if ( with_TiTe ) then
+            Te_bnd_frozen(:,:,sheath_bnd_map(inode)) = node_list%node(inode)%values(:,:,var_Te)
+          else
+            Te_bnd_frozen(:,:,sheath_bnd_map(inode)) = node_list%node(inode)%values(:,:,var_T)
+          endif
+        endif
+      enddo
+      if (my_id .eq. 0) write(*,*) 'NOTE [U_sheath_static]: froze sheath Te values on ', j, ' boundary nodes'
     endif
   endif
 endif
@@ -432,10 +449,15 @@ do i=1, n_local_elms !=== do elements
 
                 if ( U_sheath_static ) then
                   ! static variant: drive u towards the frozen sheath value; no Te coupling
-                  rhs_sheath = - zbig * alpha_sheath                                                &
-                               * ( node_list%node(inode)%values(in,index_tmp,var_u)                 &
-                                 - c_sheath_u                                                       &
-                                   * Te_bnd_frozen(in,index_tmp,node_list%node(inode)%boundary_index) )
+                  if ( sheath_bnd_map(inode) .gt. 0 ) then
+                    rhs_sheath = - zbig * alpha_sheath                                              &
+                                 * ( node_list%node(inode)%values(in,index_tmp,var_u)               &
+                                   - c_sheath_u * Te_bnd_frozen(in,index_tmp,sheath_bnd_map(inode)) )
+                  else
+                    ! node became a boundary node after the freeze (should not happen):
+                    ! keep its increments frozen like a plain Dirichlet condition
+                    rhs_sheath = 0.d0
+                  endif
                 else if ( with_TiTe ) then
                   call boundary_conditions_add_one_entry(               &
                          index_node, k, in, index_node, var_Te, in,     &
