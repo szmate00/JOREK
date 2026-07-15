@@ -1147,6 +1147,11 @@ module phys_module
                                          !< previous fluid-interval kinetic feedback integrals while the fluid terms keep the (variable
                                          !< step) Gears scheme (Strien 2022, Eq. 3.55); improves energy conservation of the coupling
                                          !< after impulsive events. Inert when time_evol_zeta=0 (one-step fluid schemes).
+  logical :: use_ics_zeff_resistivity    !< Zeff-corrected Spitzer resistivity from the kinetic impurity charge-state distribution
+                                         !< (Strien 2022, Sec. 3.4): Zeff = (n_i + sum n_j Z_j^2)/(n_i + sum n_j Z_j) from the imp_q
+                                         !< and imp_q2 projections, the C(Zeff) coefficient of Eq. 3.29, the single-temperature
+                                         !< electron-dilution factor (n_e/n_i)^{3/2} of Eq. 3.30, and the eta ceiling of Eq. 3.31.
+                                         !< Requires eta_T_dependent; incompatible with fluid impurities (with_impurities).
 
   ! ------------------------------------------------
   ! --- Structures for fluid groups

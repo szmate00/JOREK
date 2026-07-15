@@ -5,7 +5,7 @@ module mod_particle_evolution
     use particle_tracer
     use phys_module, only: CENTRAL_MASS, CENTRAL_DENSITY
     use phys_module, only: use_manual_random_seed, n_aux_var, part_kill_ratio, proj_collection_period
-    use phys_module, only: use_ics_full_force_coupling
+    use phys_module, only: use_ics_full_force_coupling, use_ics_zeff_resistivity
     use mod_coupling_settings
     use coupling_variables
     use mod_project_particles
@@ -110,6 +110,8 @@ contains
       !> ics specific projections
       if (part_group%coupling_scheme == 'ics') then
         jorek_feedback%rhs(:,:,:,:,imp_q_idx)     = jorek_feedback%rhs(:,:,:,:,imp_q_idx)       + feedback_rhs(:,:,:,:,imp_q_idx)       / (sim%tstep_fluid_si/tstep_part_adj)
+        if (use_ics_zeff_resistivity) &
+          jorek_feedback%rhs(:,:,:,:,imp_q2_idx_kin) = jorek_feedback%rhs(:,:,:,:,imp_q2_idx_kin) + feedback_rhs(:,:,:,:,imp_q2_idx_kin) / (sim%tstep_fluid_si/tstep_part_adj)
         jorek_feedback%rhs(:,:,:,:,ics_prad_diag_idx_kin) = jorek_feedback%rhs(:,:,:,:,ics_prad_diag_idx_kin) + feedback_rhs(:,:,:,:,ics_prad_diag_idx_kin) / sim%tstep_fluid_si                  !< extra projection (impurity radiated power)
         jorek_feedback%rhs(:,:,:,:,ics_dens_diag_idx_kin) = jorek_feedback%rhs(:,:,:,:,ics_dens_diag_idx_kin) + feedback_rhs(:,:,:,:,ics_dens_diag_idx_kin) / (sim%tstep_fluid_si/tstep_part_adj) !< extra projection (impurity density)
 
@@ -293,7 +295,7 @@ contains
     real*8    :: energy_source_Te, energy_source_Ti
     real*8    :: density_fb, mom_par_fb, E_fb, imp_q_fb, imp_density_fb, imp_P_rad_fb, extra_proj, imp_P_line_rad_fb
     real*8    :: Rk_source(3), fk_source(3), fk_par_source, dv_em(3)
-    real*8    :: Rk_R_fb, Rk_Z_fb, fk_par_fb, fk_R_fb, fk_Z_fb
+    real*8    :: Rk_R_fb, Rk_Z_fb, fk_par_fb, fk_R_fb, fk_Z_fb, imp_q2_fb
     real*8    :: E_fb_Te, E_fb_Ti
     real*8    :: v_old(3), v_new(3), T_eV, B_norm(3)
     real*8    :: vvector(3), ran_norm(4)
@@ -362,6 +364,7 @@ contains
 #endif
     !$omp imp_q_idx, ics_indices_kin,                                                                     &
     !$omp use_ics_full_force_coupling, fk_par_idx_kin, fk_R_idx_kin, fk_Z_idx_kin,                        &
+    !$omp use_ics_zeff_resistivity, imp_q2_idx_kin,                                                       &
     !$omp Rk_par_idx_kin, Rk_R_idx_kin, Rk_Z_idx_kin,                                                     &
     !$omp ncs_dens_diag_idx_kin, ics_prad_diag_idx_kin, ics_dens_diag_idx_kin,                            &
     !$omp CENTRAL_DENSITY, CENTRAL_MASS, feedback_nodelist, feedback_element_list)                        &
@@ -376,7 +379,8 @@ contains
     !$omp m_b, kTb,coulomb_log ,n_b,v_b, ran, ran2, q_b, q, E_fb_Te, E_fb_Ti,                             &
     !$omp P, P_s, P_t, P_phi, P_time, limits, limits_coll, energy_source_Te, energy_source_Ti,            &
     !$omp vvector, ran_norm, imp_q_idx_temp, T_e_raw, T_i_raw, n_e_raw, delta_E_kin, i_tor, n,            &
-    !$omp Rk_source, fk_source, fk_par_source, dv_em, Rk_R_fb, Rk_Z_fb, fk_par_fb, fk_R_fb, fk_Z_fb)      &
+    !$omp Rk_source, fk_source, fk_par_source, dv_em, Rk_R_fb, Rk_Z_fb, fk_par_fb, fk_R_fb, fk_Z_fb,      &
+    !$omp imp_q2_fb)                                                                                      &
     !$omp reduction(+:feedback_rhs,n_lost_ion,p_lost_plt,p_lost_cx,p_lost_ion,n_super_ionized)
     do j=1,size(sim%groups(group_num)%particles,1)
       particle_tmp = sim%groups(group_num)%particles(j)
@@ -689,6 +693,9 @@ contains
               E_fb           = HH(l,m) * sim%fields%element_list%element(i_elm_old)%size(l,m) * energy_source     * t_norm / E_norm
 #endif
               imp_q_fb       = HH(l,m) * sim%fields%element_list%element(i_elm_old)%size(l,m) * particle_tmp%weight * particle_tmp%q
+              !> cast q to real BEFORE squaring: particle q is integer(1), which overflows for Z^2 > 127
+              if (use_ics_zeff_resistivity) imp_q2_fb = HH(l,m) * sim%fields%element_list%element(i_elm_old)%size(l,m) &
+                                                        * particle_tmp%weight * real(particle_tmp%q,8)**2
               imp_density_fb = HH(l,m) * sim%fields%element_list%element(i_elm_old)%size(l,m) * particle_tmp%weight
               imp_P_rad_fb   = HH(l,m) * sim%fields%element_list%element(i_elm_old)%size(l,m) * radiation_energy / tstep_part_adj
               if (use_ics_full_force_coupling) then
@@ -711,6 +718,8 @@ contains
                   feedback_rhs(m,l,i_elm_old,i_tor,mom_par_idx_kin) = feedback_rhs(m,l,i_elm_old,i_tor,mom_par_idx_kin) + HZ(i_tor) * mom_par_fb
                 endif
                 feedback_rhs(m,l,i_elm_old,i_tor,imp_q_idx)       = feedback_rhs(m,l,i_elm_old,i_tor,imp_q_idx)       + HZ(i_tor) * imp_q_fb       ! impurity charge density
+                if (use_ics_zeff_resistivity) &
+                  feedback_rhs(m,l,i_elm_old,i_tor,imp_q2_idx_kin) = feedback_rhs(m,l,i_elm_old,i_tor,imp_q2_idx_kin) + HZ(i_tor) * imp_q2_fb     ! sum n_j*Z_j^2 for kinetic Zeff
                 feedback_rhs(m,l,i_elm_old,i_tor,ics_prad_diag_idx_kin) = feedback_rhs(m,l,i_elm_old,i_tor,ics_prad_diag_idx_kin) + HZ(i_tor) * imp_P_rad_fb   ! impurity radiated power
                 feedback_rhs(m,l,i_elm_old,i_tor,ics_dens_diag_idx_kin) = feedback_rhs(m,l,i_elm_old,i_tor,ics_dens_diag_idx_kin) + HZ(i_tor) * imp_density_fb ! impurity density
               enddo

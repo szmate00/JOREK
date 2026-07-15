@@ -978,6 +978,7 @@ part_kill_ratio = 1.d-3
 
 use_ics_full_force_coupling = .false.
 use_kin_cn_coupling         = .false.
+use_ics_zeff_resistivity    = .false.
 
 ! --- fluid groups
 n_fluid_groups = 0

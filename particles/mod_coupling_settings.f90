@@ -4,7 +4,7 @@ use mpi
 use mod_model_settings
 use phys_module, only: n_part_groups, n_part_groups_max, part_group_configs
 use phys_module, only: n_aux_var, n_diag_var
-use phys_module, only: use_ics_full_force_coupling, use_kin_cn_coupling
+use phys_module, only: use_ics_full_force_coupling, use_kin_cn_coupling, use_ics_zeff_resistivity
 use coupling_variables
 
 implicit none
@@ -400,12 +400,30 @@ subroutine determine_coupling_variables()
         call assess_and_accumulate_variable(ics_force_var_names(i), coupling_var_idx, coupling_vars)
       enddo
     endif
+
+    !> kinetic Zeff resistivity channel (Strien 2022 Sec. 3.4): shared over all ics groups
+    if (use_ics_zeff_resistivity .and. with_impurities) then
+      write(*,*) "WARNING: use_ics_zeff_resistivity = .true. but the model is compiled with fluid"
+      write(*,*) "         impurities (with_impurities): the fluid Zeff would be double counted."
+      write(*,*) "         The flag is disabled; the fluid-impurity Zeff correction remains active."
+      use_ics_zeff_resistivity = .false.
+    endif
+    if (use_ics_zeff_resistivity) then
+      coupling_var_idx = coupling_var_idx + 1
+      coupling_vars(coupling_var_idx) = "imp_q2"         !< sum_j n_j*Z_j^2 for the kinetic Zeff
+    endif
   endif
 
   if (use_ics_full_force_coupling .and. .not. use_ics) then
     write(*,*) "WARNING: use_ics_full_force_coupling = .true. but no 'ics' particle group is present;"
     write(*,*) "         the flag has no effect and is disabled."
     use_ics_full_force_coupling = .false.
+  endif
+
+  if (use_ics_zeff_resistivity .and. .not. use_ics) then
+    write(*,*) "WARNING: use_ics_zeff_resistivity = .true. but no 'ics' particle group is present;"
+    write(*,*) "         the flag has no effect and is disabled."
+    use_ics_zeff_resistivity = .false.
   endif
     
   if (use_rep) then
@@ -461,6 +479,8 @@ subroutine determine_coupling_variables()
         Rk_R_idx_kin = final_var_idx
       case ("Rk_Z")
         Rk_Z_idx_kin = final_var_idx
+      case ("imp_q2")
+        imp_q2_idx_kin = final_var_idx
       !> epf coupling vars
       case ("rho_ep")
         rho_ep_idx_kin = final_var_idx

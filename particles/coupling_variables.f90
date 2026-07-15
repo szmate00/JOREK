@@ -107,6 +107,11 @@ module coupling_variables
   integer :: Rk_R_idx_kin     = 0  !< R component of collisional force density (ExB flow work term)
   integer :: Rk_Z_idx_kin     = 0  !< Z component of collisional force density (ExB flow work term)
 
+  !> kinetic Zeff resistivity channel (use_ics_zeff_resistivity, Strien 2022 Sec. 3.4):
+  !> sum over all ics groups of weight*Z^2, i.e. sum_j n_j*Z_j^2 [m^-3] after the mass-matrix solve
+  !> (state-like, like imp_q: no prev slot, no CN combination)
+  integer :: imp_q2_idx_kin = 0
+
   !> named diagnostic projection slots (previously hard-coded literals 6/7/8 in evolve_ncs_ics,
   !> which collide with registered variables for some scheme combinations)
   integer :: ncs_dens_diag_idx_kin = 0 !< NCS neutral density diagnostic projection

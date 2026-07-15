@@ -212,6 +212,9 @@ real*8     :: aux_rho0, aux_E0, aux_mom_par0
 real*8     :: aux_E0_Ti, aux_E0_Te
 real*8     :: aux_fk_par0, aux_fk_R0, aux_fk_Z0    !< total kinetic-impurity force density on the plasma (Strien 2022)
 real*8     :: aux_Rk_par0, aux_Rk_R0, aux_Rk_Z0    !< collisional-only part of the force density (for the V.R_k work terms)
+real*8     :: kin_sum_nZ, kin_sum_nZ2, kin_ne_zeff !< kinetic-impurity Zeff quantities (use_ics_zeff_resistivity)
+real*8     :: zeff_dilution, eta_T_cap, eta_T_ohm_cap
+integer    :: i_zeff
 real*8     :: aux_P_par_re, aux_P_perp_re, aux_jre, aux_jre_ind
 
 ! --- Full pressure tensor coupling variables 
@@ -1131,6 +1134,30 @@ do i=1,n_vertex_max
             Z_eff       = 1.d0
             alpha_e     = 0.d0
             dalpha_e_dT = 0.d0
+            dZ_eff_dT     = 0.d0
+            dZ_eff_dr0    = 0.d0
+            dZ_eff_drimp0 = 0.d0
+
+            !> kinetic-impurity Zeff (Strien 2022, Sec. 3.4 / Eq. 2.100):
+            !> Zeff = (n_i + sum_j n_j Z_j^2) / (n_i + sum_j n_j Z_j), with n_e = n_i + sum_j n_j Z_j
+            !> from quasi-neutrality. The kinetic projections are in SI [m^-3]; the fluid density
+            !> r0_corr is in JOREK units (1 = central_density*1e20 m^-3).
+            if (use_ics .and. use_ics_zeff_resistivity) then
+              kin_sum_nZ = 0.d0
+              do i_zeff=1, n_ics
+                kin_sum_nZ = kin_sum_nZ + eq_aux_g(mp,ics_indices_kin(i_zeff),ms,mt)
+              enddo
+              kin_sum_nZ  = max(0.d0, kin_sum_nZ)  / (central_density*1.d20) !< to JOREK units
+              kin_sum_nZ2 = max(0.d0, eq_aux_g(mp,imp_q2_idx_kin,ms,mt)) / (central_density*1.d20)
+
+              kin_ne_zeff = r0_corr + kin_sum_nZ
+              Z_eff       = (r0_corr + kin_sum_nZ2) / kin_ne_zeff
+              Z_eff       = max(1.d0, Z_eff)
+              !> d/dr0 of (r0 + S2)/(r0 + S1) at fixed kinetic projections
+              dZ_eff_dr0  = (1.d0 - Z_eff) / kin_ne_zeff
+            else
+              kin_ne_zeff = r0_corr
+            endif
           endif
 
 
@@ -1149,6 +1176,42 @@ do i=1,n_vertex_max
                            dZ_eff_dT, dZ_eff_dr0, dZ_eff_drimp0, dr0_corr_dn, drimp0_corr_dn,             & 
                            deta_dT_ohm, d2eta_d2T_ohm, deta_dr0_ohm, deta_drimp0_ohm,                     &       
                            dlnA_dT, d2lnA_dT2, dlnA_dr0, dlnA_drimp0)    
+
+          !> kinetic-impurity Zeff resistivity corrections (Strien 2022, Sec. 3.4)
+          if (use_ics .and. use_ics_zeff_resistivity .and. .not. with_impurities .and. eta_T_dependent) then
+
+            !> single-temperature model only (thesis Eq. 3.30): the impurity electrons dilute the
+            !> per-electron temperature at fixed electron pressure, Te = (T/2)*(n_i/n_e), so
+            !> eta ~ Te^{-3/2} gains a factor (n_e/n_i)^{3/2}. With two temperatures Te is evolved
+            !> directly and no dilution applies. The r0-dependence of this factor is treated
+            !> explicitly (not in the Jacobian), like the kinetic aux quantities themselves.
+            if (.not. with_TiTe) then
+              zeff_dilution = (kin_ne_zeff / max(r0_corr, 1.d-30))**1.5d0
+              eta_T         = eta_T         * zeff_dilution
+              deta_dT       = deta_dT       * zeff_dilution
+              d2eta_d2T     = d2eta_d2T     * zeff_dilution
+              deta_dr0      = deta_dr0      * zeff_dilution
+              deta_drimp0   = deta_drimp0   * zeff_dilution
+              eta_T_ohm     = eta_T_ohm     * zeff_dilution
+              deta_dT_ohm   = deta_dT_ohm   * zeff_dilution
+              d2eta_d2T_ohm = d2eta_d2T_ohm * zeff_dilution
+              deta_dr0_ohm  = deta_dr0_ohm  * zeff_dilution
+              deta_drimp0_ohm = deta_drimp0_ohm * zeff_dilution
+            endif
+
+            !> ceiling (thesis Eqs. 3.31/3.32): the Zeff and dilution factors must not push the
+            !> resistivity beyond its value at the minimum temperature without the extra factors
+            eta_T_cap = eta * (T_min/T_or_Te_0)**(-1.5d0)
+            if (eta_T .gt. eta_T_cap) then
+              eta_T     = eta_T_cap
+              deta_dT   = 0.d0; d2eta_d2T = 0.d0; deta_dr0 = 0.d0; deta_drimp0 = 0.d0
+            endif
+            eta_T_ohm_cap = eta_ohmic * (T_min/T_or_Te_0)**(-1.5d0)
+            if (eta_T_ohm .gt. eta_T_ohm_cap) then
+              eta_T_ohm     = eta_T_ohm_cap
+              deta_dT_ohm   = 0.d0; d2eta_d2T_ohm = 0.d0; deta_dr0_ohm = 0.d0; deta_drimp0_ohm = 0.d0
+            endif
+          endif
 
           ! --- Viscosity
           ! --- Switch to use old viscosity model
