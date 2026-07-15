@@ -43,6 +43,16 @@ module coupling_variables
     ]
 #endif
 
+  ! ICS full force-density coupling channels (Strien 2022), only registered when use_ics_full_force_coupling
+  character(len=var_name_len), dimension(6) :: ics_force_var_names = [character(len=var_name_len) :: &
+    "fk_par",   & !> B.(total momentum to plasma per unit time): Lorentz reaction + collisions
+    "fk_R",     & !> R component of total force density on the plasma
+    "fk_Z",     & !> Z component of total force density on the plasma
+    "Rk_par",   & !> B.(collisional momentum to plasma per unit time)
+    "Rk_R",     & !> R component of collisional force density on the plasma
+    "Rk_Z"      & !> Z component of collisional force density on the plasma
+  ]
+
   ! REP (Pressure coupling scheme for runaway electrons)
   character(len=var_name_len), dimension(3) :: rep_var_names = [character(len=var_name_len) :: &
     "P_par",    & !> parallel component of dynamic pressure tensor
@@ -86,5 +96,26 @@ module coupling_variables
 
   !> index of coupling variables specific to each impurity group
   integer :: ics_indices_kin(n_aux_var_max) = -1
+
+  !> full force-density coupling channels (use_ics_full_force_coupling, Strien 2022):
+  !> fk_* = TOTAL momentum given to the plasma (Lorentz-force reaction + collisions) per unit time,
+  !> Rk_* = COLLISIONAL-only momentum given to the plasma (for the V.R_k work terms in the energy equation)
+  integer :: fk_par_idx_kin   = 0  !< B.(dp/dt) of total force density (enters parallel momentum equation)
+  integer :: fk_R_idx_kin     = 0  !< R component of total force density (enters vorticity equation)
+  integer :: fk_Z_idx_kin     = 0  !< Z component of total force density (enters vorticity equation)
+  integer :: Rk_par_idx_kin   = 0  !< B.(dp/dt) of collisional force density (parallel flow work term)
+  integer :: Rk_R_idx_kin     = 0  !< R component of collisional force density (ExB flow work term)
+  integer :: Rk_Z_idx_kin     = 0  !< Z component of collisional force density (ExB flow work term)
+
+  !> named diagnostic projection slots (previously hard-coded literals 6/7/8 in evolve_ncs_ics,
+  !> which collide with registered variables for some scheme combinations)
+  integer :: ncs_dens_diag_idx_kin = 0 !< NCS neutral density diagnostic projection
+  integer :: ics_prad_diag_idx_kin = 0 !< ICS impurity radiated power diagnostic projection
+  integer :: ics_dens_diag_idx_kin = 0 !< ICS impurity density diagnostic projection
+
+  !> hybrid Crank-Nicolson coupling (use_kin_cn_coupling, Strien 2022 Eq. 3.55):
+  !> prev_aux_idx(k) holds the aux slot containing the PREVIOUS fluid interval's value of coupling slot k
+  !> (0 for slots that are not time-interval integrals, e.g. imp_q and the diagnostic slots)
+  integer :: prev_aux_idx(n_aux_var_max) = 0
 
 end module coupling_variables

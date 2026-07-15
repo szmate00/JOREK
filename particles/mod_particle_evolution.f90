@@ -5,6 +5,7 @@ module mod_particle_evolution
     use particle_tracer
     use phys_module, only: CENTRAL_MASS, CENTRAL_DENSITY
     use phys_module, only: use_manual_random_seed, n_aux_var, part_kill_ratio, proj_collection_period
+    use phys_module, only: use_ics_full_force_coupling
     use mod_coupling_settings
     use coupling_variables
     use mod_project_particles
@@ -103,14 +104,24 @@ contains
       if (part_group%coupling_scheme == 'ncs') then
         jorek_feedback%rhs(:,:,:,:,rho_idx_kin)   = jorek_feedback%rhs(:,:,:,:,rho_idx_kin)     + feedback_rhs(:,:,:,:,rho_idx_kin)     / sim%tstep_fluid_si
         ! for the density, we should divide by the amount of times we will double count the same particle (=the number of particle steps in a fluid step)
-        jorek_feedback%rhs(:,:,:,:,6)             = jorek_feedback%rhs(:,:,:,:,6)               + feedback_rhs(:,:,:,:,6)               / (sim%tstep_fluid_si/tstep_part_adj) !< extra diagnostic projection (density) 
+        jorek_feedback%rhs(:,:,:,:,ncs_dens_diag_idx_kin) = jorek_feedback%rhs(:,:,:,:,ncs_dens_diag_idx_kin) + feedback_rhs(:,:,:,:,ncs_dens_diag_idx_kin) / (sim%tstep_fluid_si/tstep_part_adj) !< extra diagnostic projection (density) 
       endif
 
       !> ics specific projections
       if (part_group%coupling_scheme == 'ics') then
         jorek_feedback%rhs(:,:,:,:,imp_q_idx)     = jorek_feedback%rhs(:,:,:,:,imp_q_idx)       + feedback_rhs(:,:,:,:,imp_q_idx)       / (sim%tstep_fluid_si/tstep_part_adj)
-        jorek_feedback%rhs(:,:,:,:,7)             = jorek_feedback%rhs(:,:,:,:,7)               + feedback_rhs(:,:,:,:,7)               / sim%tstep_fluid_si                  !< extra projection (impurity radiated power)
-        jorek_feedback%rhs(:,:,:,:,8)             = jorek_feedback%rhs(:,:,:,:,8)               + feedback_rhs(:,:,:,:,8)               / (sim%tstep_fluid_si/tstep_part_adj) !< extra projection (impurity density)
+        jorek_feedback%rhs(:,:,:,:,ics_prad_diag_idx_kin) = jorek_feedback%rhs(:,:,:,:,ics_prad_diag_idx_kin) + feedback_rhs(:,:,:,:,ics_prad_diag_idx_kin) / sim%tstep_fluid_si                  !< extra projection (impurity radiated power)
+        jorek_feedback%rhs(:,:,:,:,ics_dens_diag_idx_kin) = jorek_feedback%rhs(:,:,:,:,ics_dens_diag_idx_kin) + feedback_rhs(:,:,:,:,ics_dens_diag_idx_kin) / (sim%tstep_fluid_si/tstep_part_adj) !< extra projection (impurity density)
+
+        !> full force-density coupling channels (rates, like mom_par)
+        if (use_ics_full_force_coupling) then
+          jorek_feedback%rhs(:,:,:,:,fk_par_idx_kin) = jorek_feedback%rhs(:,:,:,:,fk_par_idx_kin) + feedback_rhs(:,:,:,:,fk_par_idx_kin) / sim%tstep_fluid_si
+          jorek_feedback%rhs(:,:,:,:,fk_R_idx_kin)   = jorek_feedback%rhs(:,:,:,:,fk_R_idx_kin)   + feedback_rhs(:,:,:,:,fk_R_idx_kin)   / sim%tstep_fluid_si
+          jorek_feedback%rhs(:,:,:,:,fk_Z_idx_kin)   = jorek_feedback%rhs(:,:,:,:,fk_Z_idx_kin)   + feedback_rhs(:,:,:,:,fk_Z_idx_kin)   / sim%tstep_fluid_si
+          jorek_feedback%rhs(:,:,:,:,Rk_par_idx_kin) = jorek_feedback%rhs(:,:,:,:,Rk_par_idx_kin) + feedback_rhs(:,:,:,:,Rk_par_idx_kin) / sim%tstep_fluid_si
+          jorek_feedback%rhs(:,:,:,:,Rk_R_idx_kin)   = jorek_feedback%rhs(:,:,:,:,Rk_R_idx_kin)   + feedback_rhs(:,:,:,:,Rk_R_idx_kin)   / sim%tstep_fluid_si
+          jorek_feedback%rhs(:,:,:,:,Rk_Z_idx_kin)   = jorek_feedback%rhs(:,:,:,:,Rk_Z_idx_kin)   + feedback_rhs(:,:,:,:,Rk_Z_idx_kin)   / sim%tstep_fluid_si
+        endif
       endif
     endif
 
@@ -281,6 +292,8 @@ contains
     real*8    :: density_source, mom_par_source, energy_source
     real*8    :: energy_source_Te, energy_source_Ti
     real*8    :: density_fb, mom_par_fb, E_fb, imp_q_fb, imp_density_fb, imp_P_rad_fb, extra_proj, imp_P_line_rad_fb
+    real*8    :: Rk_source(3), fk_source(3), fk_par_source, dv_em(3)
+    real*8    :: Rk_R_fb, Rk_Z_fb, fk_par_fb, fk_R_fb, fk_Z_fb
     real*8    :: E_fb_Te, E_fb_Ti
     real*8    :: v_old(3), v_new(3), T_eV, B_norm(3)
     real*8    :: vvector(3), ran_norm(4)
@@ -348,6 +361,9 @@ contains
     !$omp E_idx_kin,                                                                                      &
 #endif
     !$omp imp_q_idx, ics_indices_kin,                                                                     &
+    !$omp use_ics_full_force_coupling, fk_par_idx_kin, fk_R_idx_kin, fk_Z_idx_kin,                        &
+    !$omp Rk_par_idx_kin, Rk_R_idx_kin, Rk_Z_idx_kin,                                                     &
+    !$omp ncs_dens_diag_idx_kin, ics_prad_diag_idx_kin, ics_dens_diag_idx_kin,                            &
     !$omp CENTRAL_DENSITY, CENTRAL_MASS, feedback_nodelist, feedback_element_list)                        &
     !$omp private(particle_tmp, i_rng, i, j, k, l, m, t, E, B, psi, U, rz_old, st_old,                    &
     !$omp i_elm_old, i_elm, n_i, n_e, T_e, T_i, imp_charge_density, PLT, PRB, Srec, q_old,                &
@@ -359,7 +375,8 @@ contains
     !$omp density_source, mom_par_source, energy_source, v_old, v_new, T_eV, imp_P_line_rad_fb,           &
     !$omp m_b, kTb,coulomb_log ,n_b,v_b, ran, ran2, q_b, q, E_fb_Te, E_fb_Ti,                             &
     !$omp P, P_s, P_t, P_phi, P_time, limits, limits_coll, energy_source_Te, energy_source_Ti,            &
-    !$omp vvector, ran_norm, imp_q_idx_temp, T_e_raw, T_i_raw, n_e_raw, delta_E_kin, i_tor, n)            &
+    !$omp vvector, ran_norm, imp_q_idx_temp, T_e_raw, T_i_raw, n_e_raw, delta_E_kin, i_tor, n,            &
+    !$omp Rk_source, fk_source, fk_par_source, dv_em, Rk_R_fb, Rk_Z_fb, fk_par_fb, fk_R_fb, fk_Z_fb)      &
     !$omp reduction(+:feedback_rhs,n_lost_ion,p_lost_plt,p_lost_cx,p_lost_ion,n_super_ionized)
     do j=1,size(sim%groups(group_num)%particles,1)
       particle_tmp = sim%groups(group_num)%particles(j)
@@ -542,7 +559,7 @@ contains
                 feedback_rhs(m,l,i_elm_old,i_tor,E_idx_kin)       = feedback_rhs(m,l,i_elm_old,i_tor,E_idx_kin)    + HZ(i_tor) * E_fb
 #endif
                 feedback_rhs(m,l,i_elm_old,i_tor,mom_par_idx_kin) = feedback_rhs(m,l,i_elm_old,i_tor,mom_par_idx_kin) + HZ(i_tor) * mom_par_fb
-                feedback_rhs(m,l,i_elm_old,i_tor,6)               = feedback_rhs(m,l,i_elm_old,i_tor,6) + HZ(i_tor) * extra_proj
+                feedback_rhs(m,l,i_elm_old,i_tor,ncs_dens_diag_idx_kin) = feedback_rhs(m,l,i_elm_old,i_tor,ncs_dens_diag_idx_kin) + HZ(i_tor) * extra_proj
               enddo
             enddo
           enddo
@@ -645,6 +662,13 @@ contains
 #endif
           mom_par_source   = particle_tmp%weight * dot_product(B, (v_old - v_new)) * sim%groups(group_num)%mass * ATOMIC_MASS_UNIT ! parallel momentum given to plasma
 
+          if (use_ics_full_force_coupling) then
+            !> collisional-only momentum given to the plasma (vector R_k channels, Strien 2022). The
+            !> parallel channel replaces the shared mom_par channel for ics so that the total-force
+            !> channel fk_par does not double count the collisions in the parallel momentum equation.
+            Rk_source = particle_tmp%weight * (v_old - v_new) * sim%groups(group_num)%mass * ATOMIC_MASS_UNIT
+          endif
+
           n_lost_ion = n_lost_ion
           p_lost_ion = p_lost_ion + ionize_energy
           p_lost_plt = p_lost_plt + radiation_energy
@@ -667,6 +691,10 @@ contains
               imp_q_fb       = HH(l,m) * sim%fields%element_list%element(i_elm_old)%size(l,m) * particle_tmp%weight * particle_tmp%q
               imp_density_fb = HH(l,m) * sim%fields%element_list%element(i_elm_old)%size(l,m) * particle_tmp%weight
               imp_P_rad_fb   = HH(l,m) * sim%fields%element_list%element(i_elm_old)%size(l,m) * radiation_energy / tstep_part_adj
+              if (use_ics_full_force_coupling) then
+                Rk_R_fb      = HH(l,m) * sim%fields%element_list%element(i_elm_old)%size(l,m) * Rk_source(1) * t_norm / m_norm
+                Rk_Z_fb      = HH(l,m) * sim%fields%element_list%element(i_elm_old)%size(l,m) * Rk_source(2) * t_norm / m_norm
+              endif
               do i_tor=1,n_tor
 #ifdef WITH_TiTe
                 feedback_rhs(m,l,i_elm_old,i_tor,E_Te_idx_kin)    = feedback_rhs(m,l,i_elm_old,i_tor,E_Te_idx_kin)    + HZ(i_tor) * E_fb_Te
@@ -674,10 +702,17 @@ contains
 #else
                 feedback_rhs(m,l,i_elm_old,i_tor,E_idx_kin)       = feedback_rhs(m,l,i_elm_old,i_tor,E_idx_kin)       + HZ(i_tor) * E_fb
 #endif
-                feedback_rhs(m,l,i_elm_old,i_tor,mom_par_idx_kin) = feedback_rhs(m,l,i_elm_old,i_tor,mom_par_idx_kin) + HZ(i_tor) * mom_par_fb
+                if (use_ics_full_force_coupling) then
+                  !> collisional momentum into the dedicated R_k channels (mom_par_fb is B.R_k, reused for Rk_par)
+                  feedback_rhs(m,l,i_elm_old,i_tor,Rk_par_idx_kin) = feedback_rhs(m,l,i_elm_old,i_tor,Rk_par_idx_kin) + HZ(i_tor) * mom_par_fb
+                  feedback_rhs(m,l,i_elm_old,i_tor,Rk_R_idx_kin)   = feedback_rhs(m,l,i_elm_old,i_tor,Rk_R_idx_kin)   + HZ(i_tor) * Rk_R_fb
+                  feedback_rhs(m,l,i_elm_old,i_tor,Rk_Z_idx_kin)   = feedback_rhs(m,l,i_elm_old,i_tor,Rk_Z_idx_kin)   + HZ(i_tor) * Rk_Z_fb
+                else
+                  feedback_rhs(m,l,i_elm_old,i_tor,mom_par_idx_kin) = feedback_rhs(m,l,i_elm_old,i_tor,mom_par_idx_kin) + HZ(i_tor) * mom_par_fb
+                endif
                 feedback_rhs(m,l,i_elm_old,i_tor,imp_q_idx)       = feedback_rhs(m,l,i_elm_old,i_tor,imp_q_idx)       + HZ(i_tor) * imp_q_fb       ! impurity charge density
-                feedback_rhs(m,l,i_elm_old,i_tor,7)               = feedback_rhs(m,l,i_elm_old,i_tor,7)               + HZ(i_tor) * imp_P_rad_fb   ! impurity radiated power [to be moved to diag feedback]
-                feedback_rhs(m,l,i_elm_old,i_tor,8)               = feedback_rhs(m,l,i_elm_old,i_tor,8)               + HZ(i_tor) * imp_density_fb ! impurity density [to be moved to diag feedback]
+                feedback_rhs(m,l,i_elm_old,i_tor,ics_prad_diag_idx_kin) = feedback_rhs(m,l,i_elm_old,i_tor,ics_prad_diag_idx_kin) + HZ(i_tor) * imp_P_rad_fb   ! impurity radiated power
+                feedback_rhs(m,l,i_elm_old,i_tor,ics_dens_diag_idx_kin) = feedback_rhs(m,l,i_elm_old,i_tor,ics_dens_diag_idx_kin) + HZ(i_tor) * imp_density_fb ! impurity density
               enddo
             enddo
           enddo
@@ -689,7 +724,35 @@ contains
 
         !> =============================== PUSH PARTICLE ====================================
         if (particle_tmp%i_elm .gt. 0) then
-          call boris_push_cylindrical(particle_tmp, sim%groups(group_num)%mass, E, B, tstep_part_adj)
+          if (sim%groups(group_num)%coupling_scheme == 'ics' .and. use_ics_full_force_coupling) then
+            call boris_push_cylindrical(particle_tmp, sim%groups(group_num)%mass, E, B, tstep_part_adj, dv_em=dv_em)
+
+            !> Deposit the TOTAL momentum given to the plasma over this substep (collisions + Lorentz-force
+            !> reaction, Strien 2022 Eq. 4.13) into the full force-density channels. dv_em is the physical
+            !> electromagnetic velocity change in the cylindrical basis at the pre-push position, consistent
+            !> with v_old/v_new and with the pre-push basis functions HH/HZ computed above (thesis footnote 9:
+            !> feedback is gathered at the start-of-substep position); it is exactly zero for neutrals.
+            !> No electromagnetic work is fed into the energy equation: it enters the system self-consistently
+            !> through the momentum coupling (thesis Sec. 4.5).
+            fk_source     = particle_tmp%weight * sim%groups(group_num)%mass * ATOMIC_MASS_UNIT &
+                            * ((v_old - v_new) - dv_em)
+            fk_par_source = dot_product(B, fk_source)
+
+            do l=1,n_vertex_max
+              do m=1,n_order+1
+                fk_par_fb = HH(l,m) * sim%fields%element_list%element(i_elm_old)%size(l,m) * fk_par_source * t_norm / m_norm
+                fk_R_fb   = HH(l,m) * sim%fields%element_list%element(i_elm_old)%size(l,m) * fk_source(1)  * t_norm / m_norm
+                fk_Z_fb   = HH(l,m) * sim%fields%element_list%element(i_elm_old)%size(l,m) * fk_source(2)  * t_norm / m_norm
+                do i_tor=1,n_tor
+                  feedback_rhs(m,l,i_elm_old,i_tor,fk_par_idx_kin) = feedback_rhs(m,l,i_elm_old,i_tor,fk_par_idx_kin) + HZ(i_tor) * fk_par_fb
+                  feedback_rhs(m,l,i_elm_old,i_tor,fk_R_idx_kin)   = feedback_rhs(m,l,i_elm_old,i_tor,fk_R_idx_kin)   + HZ(i_tor) * fk_R_fb
+                  feedback_rhs(m,l,i_elm_old,i_tor,fk_Z_idx_kin)   = feedback_rhs(m,l,i_elm_old,i_tor,fk_Z_idx_kin)   + HZ(i_tor) * fk_Z_fb
+                enddo
+              enddo
+            enddo
+          else
+            call boris_push_cylindrical(particle_tmp, sim%groups(group_num)%mass, E, B, tstep_part_adj)
+          endif
           call find_RZ_nearby(sim%fields%node_list, sim%fields%element_list, rz_old(1), rz_old(2), st_old(1), st_old(2), i_elm_old, &
                               particle_tmp%x(1), particle_tmp%x(2), particle_tmp%st(1), particle_tmp%st(2), particle_tmp%i_elm, ifail)
         end if

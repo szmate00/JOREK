@@ -20,16 +20,24 @@ contains
 !> Push a single particle for some timesteps with the boris method
 !> See G.L. Delzanno, E. Camporeale / JCP 253 (2013) 259-277 for details.
 !> This routine works in RZPhi coordinates
-pure subroutine boris_push_cylindrical(particle, m, E, B, dt)
+pure subroutine boris_push_cylindrical(particle, m, E, B, dt, dv_em)
   use mod_math_operators, only: cross_product
   type(particle_kinetic_leapfrog), intent(inout)  :: particle
   real*8, intent(in) :: m
   real*8, dimension(3), intent(in) :: E, B
   real*8, intent(in) :: dt
+  real*8, dimension(3), intent(out), optional :: dv_em !< physical velocity change due to the electromagnetic
+                                                       !< force over this step, expressed in the cylindrical
+                                                       !< basis at the OLD position (excludes the passive basis
+                                                       !< rotation of the frame adjustment below, so it is
+                                                       !< exactly zero for neutral particles)
   real*8 :: R, Rphi
   real*8 :: fE, fB, eom
   real*8 :: B2, Bnorm
+  real*8 :: v_in(3)
   eom = EL_CHG / (m * ATOMIC_MASS_UNIT)
+
+  if (present(dv_em)) v_in = particle%v
 
   B2    = dot_product(B,B)
   Bnorm = sqrt(B2)
@@ -48,6 +56,11 @@ pure subroutine boris_push_cylindrical(particle, m, E, B, dt)
     + fB * B * dot_product(particle%v,B)))
   ! Calculate the next electric field update (v+ -> v^n+1/2)
   particle%v = particle%v + fE * E
+
+  ! The electromagnetic momentum change is complete here; the frame adjustment below is a passive
+  ! rotation of the velocity components and does not change the physical momentum
+  if (present(dv_em)) dv_em = particle%v - v_in
+
   ! update the position from v^n to v^(n+1)
   ! Calculate the new R and RPhi
   R    = particle%x(1) + particle%v(1) * dt

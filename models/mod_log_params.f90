@@ -1208,6 +1208,8 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   endif ! n_part_groups > 0
 
   write(*,REAL_FMT) 'part_kill_ratio         ', part_kill_ratio
+  write(*,LOGI_FMT) 'use_ics_full_force_coupling, ', use_ics_full_force_coupling
+  write(*,LOGI_FMT) 'use_kin_cn_coupling,    ', use_kin_cn_coupling
 
   ! fluid groups
   write(*,INTG_FMT) 'n_fluid_groups          ',n_fluid_groups

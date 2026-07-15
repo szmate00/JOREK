@@ -889,6 +889,16 @@ if (my_id .eq. 0) then
   call MPI_PACK(P_perp_idx_kin,    1,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(j_Phi_idx_kin,     1,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(ics_indices_kin,   n_aux_var_max,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(fk_par_idx_kin,    1,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(fk_R_idx_kin,      1,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(fk_Z_idx_kin,      1,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(Rk_par_idx_kin,    1,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(Rk_R_idx_kin,      1,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(Rk_Z_idx_kin,      1,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(ncs_dens_diag_idx_kin, 1,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(ics_prad_diag_idx_kin, 1,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(ics_dens_diag_idx_kin, 1,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(prev_aux_idx,      n_aux_var_max,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(rho_ep_idx_kin,    1,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(PI_RR_idx_kin,     1,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(PI_ZZ_idx_kin,     1,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
@@ -990,6 +1000,9 @@ if (my_id .eq. 0) then
       call MPI_PACK(fluid_configs(i)%wall_act_configs(j)%supers_ratio_wall,  1,   MPI_REAL8,   buffer,bufsize,position,MPI_COMM_WORLD,ierr)    
     enddo
   enddo
+
+  call MPI_PACK(use_ics_full_force_coupling, 1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(use_kin_cn_coupling,         1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
 
   call MPI_PACK(use_manual_random_seed, 1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(manual_seed,            1,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
@@ -1886,6 +1899,16 @@ if (my_id .ne. 0) then
   call MPI_UNPACK(buffer,bufsize,position,P_perp_idx_kin,          1,MPI_INTEGER,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,j_Phi_idx_kin,           1,MPI_INTEGER,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,ics_indices_kin,         n_aux_var_max,MPI_INTEGER,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,fk_par_idx_kin,          1,MPI_INTEGER,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,fk_R_idx_kin,            1,MPI_INTEGER,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,fk_Z_idx_kin,            1,MPI_INTEGER,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,Rk_par_idx_kin,          1,MPI_INTEGER,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,Rk_R_idx_kin,            1,MPI_INTEGER,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,Rk_Z_idx_kin,            1,MPI_INTEGER,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,ncs_dens_diag_idx_kin,   1,MPI_INTEGER,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,ics_prad_diag_idx_kin,   1,MPI_INTEGER,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,ics_dens_diag_idx_kin,   1,MPI_INTEGER,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,prev_aux_idx,            n_aux_var_max,MPI_INTEGER,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,rho_ep_idx_kin,          1,MPI_INTEGER,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,PI_RR_idx_kin,           1,MPI_INTEGER,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,PI_ZZ_idx_kin,           1,MPI_INTEGER,MPI_COMM_WORLD,ierr)
@@ -1987,6 +2010,9 @@ if (my_id .ne. 0) then
       call MPI_UNPACK(buffer,bufsize,position,fluid_configs(i)%wall_act_configs(j)%supers_ratio_wall,  1,   MPI_REAL8,   MPI_COMM_WORLD,ierr)    
     enddo
   enddo
+
+  call MPI_UNPACK(buffer,bufsize,position,use_ics_full_force_coupling, 1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,use_kin_cn_coupling,         1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
 
   call MPI_UNPACK(buffer,bufsize,position,use_manual_random_seed, 1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,manual_seed,            1,MPI_INTEGER,MPI_COMM_WORLD,ierr)

@@ -1138,6 +1138,16 @@ module phys_module
 
   real*8 :: part_kill_ratio !< the ratio weight/average_weight at which kinetic particles will be destroyed rather than get their weight reduced (by interactions such as ionisation and wall pumping)
 
+  !> @name Full force-density coupling and hybrid time stepping for kinetic impurities (Strien 2022 MSc thesis)
+  logical :: use_ics_full_force_coupling !< feed back the full interaction force density f_k = J_k x B + sigma_k*E + R_k of the
+                                         !< kinetic impurities into the fluid momentum equations (parallel AND perpendicular/vorticity
+                                         !< projections), plus the ExB flow work term in the energy equation, instead of only the
+                                         !< collisional parallel momentum (Strien 2022, Eqs. 3.36/3.38/3.41)
+  logical :: use_kin_cn_coupling         !< discretize the kinetic coupling terms with a Crank-Nicolson combination of the current and
+                                         !< previous fluid-interval kinetic feedback integrals while the fluid terms keep the (variable
+                                         !< step) Gears scheme (Strien 2022, Eq. 3.55); improves energy conservation of the coupling
+                                         !< after impulsive events. Inert when time_evol_zeta=0 (one-step fluid schemes).
+
   ! ------------------------------------------------
   ! --- Structures for fluid groups
   ! ------------------------------------------------

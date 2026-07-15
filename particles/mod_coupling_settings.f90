@@ -4,6 +4,7 @@ use mpi
 use mod_model_settings
 use phys_module, only: n_part_groups, n_part_groups_max, part_group_configs
 use phys_module, only: n_aux_var, n_diag_var
+use phys_module, only: use_ics_full_force_coupling, use_kin_cn_coupling
 use coupling_variables
 
 implicit none
@@ -392,6 +393,19 @@ subroutine determine_coupling_variables()
       coupling_vars(coupling_var_idx) = "imp_q"          !< impurity charge density
       ics_indices_kin(j) = coupling_var_idx
     enddo
+
+    !> full force-density coupling channels (Strien 2022, Eqs. 3.36/3.38/3.41)
+    if (use_ics_full_force_coupling) then
+      do i=1, size(ics_force_var_names)
+        call assess_and_accumulate_variable(ics_force_var_names(i), coupling_var_idx, coupling_vars)
+      enddo
+    endif
+  endif
+
+  if (use_ics_full_force_coupling .and. .not. use_ics) then
+    write(*,*) "WARNING: use_ics_full_force_coupling = .true. but no 'ics' particle group is present;"
+    write(*,*) "         the flag has no effect and is disabled."
+    use_ics_full_force_coupling = .false.
   endif
     
   if (use_rep) then
@@ -434,6 +448,19 @@ subroutine determine_coupling_variables()
         j_Phi_idx_kin = final_var_idx
       case ("imp_q")
         continue       !< do nothing as already handled above in use_ics loop
+      !> ics full force-density coupling channels
+      case ("fk_par")
+        fk_par_idx_kin = final_var_idx
+      case ("fk_R")
+        fk_R_idx_kin = final_var_idx
+      case ("fk_Z")
+        fk_Z_idx_kin = final_var_idx
+      case ("Rk_par")
+        Rk_par_idx_kin = final_var_idx
+      case ("Rk_R")
+        Rk_R_idx_kin = final_var_idx
+      case ("Rk_Z")
+        Rk_Z_idx_kin = final_var_idx
       !> epf coupling vars
       case ("rho_ep")
         rho_ep_idx_kin = final_var_idx
@@ -455,10 +482,53 @@ subroutine determine_coupling_variables()
     end select
     write(*,"(2X,A12,' = ', I3)") coupling_vars(i), final_var_idx
   enddo
+
+  !> hybrid Crank-Nicolson coupling (Strien 2022, Eq. 3.55): register a 'prev' slot for every
+  !> coupling variable that is a time-interval integral of kinetic feedback. The prev slot holds
+  !> the previous fluid interval's value, needed for the two-interval CN combination. State-like
+  !> slots (imp_q) and diagnostic slots are excluded.
+  prev_aux_idx = 0
+  if (use_kin_cn_coupling) then
+    do i=1, coupling_var_idx
+      select case (trim(coupling_vars(i)))
+        case ("rho", "mom_par", "E", "E_Te", "E_Ti", &
+              "fk_par", "fk_R", "fk_Z", "Rk_par", "Rk_R", "Rk_Z")
+          final_var_idx = final_var_idx + 1
+          coupling_vars(final_var_idx) = "prev_"//trim(coupling_vars(i))
+          prev_aux_idx(i) = final_var_idx
+          write(*,"(2X,A12,' = ', I3)") coupling_vars(final_var_idx), final_var_idx
+        case default
+          continue
+      end select
+    enddo
+  endif
+
+  !> named diagnostic projection slots (previously hard-coded literals 6/7/8 in evolve_ncs_ics)
+  if (use_ncs) then
+    final_var_idx = final_var_idx + 1
+    coupling_vars(final_var_idx) = "ncs_dens_diag"
+    ncs_dens_diag_idx_kin = final_var_idx
+    write(*,"(2X,A12,' = ', I3)") coupling_vars(final_var_idx), final_var_idx
+  endif
+  if (use_ics) then
+    final_var_idx = final_var_idx + 1
+    coupling_vars(final_var_idx) = "ics_prad_diag"
+    ics_prad_diag_idx_kin = final_var_idx
+    write(*,"(2X,A12,' = ', I3)") coupling_vars(final_var_idx), final_var_idx
+    final_var_idx = final_var_idx + 1
+    coupling_vars(final_var_idx) = "ics_dens_diag"
+    ics_dens_diag_idx_kin = final_var_idx
+    write(*,"(2X,A12,' = ', I3)") coupling_vars(final_var_idx), final_var_idx
+  endif
   write(*,*) "========================================="
 
+  if (final_var_idx > n_aux_var_max) then
+    write(*,*) "ERROR: The number of coupling variables required for kinetic-fluid coupling "
+    write(*,*) "  exceeds the hardcoded n_aux_var_max. Consider increasing n_aux_var_max."
+    call MPI_ABORT(MPI_COMM_WORLD, 1, ierr)
+  endif
+
   n_aux_var = final_var_idx
-  n_aux_var = n_aux_var + 5 ! temporary as diag projections not yet created
 
 end subroutine determine_coupling_variables
 

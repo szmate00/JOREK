@@ -1082,6 +1082,7 @@ subroutine import_hdf5_restart(node_list, element_list, filename, format_rst, er
   real*8, allocatable  :: xtime_spi_ablation_bg_rate_tmp(:,:) ! <The time history of SPI ablation rate for bg species
 
   integer :: err_exists, dterr, n_spi_begin, i_inj
+  integer :: n_aux_var_hdf5
   logical :: flag_exists, type_match, aux_values_read
 
   real*8, allocatable :: t_energies(:,:,:)   !< Magnetic and kinetic mode energies at previous timesteps.
@@ -1226,6 +1227,20 @@ subroutine import_hdf5_restart(node_list, element_list, filename, format_rst, er
     call h5lexists_f(file_id,'aux_values',flag_exists,err_exists)
     if(flag_exists .and. err_exists == 0) then
       aux_values_read = .true.
+
+      ! --- The aux layout depends on the active coupling schemes and coupling flags
+      !     (e.g. use_ics_full_force_coupling / use_kin_cn_coupling). If the restart file was
+      !     written with a different layout, restoring it would corrupt the coupling slots, so
+      !     the (stale) kinetic feedback is dropped instead and the aux values start from zero.
+      n_aux_var_hdf5 = -1
+      call h5lexists_f(file_id,'n_aux_var',flag_exists,err_exists)
+      if (flag_exists .and. err_exists == 0) call HDF5_integer_reading(file_id,n_aux_var_hdf5,'n_aux_var')
+      if (n_aux_var_hdf5 .ne. n_aux_var) then
+        write(*,*) "WARNING: 'aux_values' in the restart file was written with n_aux_var =", n_aux_var_hdf5
+        write(*,*) "         but the code expects n_aux_var =", n_aux_var, " (coupling scheme or flag change?)."
+        write(*,*) "         The kinetic feedback aux values are NOT restored and restart from zero."
+        aux_values_read = .false.
+      endif
     endif
 
   endif

@@ -210,6 +210,8 @@ real*8     :: visco_fact_old, visco_fact_new
 ! --- Fluid-kinetic coupling variables
 real*8     :: aux_rho0, aux_E0, aux_mom_par0
 real*8     :: aux_E0_Ti, aux_E0_Te
+real*8     :: aux_fk_par0, aux_fk_R0, aux_fk_Z0    !< total kinetic-impurity force density on the plasma (Strien 2022)
+real*8     :: aux_Rk_par0, aux_Rk_R0, aux_Rk_Z0    !< collisional-only part of the force density (for the V.R_k work terms)
 real*8     :: aux_P_par_re, aux_P_perp_re, aux_jre, aux_jre_ind
 
 ! --- Full pressure tensor coupling variables 
@@ -344,6 +346,8 @@ eq_zT           = 0.d0
 
 aux_rho0  = 0.d0; aux_E0    = 0.d0; aux_mom_par0 = 0.d0
 aux_E0_Ti = 0.d0; aux_E0_Te = 0.d0;
+aux_fk_par0 = 0.d0; aux_fk_R0 = 0.d0; aux_fk_Z0 = 0.d0
+aux_Rk_par0 = 0.d0; aux_Rk_R0 = 0.d0; aux_Rk_Z0 = 0.d0
 aux_P_par_re = 0.d0; aux_P_perp_re = 0.d0; aux_jre = 0.d0; aux_jre_ind = 0.d0
 
 ! --- full pressure tensor coupling terms
@@ -721,15 +725,27 @@ do i=1,n_vertex_max
           !> kinetics extension ---------------------------------
 
           !> kinetic neutrals or kinetic impurities
+          !> (kin_aux_cn applies the hybrid Crank-Nicolson two-interval combination when
+          !>  use_kin_cn_coupling is active, see the contained function below)
           if (use_ncs .or. use_ics) then
-              if (use_ncs) aux_rho0 = eq_aux_g(mp,rho_idx_kin,ms,mt)
+              if (use_ncs) aux_rho0 = kin_aux_cn(rho_idx_kin)
 #ifdef WITH_TiTe
-              aux_E0_Te = eq_aux_g(mp,E_Te_idx_kin,ms,mt)
-              aux_E0_Ti = eq_aux_g(mp,E_Ti_idx_kin,ms,mt)
+              aux_E0_Te = kin_aux_cn(E_Te_idx_kin)
+              aux_E0_Ti = kin_aux_cn(E_Ti_idx_kin)
 #else
-              aux_E0 = eq_aux_g(mp,E_idx_kin,ms,mt)
+              aux_E0 = kin_aux_cn(E_idx_kin)
 #endif
-              aux_mom_par0 = eq_aux_g(mp,mom_par_idx_kin,ms,mt)
+              aux_mom_par0 = kin_aux_cn(mom_par_idx_kin)
+
+              !> full force-density coupling channels (Strien 2022)
+              if (use_ics .and. use_ics_full_force_coupling) then
+                aux_fk_par0 = kin_aux_cn(fk_par_idx_kin)
+                aux_fk_R0   = kin_aux_cn(fk_R_idx_kin)
+                aux_fk_Z0   = kin_aux_cn(fk_Z_idx_kin)
+                aux_Rk_par0 = kin_aux_cn(Rk_par_idx_kin)
+                aux_Rk_R0   = kin_aux_cn(Rk_R_idx_kin)
+                aux_Rk_Z0   = kin_aux_cn(Rk_Z_idx_kin)
+              endif
           end if
 
           !> kinetic runaway electrons 
@@ -1598,7 +1614,10 @@ do i=1,n_vertex_max
                         ! -----------------------  from kinetic runaway electron pressure coupling -----------------------------------
                            - v * (aux_P_par_re + aux_P_perp_re) *   BigR              * xjac * tstep * factor(var_u,12)      &
                         ! -----------------------   from kinetic energetic particle pressure coupling ---------------------------------
-                           + BigR**2 * ( -aux_divPIR_perp*v_y + aux_divPIZ_perp*v_x)  * xjac * tstep * factor(var_u,13)
+                           + BigR**2 * ( -aux_divPIR_perp*v_y + aux_divPIZ_perp*v_x)  * xjac * tstep * factor(var_u,13)      &
+                        ! -------------- from kinetic impurity full force-density coupling (Strien 2022, Eq. 3.38) ---------------------
+                        ! aux_fk_* is the force density ON the plasma; a force density g enters this projection as R^2*(g_R*v_y - g_Z*v_x)
+                           + BigR**2 * (  aux_fk_R0*v_y      -  aux_fk_Z0*v_x     )   * xjac * tstep * factor(var_u,13)
                         ! ---------------------------------   end of kinetic coupling terms -------------------------------------------
 
 
@@ -1724,7 +1743,10 @@ do i=1,n_vertex_max
 
                           ! ------------------------------ from kinetic neutral / impurity coupling --------------------------------------
                            - v * aux_rho0 * vpar0 * BB2 * BigR * (1.d0 - fact_conservative_u)                     * xjac * tstep * factor(var_vpar,11) &
-                           + v * BigR * aux_mom_par0                                                              * xjac * tstep * factor(var_vpar,12)
+                          ! aux_fk_par0 carries the TOTAL (Lorentz reaction + collisional) parallel force density of the kinetic
+                          ! impurities when use_ics_full_force_coupling is active (ics then deposits its collisional part into
+                          ! Rk_par instead of mom_par, so no double counting occurs); otherwise it is zero
+                           + v * BigR * (aux_mom_par0 + aux_fk_par0)                                              * xjac * tstep * factor(var_vpar,12)
                           ! -------------------------------- end of terms from kinetic coupling ------------------------------------------
  
                     
@@ -1836,7 +1858,9 @@ do i=1,n_vertex_max
                         ! --------------------------------------- from kinetic coupling -------------------------------------------------
                          + v * BigR * aux_E0_Ti                                                      * xjac * tstep * factor(var_Ti,15) &
                          + (gamma-1.d0)*0.5d0 * v * aux_rho0                 * vpar0**2 * BB2 * BigR * xjac * tstep * factor(var_Ti,16) &
-                         - (gamma-1.d0)*v * aux_mom_par0 * vpar0 * BigR                              * xjac * tstep * factor(var_Ti,17) &
+                         - (gamma-1.d0)*v * (aux_mom_par0 + aux_Rk_par0) * vpar0 * BigR              * xjac * tstep * factor(var_Ti,17) &
+                         ! ExB flow work term of the collisional momentum transfer (Strien 2022, Eq. 3.41)
+                         + (gamma-1.d0)*v * BigR * (u0_y*aux_Rk_R0 - u0_x*aux_Rk_Z0)                 * xjac * tstep * factor(var_Ti,17) &
                         ! --------------------------------- end of terms from kinetic coupling ------------------------------------------
                          - v * Ti0 * BigR * r0_corr * r0_corr  * Srec_T                              * xjac * tstep * factor(var_Ti,18) 
 
@@ -2053,7 +2077,9 @@ do i=1,n_vertex_max
                             ! ------------------------------ from kinetic neutral / impurity coupling ---------------------------------------
                              + v * BigR * aux_E0                                                                         * xjac * tstep * factor(var_T,24) &
                              + (gamma-1.d0)*0.5d0 * v * aux_rho0                                 * vpar0**2 * BB2 * BigR * xjac * tstep * factor(var_T,25) &
-                             - (gamma-1.d0)*v * aux_mom_par0 * vpar0 * BigR                                              * xjac * tstep * factor(var_T,26) 
+                             - (gamma-1.d0)*v * (aux_mom_par0 + aux_Rk_par0) * vpar0 * BigR                              * xjac * tstep * factor(var_T,26) &
+                             ! ExB flow work term of the collisional momentum transfer (Strien 2022, Eq. 3.41)
+                             + (gamma-1.d0)*v * BigR * (u0_y*aux_Rk_R0 - u0_x*aux_Rk_Z0)                                 * xjac * tstep * factor(var_T,26) 
                             ! --------------------------------- end of terms from kinetic coupling ------------------------------------------
 
               if (with_impurities) then
@@ -3279,6 +3305,8 @@ do i=1,n_vertex_max
   
   
                     amat(var_Ti,var_u) = - v * (r0 + rimp0*alpha_i) * BigR**2 * (Ti0_x * u_y - Ti0_y * u_x) * xjac * theta * tstep &
+                                ! linearization of the ExB flow work term of the kinetic collisional momentum transfer
+                                - (gamma-1.d0)*v * BigR * (u_y*aux_Rk_R0 - u_x*aux_Rk_Z0)                    * xjac * theta * tstep &
                                 - v * Ti0 * BigR**2 * (r0_x * u_y - r0_y * u_x)                             * xjac * theta * tstep &
                                 - v * alpha_i * Ti0 * BigR**2 * (rimp0_x * u_y - rimp0_y * u_x)             * xjac * theta * tstep &
                                 - v * (r0 + rimp0*alpha_i) * 2.d0 * GAMMA * BigR * Ti0 * u_y                * xjac * theta * tstep &
@@ -3443,7 +3471,7 @@ do i=1,n_vertex_max
 
                       ! --------------------------------- from kinetic coupling -------------------------------------------------
                                 - (gamma-1.d0)*v * aux_rho0 * vpar0 * vpar * BB2 * BigR * xjac * theta * tstep &
-                                + (gamma-1.d0)*v * aux_mom_par0 * vpar * BigR * xjac * theta * tstep &
+                                + (gamma-1.d0)*v * (aux_mom_par0 + aux_Rk_par0) * vpar * BigR * xjac * theta * tstep &
                       ! ----------------------------end of terms from kinetic coupling ------------------------------------------
 
                       !===================== Additional terms from friction terms============
@@ -4052,6 +4080,8 @@ do i=1,n_vertex_max
   
   
                     amat(var_T,var_u) = - v * (r0 + rimp0 * alpha_imp_bis) * BigR**2 * ( T0_x * u_y - T0_y * u_x)           * xjac * theta * tstep &
+                                ! linearization of the ExB flow work term of the kinetic collisional momentum transfer
+                                        - (gamma-1.d0)*v * BigR * (u_y*aux_Rk_R0 - u_x*aux_Rk_Z0)                            * xjac * theta * tstep &
                                         - v * T0 * BigR**2 * ((r0_x+rimp0_x*alpha_imp)*u_y - (r0_y+rimp0_y*alpha_imp)*u_x)  * xjac * theta * tstep &
                                         - v * (r0 + rimp0 * alpha_imp) * 2.d0* GAMMA * BigR * T0 * u_y                        * xjac * theta * tstep &
                     !=============== The ionization potential energy term=========================
@@ -4304,7 +4334,7 @@ do i=1,n_vertex_max
 
                                             ! ------------------------ from kinetic neutral / impurity coupling ---------------------------------------
                                              - (gamma-1.d0)*v * aux_rho0 * vpar0 * vpar * BB2 * BigR * xjac * theta * tstep &
-                                             + (gamma-1.d0)*v * aux_mom_par0 * vpar * BigR * xjac * theta * tstep & 
+                                             + (gamma-1.d0)*v * (aux_mom_par0 + aux_Rk_par0) * vpar * BigR * xjac * theta * tstep & 
                                             ! --------------------------- end of terms from kinetic coupling ------------------------------------------
 
 
@@ -5065,6 +5095,22 @@ return
 
 ! ---------------------------------------------------------------------------------------------------------------
 CONTAINS
+
+!> Read a kinetic coupling aux variable at the current Gauss point (mp,ms,mt).
+!> When the hybrid Crank-Nicolson coupling scheme is active (use_kin_cn_coupling,
+!> Strien 2022 Eq. 3.55), the current and previous fluid-interval feedback rates are
+!> combined as (1+zeta)*K - zeta*K_prev. Since every kinetic coupling term is multiplied
+!> by tstep in the equations, this yields the two-interval CN combination
+!> (1+xi_t)*Int[K dt]_{n->n+1} - xi_t*(h^{n+1}/h^n)*Int[K dt]_{n-1->n},
+!> with xi_t = zeta = time_evol_zeta * 2*tstep/(tstep+tstep_prev) the variable-step Gears
+!> parameter (zeta=0 for one-step schemes, for which the combination reduces to plain K).
+real*8 function kin_aux_cn(idx)
+  integer, intent(in) :: idx
+  kin_aux_cn = eq_aux_g(mp,idx,ms,mt)
+  if (use_kin_cn_coupling .and. prev_aux_idx(idx) .gt. 0) then
+    kin_aux_cn = (1.d0 + zeta) * kin_aux_cn - zeta * eq_aux_g(mp,prev_aux_idx(idx),ms,mt)
+  endif
+end function kin_aux_cn
 
 ! subroutine that calculates shock-capturing stabilization related terms
 subroutine calculate_sc_quantities()

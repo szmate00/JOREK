@@ -55,6 +55,8 @@ use phys_module, only: deuterium_adas,sqrt_mu0_over_rho0
 use phys_module, only: filter_perp, filter_hyper, filter_par, filter_perp_n0, filter_hyper_n0, filter_par_n0
 use phys_module, only: apply_dirichlet_proj, part_group_configs, init_particles_only
 use phys_module, only: use_manual_random_seed, manual_seed
+use phys_module, only: use_kin_cn_coupling
+use coupling_variables, only: prev_aux_idx
 use phys_module, only: use_imp_adas, nimp_bg 
 
 use mod_particle_group_id, only: matching_part_config_indices
@@ -77,6 +79,7 @@ type(type_edge_domain), allocatable, dimension(:) :: edge_domains
 type(edge_elements)                               :: edge_elm_template
 type(particle_puffing)                            :: gas_puff, gas_puff2
 character(len=50)                                 :: rst_part_file
+integer                                           :: k_cn_aux !< loop index for the hybrid-CN prev feedback slots
 
 real*8    :: rho_norm, t_norm, n_norm
 
@@ -343,8 +346,26 @@ do while (.not. sim%stop_now)
   endif
   
   !> As we call multiple kinetic loops multiple times and only want to use 1 %rhs,
-  !> we should set it to zero here before the inner loop starts
-  jorek_feedback%rhs = 0.d0
+  !> we should set it to zero here before the inner loop starts.
+  !> For the hybrid Crank-Nicolson coupling scheme (Strien 2022, Eq. 3.55), the deposits of the
+  !> just-finished fluid interval are first moved into the 'prev' slots: the projection then
+  !> reproduces the previous interval's feedback fields there (same linear solve), which the fluid
+  !> matrix combines with the current interval as (1+zeta)*K - zeta*K_prev. After a restart the
+  !> prev slots start from zero, so the first step falls back to the plain source treatment.
+  if (use_kin_cn_coupling) then
+    do k_cn_aux=1, n_aux_var
+      if (prev_aux_idx(k_cn_aux) .gt. 0) then
+        jorek_feedback%rhs(:,:,:,:,prev_aux_idx(k_cn_aux)) = jorek_feedback%rhs(:,:,:,:,k_cn_aux)
+      endif
+    enddo
+    do k_cn_aux=1, n_aux_var
+      if (.not. any(prev_aux_idx(1:n_aux_var) .eq. k_cn_aux)) then
+        jorek_feedback%rhs(:,:,:,:,k_cn_aux) = 0.d0
+      endif
+    enddo
+  else
+    jorek_feedback%rhs = 0.d0
+  endif
 
   do istep_inner_loop=inner_stepsize,sim%nstep_inner_loop,inner_stepsize
     write(header_line,'(A,I6,A,I6)') "Starting inner particle loop iteration getting us to istep_inner_loop=",istep_inner_loop," out of ",sim%nstep_inner_loop
