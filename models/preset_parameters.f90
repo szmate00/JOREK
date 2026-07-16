@@ -890,6 +890,27 @@ do i=1, n_valves_max
   valves(i)%poly_Z = 0.d0
 enddo
 
+!--------------- feedback controllers -----------
+controllers(:)%type          = 'none'
+controllers(:)%sensor        = 'te_front'
+controllers(:)%K_p           = 0.d0
+controllers(:)%K_i           = 0.d0
+controllers(:)%K_d           = 0.d0
+controllers(:)%min_value     = 0.d0
+controllers(:)%max_value     = 1.d90
+controllers(:)%t_start       = 0.d0
+controllers(:)%tau_smooth    = 0.d0
+controllers(:)%tau_actuator  = 0.d0
+controllers(:)%setpoint      = -1.d90
+do i=1, n_controllers_max
+  controllers(i)%setpoint_times  = -1.d0
+  controllers(i)%setpoint_values = -1.d90
+enddo
+controllers(:)%setpoint_file = 'none'
+controllers(:)%Te_front_eV   = 5.d0
+controllers(:)%zline_length  = 0.25d0
+controllers(:)%zline_npoints = 200
+
 ! -------------- particle groups ---------------
 n_part_groups = 0
 part_groups_in_use(:) = 'non'
@@ -947,6 +968,7 @@ do i=1, n_part_groups_max
     !< which overrides the default value of supers_ratio_puff set here
     part_group_configs(i)%puff_ctrl(j)%times = -1.d0
     part_group_configs(i)%puff_ctrl(j)%rates = -1.d0
+    part_group_configs(i)%puff_ctrl(j)%controller_num = 0
   enddo
 enddo
 

@@ -1006,10 +1006,10 @@ module phys_module
   type (type_valve), dimension(n_valves_max) :: valves 
 
   ! ------------------------------------------------
-  ! --- Structures for puffing controls 
+  ! --- Structures for puffing controls
   ! ------------------------------------------------
   integer, parameter :: n_puff_segment_max = 20  !< length of the times and rates arrays in a puffing object
-  
+
   ! the controller for the puffing of a particle group for a specified valve
   type :: type_puff_ctrl
     integer :: supers_num_puff            !< number of new superparticles initialised at each puff action
@@ -1018,9 +1018,49 @@ module phys_module
     !< if none of these three above options are set, the supers_ratio_puff method
     !< will be used, with its default value being set by supers_ratio_puff_default in mod_particle_puffing.f90
 
-    real*8  :: times(n_puff_segment_max)  !< array of time checkpoints (SI, in seconds) for which the puffing rate is specified (requires a defined puff_ctrl(i)%rates of the same length)   
+    real*8  :: times(n_puff_segment_max)  !< array of time checkpoints (SI, in seconds) for which the puffing rate is specified (requires a defined puff_ctrl(i)%rates of the same length)
     real*8  :: rates(n_puff_segment_max)  !< array of specified puff rates (atoms/second) at given time checkpoints (requires a defined puff_ctrl(i)%times of the same length)
+
+    integer :: controller_num             !< index of the feedback controller (see controllers() array) that sets the puff rate of this
+                                          !< puffing action (0 = no controller, use the piecewise linear times/rates behaviour)
   end type type_puff_ctrl
+
+  ! ------------------------------------------------
+  ! --- Structures for feedback controllers (see particles/mod_controller.f90)
+  ! ------------------------------------------------
+  integer, parameter :: n_controllers_max   = 10  !< maximum number of feedback controllers
+  integer, parameter :: n_ctrl_segment_max  = 20  !< length of the setpoint_times/setpoint_values arrays of a controller
+
+  !> Configuration of one feedback controller. A controller measures a plasma quantity (its sensor),
+  !> compares it against a (possibly time dependent) setpoint and computes an actuator signal with a
+  !> PID control law. Currently the actuator is the puff rate of a puffing action (linked to a
+  !> controller via puff_ctrl%controller_num) and the available sensor is the X-point radiator front
+  !> height 'te_front' (highest point along a vertical line above the X-point where Te <= Te_front_eV).
+  type :: type_controller_config
+    character(len=12)  :: type          !< 'none' (off), 'closedloop' (actuator = PID output) or
+                                        !< 'feedforward' (actuator = piecewise linear times/rates baseline + PID output)
+    character(len=12)  :: sensor        !< sensor for the controlled quantity; currently only 'te_front'
+    ! --- PID control law
+    real*8             :: K_p           !< proportional gain [actuator units per sensor unit]
+    real*8             :: K_i           !< integral gain
+    real*8             :: K_d           !< derivative gain
+    real*8             :: min_value     !< minimum actuator signal (e.g. 0 atoms/s)
+    real*8             :: max_value     !< maximum actuator signal
+    real*8             :: t_start       !< [s] arming time; before this only the feedforward baseline is used and the integrator is held
+    real*8             :: tau_smooth    !< [s] time constant for exponential smoothing of the measurement (0 = no smoothing)
+    real*8             :: tau_actuator  !< [s] first-order lag time constant of the actuator response (0 = instantaneous)
+    ! --- setpoint (in the sensor's units): constant value, piecewise linear schedule, or data file
+    real*8             :: setpoint                                !< constant setpoint
+    real*8             :: setpoint_times(n_ctrl_segment_max)      !< time checkpoints [s] for a time dependent setpoint
+    real*8             :: setpoint_values(n_ctrl_segment_max)     !< setpoint values at the time checkpoints
+    character(len=512) :: setpoint_file                           !< data file with columns (time [s], setpoint); overrides the above
+    ! --- 'te_front' sensor settings
+    real*8             :: Te_front_eV   !< [eV] electron temperature defining the radiator front (default 5 eV)
+    real*8             :: zline_length  !< [m] length of the sensing line, from the X-point towards the magnetic axis
+    integer            :: zline_npoints !< number of measurement points along the sensing line
+  end type type_controller_config
+
+  type(type_controller_config), dimension(n_controllers_max) :: controllers
 
   ! ------------------------------------------------
   ! --- Structures for settings wall_action

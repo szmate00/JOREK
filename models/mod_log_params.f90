@@ -1060,6 +1060,37 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
       endif
     enddo
 
+    write(*,HEADER_FMT) "========== Feedback controllers ========"
+    do i=1, n_controllers_max
+      if (trim(controllers(i)%type) /= 'none') then
+        write(*,"(A, I2, A)") "------------- Controller ", i ," -------------"
+        write(*,CHAR_FMT) 'type,               ', controllers(i)%type
+        write(*,CHAR_FMT) 'sensor,             ', controllers(i)%sensor
+        write(*,REAL_FMT) 'K_p,                ', controllers(i)%K_p
+        write(*,REAL_FMT) 'K_i,                ', controllers(i)%K_i
+        write(*,REAL_FMT) 'K_d,                ', controllers(i)%K_d
+        write(*,REAL_FMT) 'min_value,          ', controllers(i)%min_value
+        write(*,REAL_FMT) 'max_value,          ', controllers(i)%max_value
+        write(*,REAL_FMT) 't_start,            ', controllers(i)%t_start
+        write(*,REAL_FMT) 'tau_smooth,         ', controllers(i)%tau_smooth
+        write(*,REAL_FMT) 'tau_actuator,       ', controllers(i)%tau_actuator
+        if (trim(controllers(i)%setpoint_file) /= 'none') then
+          write(*,CHAR_FMT) 'setpoint_file,      ', trim(controllers(i)%setpoint_file)
+        else if (count(controllers(i)%setpoint_times >= 0.d0) > 0) then
+          used_segs = count(controllers(i)%setpoint_times >= 0.d0)
+          write(*,"(3X,A,' = ',99ES10.3)") 'setpoint_times      ', controllers(i)%setpoint_times(1:used_segs)
+          write(*,"(3X,A,' = ',99ES10.3)") 'setpoint_values     ', controllers(i)%setpoint_values(1:used_segs)
+        else
+          write(*,REAL_FMT) 'setpoint,           ', controllers(i)%setpoint
+        endif
+        if (trim(controllers(i)%sensor) == 'te_front') then
+          write(*,REAL_FMT) 'Te_front_eV,        ', controllers(i)%Te_front_eV
+          write(*,REAL_FMT) 'zline_length,       ', controllers(i)%zline_length
+          write(*,INTG_FMT) 'zline_npoints,      ', controllers(i)%zline_npoints
+        endif
+      endif
+    enddo
+
     write(*,HEADER_FMT) "========== Coupling schemes ============"
     write(*,*) "  use_ncs               = ", use_ncs
     write(*,*) "  use_ics               = ", use_ics
@@ -1120,7 +1151,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
 
           do i=1, n_valves_max
             used_segs = count(part_group_configs(group_num)%puff_ctrl(i)%rates > 0)
-            if (used_segs > 0) then
+            if (used_segs > 0 .or. part_group_configs(group_num)%puff_ctrl(i)%controller_num > 0) then
               write(*,"(3X,A,' = ',100I12)")    'Puff valve            ', i
 
               !> config of the number of supers to create per event
@@ -1132,8 +1163,13 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
                 write(*,"(3X,A,' = ',99ES12.4)")    'supers_ratio_puff     ', part_group_configs(group_num)%puff_ctrl(i)%supers_ratio_puff
               endif
 
-              write(*,"(3X,A,' = ',99ES10.3)")  'rates                 ', part_group_configs(group_num)%puff_ctrl(i)%rates(1:used_segs)
-              write(*,"(3X,A,' = ',99ES10.3)")  'times                 ', part_group_configs(group_num)%puff_ctrl(i)%times(1:used_segs)
+              if (used_segs > 0) then
+                write(*,"(3X,A,' = ',99ES10.3)")  'rates                 ', part_group_configs(group_num)%puff_ctrl(i)%rates(1:used_segs)
+                write(*,"(3X,A,' = ',99ES10.3)")  'times                 ', part_group_configs(group_num)%puff_ctrl(i)%times(1:used_segs)
+              endif
+              if (part_group_configs(group_num)%puff_ctrl(i)%controller_num > 0) then
+                write(*,"(3X,A,' = ',100I12)")    'controller_num        ', part_group_configs(group_num)%puff_ctrl(i)%controller_num
+              endif
             endif
           enddo
         endif ! puffing

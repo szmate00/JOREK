@@ -141,7 +141,8 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 filter_perp,    filter_hyper,    filter_par,        &
                 filter_perp_n0, filter_hyper_n0, filter_par_n0,     &
                 apply_dirichlet_proj, part_group_configs,           &
-                part_groups_in_use, valves, fluid_configs,          &
+                part_groups_in_use, valves, controllers,            &
+                fluid_configs,                                      &
                 cte_current_FB_fact, Z_xpoint_limit,                &
                 CARIDDI_mode, use_newton, maxNewton, gamma_Newton,  &
                 alpha_Newton, vacuum_min, strumpack_matching,       &

@@ -872,6 +872,27 @@ if (my_id .eq. 0) then
     call MPI_PACK(valves(i)%poly_Z(:),  4,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   enddo
 
+  ! feedback controller parameters
+  call MPI_PACK(controllers%type,          n_controllers_max*12, MPI_CHARACTER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(controllers%sensor,        n_controllers_max*12, MPI_CHARACTER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(controllers%K_p,           n_controllers_max,    MPI_REAL8,    buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(controllers%K_i,           n_controllers_max,    MPI_REAL8,    buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(controllers%K_d,           n_controllers_max,    MPI_REAL8,    buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(controllers%min_value,     n_controllers_max,    MPI_REAL8,    buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(controllers%max_value,     n_controllers_max,    MPI_REAL8,    buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(controllers%t_start,       n_controllers_max,    MPI_REAL8,    buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(controllers%tau_smooth,    n_controllers_max,    MPI_REAL8,    buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(controllers%tau_actuator,  n_controllers_max,    MPI_REAL8,    buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(controllers%setpoint,      n_controllers_max,    MPI_REAL8,    buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(controllers%setpoint_file, n_controllers_max*512,MPI_CHARACTER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(controllers%Te_front_eV,   n_controllers_max,    MPI_REAL8,    buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(controllers%zline_length,  n_controllers_max,    MPI_REAL8,    buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(controllers%zline_npoints, n_controllers_max,    MPI_INTEGER,  buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  do i=1, n_controllers_max
+    call MPI_PACK(controllers(i)%setpoint_times,  n_ctrl_segment_max,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+    call MPI_PACK(controllers(i)%setpoint_values, n_ctrl_segment_max,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  enddo
+
   ! particle coupling variables
   call MPI_PACK(rho_idx_kin,       1,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(mom_par_idx_kin,   1,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
@@ -943,6 +964,7 @@ if (my_id .eq. 0) then
 
       call MPI_PACK(part_group_configs(i)%puff_ctrl(j)%times,            n_puff_segment_max,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
       call MPI_PACK(part_group_configs(i)%puff_ctrl(j)%rates,            n_puff_segment_max,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+      call MPI_PACK(part_group_configs(i)%puff_ctrl(j)%controller_num,   1,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
     enddo
   enddo
 
@@ -1865,6 +1887,27 @@ if (my_id .ne. 0) then
     call MPI_UNPACK(buffer,bufsize,position,valves(i)%poly_Z(:),  4,MPI_REAL8,MPI_COMM_WORLD,ierr)
   enddo
 
+  ! feedback controller parameters
+  call MPI_UNPACK(buffer,bufsize,position,controllers%type,          n_controllers_max*12, MPI_CHARACTER,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,controllers%sensor,        n_controllers_max*12, MPI_CHARACTER,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,controllers%K_p,           n_controllers_max,    MPI_REAL8,    MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,controllers%K_i,           n_controllers_max,    MPI_REAL8,    MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,controllers%K_d,           n_controllers_max,    MPI_REAL8,    MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,controllers%min_value,     n_controllers_max,    MPI_REAL8,    MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,controllers%max_value,     n_controllers_max,    MPI_REAL8,    MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,controllers%t_start,       n_controllers_max,    MPI_REAL8,    MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,controllers%tau_smooth,    n_controllers_max,    MPI_REAL8,    MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,controllers%tau_actuator,  n_controllers_max,    MPI_REAL8,    MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,controllers%setpoint,      n_controllers_max,    MPI_REAL8,    MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,controllers%setpoint_file, n_controllers_max*512,MPI_CHARACTER,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,controllers%Te_front_eV,   n_controllers_max,    MPI_REAL8,    MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,controllers%zline_length,  n_controllers_max,    MPI_REAL8,    MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,controllers%zline_npoints, n_controllers_max,    MPI_INTEGER,  MPI_COMM_WORLD,ierr)
+  do i=1, n_controllers_max
+    call MPI_UNPACK(buffer,bufsize,position,controllers(i)%setpoint_times,  n_ctrl_segment_max,MPI_REAL8,MPI_COMM_WORLD,ierr)
+    call MPI_UNPACK(buffer,bufsize,position,controllers(i)%setpoint_values, n_ctrl_segment_max,MPI_REAL8,MPI_COMM_WORLD,ierr)
+  enddo
+
   ! particle coupling variables
   call MPI_UNPACK(buffer,bufsize,position,rho_idx_kin,             1,MPI_INTEGER,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,mom_par_idx_kin,         1,MPI_INTEGER,MPI_COMM_WORLD,ierr)
@@ -1936,6 +1979,7 @@ if (my_id .ne. 0) then
 
       call MPI_UNPACK(buffer,bufsize,position,part_group_configs(i)%puff_ctrl(j)%times,           n_puff_segment_max,MPI_REAL8,MPI_COMM_WORLD,ierr)
       call MPI_UNPACK(buffer,bufsize,position,part_group_configs(i)%puff_ctrl(j)%rates,           n_puff_segment_max,MPI_REAL8,MPI_COMM_WORLD,ierr)
+      call MPI_UNPACK(buffer,bufsize,position,part_group_configs(i)%puff_ctrl(j)%controller_num,  1,MPI_INTEGER,MPI_COMM_WORLD,ierr)
     enddo
   enddo
 

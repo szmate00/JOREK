@@ -13,9 +13,10 @@ module mod_particle_puffing
   use mod_event
   use mod_find_rz_nearby, only: find_rz_nearby
   use mod_particle_allocation, only: calc_n_particles_per_mpi
-  use phys_module, only: type_valve, valves, part_group_configs, type_puff_ctrl, n_puff_segment_max 
+  use phys_module, only: type_valve, valves, part_group_configs, type_puff_ctrl, n_puff_segment_max, controllers
   use mod_particle_group_id, only: matching_part_config_indices, matching_sim_groups_indices
   use mod_particle_create, only: type_part_create_scheme
+  use mod_controller, only: validate_controller_config, controller_update_puff_rate
   
   implicit none
 
@@ -73,8 +74,11 @@ subroutine initialize_settings_from_puff_ctrl(sim, group_num, valve_num, new)
   character(len=1000)                    :: identifier
 
   !> variables for piecewise linear
-  integer :: times_counter = 0 
+  integer :: times_counter = 0
   integer :: rates_counter = 0
+
+  !> whether a piecewise linear times/rates waveform must be defined for this puffing action
+  logical :: require_times_rates
 
   config_num = matching_part_config_indices(group_num)
 
@@ -84,9 +88,20 @@ subroutine initialize_settings_from_puff_ctrl(sim, group_num, valve_num, new)
     new%puff_ctrl%supers_ratio_puff, sim%groups(group_num)%n_particles, &
     default=supers_ratio_puff_default, my_id=sim%my_id, identifier=identifier)
   
+  !> feedback controller checks ----------------------------------------
+  !> a piecewise linear times/rates waveform is required unless a pure closed loop
+  !> controller sets the puff rate (for 'feedforward' controllers it is the baseline)
+  require_times_rates = .true.
+  if (new%puff_ctrl%controller_num > 0) then
+    call validate_controller_config(new%puff_ctrl%controller_num, sim%my_id)
+    if (trim(controllers(new%puff_ctrl%controller_num)%type) == 'closedloop') require_times_rates = .false.
+  endif
+
   !> specific to piecewise linear puff_ctrl ----------------------------
 
   !> validity checks
+  times_counter = 0 ! explicit reset (the declaration initializers imply save)
+  rates_counter = 0
   do i=1, n_puff_segment_max
     if (new%puff_ctrl%rates(i) > 0) rates_counter = rates_counter + 1
     if (new%puff_ctrl%times(i) >= 0) then
@@ -97,11 +112,19 @@ subroutine initialize_settings_from_puff_ctrl(sim, group_num, valve_num, new)
         if (new%puff_ctrl%times(i-1) >= new%puff_ctrl%times(i)) then
           if (sim%my_id == 0) write(*,"(A,I2,A,I2,A)") "ERROR: inputs in %times for part_group_config(",config_num,")%puff_ctrl(",valve_num,") must be strictly increasing"
           stop
-        endif 
+        endif
       endif
 
     endif
   enddo
+
+  if (.not. require_times_rates) then
+    if ((rates_counter > 0) .and. (sim%my_id == 0)) then
+      write(*,"(A,I2,A,I2,A)") "WARNING: %times/%rates of part_group_config(",config_num,")%puff_ctrl(",valve_num,")"
+      write(*,*)               "  are ignored because the puff rate is set by a 'closedloop' controller."
+    endif
+    return
+  endif
 
   if (rates_counter == 0) then
     if (sim%my_id == 0) write(*,"(A,I2,A,I2,A)") "ERROR: No %rates set for part_group_config(",config_num,")%puff_ctrl(",valve_num,")."
@@ -302,6 +325,7 @@ subroutine do_particle_puffing(this,sim, ev)
   real*8  :: R_new, Z_new, s_new, t_new, r_valve, theta
   real*8  :: u(5)
   real*8  :: puff_rate, puff_rate_local !< possibly time dependent fueling rate, fueling rate/n_mpi
+  real*8  :: ff_rate                    !< feedforward baseline rate handed to the feedback controller
 
   integer ::    puffed_this_step_local, all_puffed_this_step
   real*8  ::    puff_weight_local, all_puff_weight
@@ -352,8 +376,21 @@ subroutine do_particle_puffing(this,sim, ev)
   c = sqrt((7.d0/5.d0)*(300.d0+273.d0)*K_BOLTZ/(2.d0*sim%groups(this%target_group)%mass*ATOMIC_MASS_UNIT))
 
   !> calculate time dependent puffing rate -----------------------
-  !> piecewise linear approach 
-  call calc_puff_rate_linear(this, sim%time, puff_rate_0, puff_rate_1, puff_rate)
+  !> piecewise linear approach (skipped when a pure closed loop controller sets the rate)
+  puff_rate_0 = 0.d0
+  puff_rate_1 = 0.d0
+  puff_rate   = 0.d0
+  if ((this%puff_ctrl%controller_num == 0) .or. &
+      (trim(controllers(this%puff_ctrl%controller_num)%type) == 'feedforward')) then
+    call calc_puff_rate_linear(this, sim%time, puff_rate_0, puff_rate_1, puff_rate)
+  endif
+
+  !> feedback controller sets/corrects the puff rate -------------
+  if (this%puff_ctrl%controller_num > 0) then
+    ff_rate = puff_rate
+    call controller_update_puff_rate(this%puff_ctrl%controller_num, sim, ff_rate, puff_rate)
+  endif
+
   puff_rate_local = puff_rate / sim%n_mpi
 
   !> calculate how many superparticles to initiate ---------------
@@ -374,6 +411,9 @@ subroutine do_particle_puffing(this,sim, ev)
   !> write out puffing details -------------------------------------
   if (sim%my_id .eq. 0) then
     write(*,"(2X,A12)") "Set-up:     "
+    if (this%puff_ctrl%controller_num > 0) then
+      write(*,"(4X,A18, ' = ', I12)")      "controller_num    ", this%puff_ctrl%controller_num
+    endif
     write(*,"(4X,A18, ' = ', I12)")        "puff segment      ", this%current_puff_seg
     write(*,"(4X,A18, ' = ', G13.6)")      "puff_rate_0       " , puff_rate_0
     write(*,"(4X,A18, ' = ', G13.6)")      "puff_rate_1       " , puff_rate_1

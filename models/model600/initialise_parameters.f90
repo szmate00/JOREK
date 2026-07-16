@@ -205,6 +205,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 apply_dirichlet_proj, restart_particles,            &
                 proj_collection_period,                             &
                 part_group_configs, part_groups_in_use, valves,     &
+                controllers,                                        &
                 fluid_configs, init_particles_only,                 &
                 find_RZ_nearby_iter, find_RZ_nearby_tol,            &
                 min_sheath_angle, bcs, part_kill_ratio,             &
