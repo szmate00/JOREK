@@ -683,6 +683,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   write(*,REAL_FMT) 'T_min_ZKpar           ', T_min_ZKpar
   write(*,REAL_FMT) 'Ti_min_ZKpar          ', Ti_min_ZKpar
   write(*,REAL_FMT) 'Te_min_ZKpar          ', Te_min_ZKpar
+  write(*,REAL_FMT) 'T_min_eta             ', T_min_eta
   write(*,REAL_FMT) 'ne_SI_min             ', ne_SI_min
   write(*,REAL_FMT) 'Te_eV_min             ', Te_eV_min
   write(*,REAL_FMT) 'implicit_heat_source  ', implicit_heat_source

@@ -219,7 +219,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 eta_num_prof, eta_num_psin_dependent, D_par_imp,    &
                 D_perp_imp, spi_quantity_bg, pellet_density_bg,     &
                 visco_par_heating, constant_imp_source,             &
-                T_min_ZKpar,Ti_min_ZKpar,Te_min_ZKpar,              &
+                T_min_ZKpar,Ti_min_ZKpar,Te_min_ZKpar,T_min_eta,    &
                 CARIDDI_mode, use_newton, maxNewton, gamma_Newton,  &
                 alpha_Newton, vacuum_min, strumpack_matching,       &
                 visco_old_setup, visco_heating, eta_coul_log_dep,   &
