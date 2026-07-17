@@ -39,6 +39,7 @@ module phys_module
   real*8  :: sigma                !< (model400)
   real*8  :: tauIC                !< Scaling factor for diamagnetic terms (see [[diamag|diamagnetic]])
   real*8  :: tauIC_nominal        !< Nominal scaling factor (considering Ti=Te) for diamagnetic terms (see [[diamag|diamagnetic]])
+  logical :: diamag_heat_conv     !< Include the diamagnetic (grad-B/curvature drift) heat convection terms in the temperature equations (two-temperature model only; net term vanishes for Ti=Te)
   real*8  :: eta_spitzer          !< Spitzer resistivity in the core (considering main ion charge Z=1, effective ion charge Zeff=1)
   real*8  :: lnA_center           !< Coulomb logarithm in the core (used for the resistivity function)
   logical :: Wdia                 !< Include diamagnetic flows in viscosity terms? (see [[wdia|here]])

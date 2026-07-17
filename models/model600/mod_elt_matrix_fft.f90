@@ -1846,6 +1846,20 @@ do i=1,n_vertex_max
                          + zeta * v * alpha_i * Ti0 * delta_g(mp,var_rhoimp,ms,mt) * BigR              * xjac         * factor(var_Ti,9)
               endif
 
+              ! --- Net diamagnetic heat-flux contribution to the (pressure-form) ion equation:
+              !     -(GAMMA-1)*[ div(3/2 p_i v*_i) + div(q*_i) + p_i div(v*_i) ].
+              !     The (b/B).(grad n x grad T) cross terms cancel exactly (diamagnetic cancellation);
+              !     the curl(b/B) magnetization terms survive in toroidal geometry and collapse to
+              !     GAMMA * 2*tauIC*2 * d/dZ(n_i Ti^2), with the drift direction fixed by consistency
+              !     with the 2*tauIC*2*Pi0_y term of the density equation. Electrons carry the
+              !     opposite sign; the sum vanishes for Ti=Te, so the term exists only in the
+              !     two-temperature model.
+              if (diamag_heat_conv) then
+                rhs_ij(var_Ti) = rhs_ij(var_Ti) &
+                         + v * GAMMA * 2.d0 * tauIC*2. * ( (r0_y + alpha_i*rimp0_y) * Ti0**2       &
+                                 + 2.d0 * (r0 + rimp0*alpha_i) * Ti0 * Ti0_y ) * BigR              * xjac * tstep
+              endif
+
 
               rhs_ij_k(var_Ti) = - (ZKi_par_T-ZKi_prof) * BigR / BB2 * Bgrad_T_k_star * Bgrad_Ti * xjac * tstep * factor(var_Ti,5) &
                                  - ZKi_prof * BigR * (                + v_p*Ti0_p /BigR**2 )     * xjac * tstep * factor(var_Ti,6) &
@@ -1953,7 +1967,15 @@ do i=1,n_vertex_max
               !==============================End of ionization energy terms=================
                          + zeta * v * alpha_e * Te0 * delta_g(mp,var_rhoimp,ms,mt) * BigR    * xjac         * factor(var_Te,10)
               endif ! (with_impurities)
-  
+
+              ! --- Net diamagnetic heat-flux contribution, electron counterpart (opposite drift
+              !     direction to the ions): -GAMMA * 2*tauIC*2 * d/dZ(n_e Te^2)
+              if (diamag_heat_conv) then
+                rhs_ij(var_Te) = rhs_ij(var_Te) &
+                         - v * GAMMA * 2.d0 * tauIC*2. * ( (r0_y + alpha_e_bis*rimp0_y) * Te0**2   &
+                                 + 2.d0 * (r0 + rimp0*alpha_e_bis) * Te0 * Te0_y ) * BigR          * xjac * tstep
+              endif
+
               rhs_ij_k(var_Te) = - (ZKe_par_T-ZKe_prof) * BigR / BB2 * Bgrad_T_k_star * Bgrad_Te * xjac * tstep * factor(var_Te,5) &
                                  - ZKe_prof * BigR * (                + v_p*Te0_p /BigR**2 )     * xjac * tstep * factor(var_Te,6) &
                            - tgnum_Te * 0.25d0 / BigR * vpar0**2                                                    &
@@ -3406,8 +3428,18 @@ do i=1,n_vertex_max
                                         * ( v_x * ps0_y -  v_y * ps0_x                  ) * xjac * theta * tstep * tstep &
                               + tgnum_Ti* 0.25d0 / BigR * vpar0**2                                                       &
                                         * (r0+alpha_i*rimp0) * (Ti_x * ps0_y - Ti_y * ps0_x             )                                &
-                                        * ( v_x * ps0_y -  v_y * ps0_x                  ) * xjac * theta * tstep * tstep 
-  
+                                        * ( v_x * ps0_y -  v_y * ps0_x                  ) * xjac * theta * tstep * tstep
+
+                    ! --- Diamagnetic heat-flux term (see rhs_ij(var_Ti))
+                    if (diamag_heat_conv) then
+                      amat(var_Ti,var_Ti) = amat(var_Ti,var_Ti) &
+                              - v * GAMMA * 2.d0 * tauIC*2. * ( 2.d0 * (r0_y + alpha_i*rimp0_y) * Ti0 * Ti          &
+                                      + 2.d0 * (r0 + rimp0*alpha_i) * (Ti * Ti0_y + Ti0 * Ti_y) ) * BigR * xjac * theta * tstep
+                      amat(var_Ti,var_rho) = amat(var_Ti,var_rho) &
+                              - v * GAMMA * 2.d0 * tauIC*2. * ( rho_y * Ti0**2                                      &
+                                      + 2.d0 * rho * Ti0 * Ti0_y ) * BigR                          * xjac * theta * tstep
+                    endif
+
                     amat_k(var_Ti,var_Ti) = + (ZKi_par_T-ZKi_prof) * BigR / BB2 * Bgrad_T_k_star * Bgrad_Ti_Ti * xjac * theta * tstep  &
                                   + dZKi_par_dT * Ti     * BigR / BB2 * Bgrad_T_k_star * Bgrad_Ti    * xjac * theta * tstep  &
   
@@ -3803,8 +3835,18 @@ do i=1,n_vertex_max
                                         * ( v_x * ps0_y -  v_y * ps0_x                  ) * xjac * theta * tstep * tstep & 
                               + tgnum_Te * 0.25d0 / BigR * vpar0**2                                                       &
                                         * (alpha_e_tri*rimp0)* Te * (Te0_x * ps0_y - Te0_y * ps0_x + F0 / BigR * Te0_p)&
-                                        * ( v_x * ps0_y -  v_y * ps0_x                  ) * xjac * theta * tstep * tstep 
-  
+                                        * ( v_x * ps0_y -  v_y * ps0_x                  ) * xjac * theta * tstep * tstep
+
+                    ! --- Diamagnetic heat-flux term (see rhs_ij(var_Te))
+                    if (diamag_heat_conv) then
+                      amat(var_Te,var_Te) = amat(var_Te,var_Te) &
+                              + v * GAMMA * 2.d0 * tauIC*2. * ( 2.d0 * (r0_y + alpha_e_bis*rimp0_y) * Te0 * Te      &
+                                      + 2.d0 * (r0 + rimp0*alpha_e_bis) * (Te * Te0_y + Te0 * Te_y) ) * BigR * xjac * theta * tstep
+                      amat(var_Te,var_rho) = amat(var_Te,var_rho) &
+                              + v * GAMMA * 2.d0 * tauIC*2. * ( rho_y * Te0**2                                      &
+                                      + 2.d0 * rho * Te0 * Te0_y ) * BigR                          * xjac * theta * tstep
+                    endif
+
                     amat_k(var_Te,var_Te) = + (ZKe_par_T-ZKe_prof) * BigR / BB2 * Bgrad_T_k_star * Bgrad_Te_Te * xjac * theta * tstep  &
                                   + dZKe_par_dT * Te     * BigR / BB2 * Bgrad_T_k_star * Bgrad_Te    * xjac * theta * tstep  &
   

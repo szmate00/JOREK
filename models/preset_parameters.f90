@@ -509,6 +509,7 @@ subroutine preset_parameters
   U_sheath = .false.
   renormalise = .false.
   tauIC = 0.d0
+  diamag_heat_conv = .false.
   Wdia  = .false.
 
   zjz_0 =  0.1173d0   
