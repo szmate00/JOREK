@@ -911,6 +911,7 @@ module phys_module
   real*8              :: keep_current_psin_cutoff   !< Center of the tanh mask in psi_N for keep_current_prof_confined
   real*8              :: keep_current_psin_sig      !< Width of the tanh mask in psi_N for keep_current_prof_confined
   real*8              :: keep_current_z_sig         !< Width of the tanh mask in Z beyond the X-point(s) for keep_current_prof_confined (masks the private flux region where psi_N < 1)
+  logical             :: keep_current_mask_pfr_only !< With keep_current_prof_confined: suppress the source only in the private flux region (psi_N < cutoff AND beyond the X-point); confined region and SOL (including the legs) keep the source
   logical             :: init_current_prof !< Initialize the current source from the current profile present
   logical             :: current_prof_initialized !< Flag that is automatically set to true once the current source has been initialized to prevent accidental reinitialization when restarting
   

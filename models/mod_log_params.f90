@@ -646,6 +646,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
 
   write(*,LOGI_FMT) 'keep_current_prof     ', keep_current_prof
   write(*,LOGI_FMT) 'keep_current_prof_confined', keep_current_prof_confined
+  write(*,LOGI_FMT) 'keep_current_mask_pfr_only', keep_current_mask_pfr_only
   write(*,REAL_FMT) 'keep_current_psin_cutoff', keep_current_psin_cutoff
   write(*,REAL_FMT) 'keep_current_psin_sig ', keep_current_psin_sig
   write(*,REAL_FMT) 'keep_current_z_sig    ', keep_current_z_sig

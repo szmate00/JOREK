@@ -658,6 +658,7 @@ subroutine preset_parameters
   keep_current_psin_cutoff   = 0.98d0
   keep_current_psin_sig      = 0.01d0
   keep_current_z_sig         = 0.02d0
+  keep_current_mask_pfr_only = .false.      ! Suppress the source only in the private flux region
   init_current_prof  = .false.
   current_prof_initialized = .false.
   
