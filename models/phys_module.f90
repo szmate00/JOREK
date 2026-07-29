@@ -57,7 +57,8 @@ module phys_module
   real*8  :: imp_reflection       !< impurity reflection coefficient on open fieldlines
   real*8  :: loop_voltage         !< Apply a loop voltage at the boundary of the computational domain (in V; works only for fixed boundary)
   logical :: old_deuterium_atomic !< use old fit to calculate atomic coefficients for D (ionization, recombination, radiation), otherwise a better fit is used
-  logical :: deuterium_adas       !< use OPEN ADAS to calculate ionization, recombination and radiation coeffients for deuterium   
+  logical :: deuterium_adas       !< use OPEN ADAS to calculate ionization, recombination and radiation coefficients for deuterium in
+                                  !< the fluid model, only recombination coefficients in the kinetic model
   logical :: deuterium_adas_1e20  !< use OPEN ADAS with fixed density=1e20 to calculate ionization, recombination and radiation coeffients for deuterium
   logical :: mach_one_bnd_integral!< use a boundary integral (boundary_matrix_open) to implement Mach=one boundary condition
   logical :: vpar_smoothing       !< apply a smoothing function to smooth jumps in Vpar at B.n=0
@@ -230,6 +231,7 @@ module phys_module
   logical :: extended_boundary    !< Choose if extended boundary conditions (Biot-Savart version) should be used, default (false) is grad_chi with Dommaschk potentials
   real*8  :: j_cutoff_rcoord      !< Radial location from which the current is set to zero as it approaches the boundary - rcoord corresponds to the normalised toroidal flux
   real*8  :: j_cutoff_sig         !< Radial width over which the current is ramped down to zero towards the boundary
+  real*8  :: bloating_factor      !< Linear radial factor by which the boundary has been bloated/extended. The LCFS should be at rcoord=1/(bloating_factor).
 
   !> Points used as blocks to extend grid into complex wall structures, see https://www.jorek.eu/wiki/doku.php?id=wallgrid_tutorial
   real*8  :: surface_cross_tol                                                  !< Tolerance when looking for crossing of polar lines and surfaces, needs to be > 1.0
@@ -1087,6 +1089,8 @@ module phys_module
                                                    !  *cross collisions between different neutrals species is not yet supported
                                                    !   For more information on the neutral neutral collisions, see https://jorek.eu/wiki/doku.php?id=particles:neutral_neutral_collisions
     real*8              :: neutral_coll_dTw(3)     !< the reference diameter d_ref [m], reference temperatrue T_ref [K] and viscosity index omega [-] of the variable hard sphere model for this neutral species
+    integer             :: ncoll_each_nstep_part   !< run neutral self collisions action at every i_inner_loop = ncoll_each_nstep_part. Default (-9999991*) interpreted as nstep_inner_loop (i.e. each fluid timestep)
+                                                   ! * -9999991 was chosen as default because it is the negative of a big prime, so it will produce strange results if the gcd or lcm of it and another number will be calculated, making it easier to debug if something is wrong
 
     ! ---- impurities (ics) specific
     logical             :: use_kin_bg_collisions   !< switch on collisions with the background plasma
