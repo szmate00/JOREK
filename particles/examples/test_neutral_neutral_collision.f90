@@ -135,11 +135,7 @@ program test_NNC
   select type (p => sim%groups(1)%particles)
   type is (particle_kinetic_leapfrog)  
     !$omp parallel do default(none)  &
-#ifdef __GFORTRAN__
     !$omp shared(sim, rng, T_av, weight)       &
-#else
-    !$omp shared(sim, p, rng, T_av, weight)       &
-#endif
     !$omp private(i_rng, RN, R, Z, s, t, i_elm)
     do i=1,size(p)
       !$ i_rng = omp_get_thread_num()+1
@@ -314,11 +310,7 @@ contains
     select type (p => sim%groups(1)%particles)
     type is (particle_kinetic_leapfrog)  
       !$omp parallel do default(none)  &
-#ifdef __GFORTRAN__
       !$omp shared(sim, tstep_particles, mass, rng, nstep_particles) &
-#else
-      !$omp shared(sim, p, tstep_particles, mass, rng, nstep_particles) &
-#endif
       !$omp private(i_rng, particle_tmp, to_be_reflected, vector_normal, &
       !$omp rz_old, st_old, i_elm_old, HH, HH_s, HH_t, HZ, l, m, qty,    &
       !$omp factor, i_tor, k, ifail, RN, j) &
@@ -444,11 +436,7 @@ contains
     select type (p => sim%groups(1)%particles)
     type is (particle_kinetic_leapfrog)  
       !$omp parallel do default(none)  &
-#ifdef __GFORTRAN__
       !$omp shared(sim) &
-#else
-      !$omp shared(sim, p) &
-#endif
       !$omp private(iR, R) &
       !$omp reduction(+:w_iR)
       do i=1,size(p)
@@ -549,7 +537,7 @@ contains
       !$omp parallel do default(shared) & ! workaround for Error: �__vtab_mod_pcg32_rng_Pcg32_rng� not specified in enclosing �parallel�
 #else
       !$omp parallel do default(none) &
-      !$omp shared(sim, particles) &
+      !$omp shared(sim) &
 #endif
       !$omp reduction(+:particles_remaining, momentum_remaining, energy_remaining,superparticles_remaining)
         do j=1,size(particles,1)
@@ -602,11 +590,7 @@ contains
     select type (p => sim%groups(1)%particles)
     type is (particle_kinetic_leapfrog)  
       !$omp parallel do default(none)  &
-#ifdef __GFORTRAN__
       !$omp shared(sim) &
-#else
-      !$omp shared(p,sim) &
-#endif
       !$omp reduction(+:T_av_measured, w_tot)
       do i=1,size(p)
         T_av_measured = T_av_measured + p(i)%weight * (sim%groups(1)%mass * ATOMIC_MASS_UNIT) * dot_product(p(i)%v,p(i)%v) / (3*EL_CHG)
@@ -631,11 +615,7 @@ contains
     select type (p => sim%groups(1)%particles)
     type is (particle_kinetic_leapfrog)  
       !$omp parallel do default(none)  &
-#ifdef __GFORTRAN__
       !$omp shared(sim, rng, T_Av, weight)       &
-#else
-      !$omp shared(sim, p, rng, T_Av, weight)       &
-#endif
       !$omp private(i_rng, RN, R, Z, s, t, i_elm)
       do i=1,size(p)
         if(p(i)%x(1) < R_0) then
