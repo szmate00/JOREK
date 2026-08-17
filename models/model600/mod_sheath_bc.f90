@@ -43,13 +43,11 @@
 !! physically appropriate interpretation in the scrape-off layer.
 !! HOW TO ENABLE IT (namelist in1), on the boundary types that carry the strike points:
 !!
-!!   bcs(1)%natural%u    = .true.    ! the sheath boundary condition itself
-!!   bcs(1)%natural%w    = .true.    ! required: keeps grad(u).n free, i.e. keeps E_r alive
-!!   bcs(1)%natural%zj   = .true.    ! required: lets the boundary current follow Ampere's law
-!!   bcs(1)%dirichlet%u  = .false.
-!!   bcs(1)%dirichlet%w  = .false.
-!!   bcs(1)%dirichlet%zj = .false.
-!!   bcs(1)%mach1        = .true.    ! keep it: j_sat assumes the Mach 1 condition at the same wall
+!!   bcs(1)%natural%u    = .true.    ! the sheath boundary condition
+!!   bcs(1)%dirichlet%u  = .false.   ! u is free and set by charge continuity at the wall
+!!   bcs(1)%dirichlet%w  = .true.    ! KEEP, and leave natural%w = .false.
+!!   bcs(1)%dirichlet%zj = .true.    ! KEEP, and leave natural%zj = .false.
+!!   bcs(1)%mach1        = .true.    ! j_sat assumes the Mach 1 condition at the same wall
 !!   bc_natural_open     = .true.    ! the boundary integrals live in that branch of construct_matrix
 !!
 !! Leave at least one boundary type with dirichlet%u = .true. (typically the main chamber wall):
@@ -57,6 +55,25 @@
 !! on u in ion saturation, so its constant mode would otherwise be undetermined. Optional knobs:
 !! sheath_Lambda (Lambda_0, <=0 computes it from central_mass), sheath_Lambda_local,
 !! sheath_V_wall, sheath_X_min, sheath_smooth_dX, sheath_min_bn, sheath_ramp_time.
+!!
+!! WHY dirichlet%w AND dirichlet%zj STAY ON. A surface integral only reaches rows whose test
+!! function is non-zero on the boundary edge, i.e. the value and tangential-derivative DOFs
+!! (mod_boundary_matrix_open writes rows at j2 = direction(j) only). Those are exactly the rows a
+!! Dirichlet on the same variable overwrites, so with dirichlet%w / dirichlet%zj = .true. the
+!! dropped surface terms of the w and zj weak forms impose nothing at all: there is no hidden
+!! grad(u).n = 0 and no spurious grad(psi).n/h current to repair. bcs%natural%w and %natural%zj
+!! exist in the code but are REFUSED by initialise_parameters, because their residuals depend on a
+!! normal derivative whose Jacobian columns that routine cannot produce (the trial function loop
+!! runs over l2 = direction(l) only, and psi_t synthesises a fictitious normal derivative for the
+!! value/tangential basis functions). The result is a missing Jacobian entry plus a spurious one,
+!! i.e. an effectively explicit O(1/h) boundary term: it grows boundary-localised structures over
+!! ~20 steps and then propagates them inward. Lifting that needs an extra trial index carrying
+!! direction_perp(1) with the correct Hermite basis (zero on the edge, unit normal derivative).
+!!
+!! The sheath term itself needs neither of them: it depends on u, rho, Ti, Te and zj VALUES, which
+!! are in the available column set, and the frozen zj trace cancels exactly between the strong-form
+!! volume term and the added surface flux, so the current leaving the domain is the sheath current
+!! whether or not that trace is pinned.
 !!
 module mod_sheath_bc
 

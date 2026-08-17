@@ -367,14 +367,21 @@ if (my_id .eq. 0) then
 
     do i = 1, max_bnd_types
 
-      if ( bcs(i)%natural%w .and. bcs(i)%dirichlet%w ) then
-        write(*,*) 'ERROR: bcs(', i, ')%natural%w together with dirichlet%w: the Dirichlet row'
-        write(*,*) '       would overwrite the equation the surface term belongs to.'
-        stop
-      endif
-      if ( bcs(i)%natural%zj .and. bcs(i)%dirichlet%zj ) then
-        write(*,*) 'ERROR: bcs(', i, ')%natural%zj together with dirichlet%zj. Set'
-        write(*,*) '       dirichlet%zj = .false. so that zj can follow Ampere''s law.'
+
+      if ( bcs(i)%natural%w .or. bcs(i)%natural%zj ) then
+        write(*,*) 'ERROR: bcs(', i, ')%natural%w / %natural%zj are mis-linearised and must stay'
+        write(*,*) '       .false. Their residuals depend on a normal derivative, but the trial'
+        write(*,*) '       function loop in mod_boundary_matrix_open only produces columns for the'
+        write(*,*) '       value and tangential-derivative DOFs (l2 = direction(l)), so the true'
+        write(*,*) '       Jacobian entry is missing and a spurious one is added through psi_t.'
+        write(*,*) '       The boundary term is then effectively explicit with an O(1/h)'
+        write(*,*) '       coefficient, which grows boundary structures over ~20 steps.'
+        write(*,*) '       They are also unnecessary: a surface integral only reaches rows at the'
+        write(*,*) '       value and tangential DOFs, which the Dirichlet on the same variable'
+        write(*,*) '       overwrites anyway, so keeping dirichlet%w / dirichlet%zj = .true.'
+        write(*,*) '       imposes no spurious natural condition. The sheath term itself needs'
+        write(*,*) '       neither: the frozen zj trace cancels exactly between the strong-form'
+        write(*,*) '       volume term and the added surface flux.'
         stop
       endif
 
@@ -383,18 +390,6 @@ if (my_id .eq. 0) then
       if ( bcs(i)%dirichlet%u ) then
         write(*,*) 'ERROR: bcs(', i, ')%natural%u needs dirichlet%u = .false.; the whole point'
         write(*,*) '       is that u is free and set by charge continuity at the wall.'
-        stop
-      endif
-      if ( .not. bcs(i)%natural%w ) then
-        write(*,*) 'ERROR: bcs(', i, ')%natural%u needs bcs(', i, ')%natural%w = .true.'
-        write(*,*) '       Without the surface term of the vorticity definition, a free u weakly'
-        write(*,*) '       imposes grad(u).n = 0, which is E_r = 0 at a grazing target.'
-        stop
-      endif
-      if ( .not. bcs(i)%natural%zj ) then
-        write(*,*) 'ERROR: bcs(', i, ')%natural%u needs bcs(', i, ')%natural%zj = .true.,'
-        write(*,*) '       otherwise the interior current the sheath is compared against is'
-        write(*,*) '       frozen at its initial value and the j-V loop stays open.'
         stop
       endif
       if ( bcs(i)%sheath_u ) then
@@ -437,10 +432,6 @@ if (my_id .eq. 0) then
     if ( sheath_min_bn .le. 0.d0 ) then
       write(*,*) 'NOTE: sheath_min_bn = 0, so the sheath current vanishes where the field is'
       write(*,*) '      tangent to the wall. Set it to sin(1 deg) = 0.0175 to keep a floor there.'
-    endif
-    if ( freeboundary .and. any(bcs(:)%natural%zj) ) then
-      write(*,*) 'NOTE: freeboundary is on; is_freebound already removes the zj Dirichlet for the'
-      write(*,*) '      vacuum harmonics, and natural%zj now removes it for the others too.'
     endif
 
   endif

@@ -396,14 +396,18 @@ do ms=1, n_gauss
           if ( apply_natural_bc(var_u) ) &
             rhs_ij(var_u)  = - v * BigR * ( zj_sh - zj0 ) * sh_Bn * dl * tstep * sheath_ramp
 
-          ! --- Surface term of the vorticity definition (w = Delta_pol u). Without it, leaving u
-          ! --- free at the boundary would weakly impose grad(u).n = 0, i.e. E_r = 0 at a grazing
-          ! --- target, which would destroy the field structure this BC exists to produce.
+          ! --- Surface term of the vorticity definition (w = Delta_pol u). REFUSED by
+          ! --- initialise_parameters: its Jacobian needs columns for the normal-derivative DOFs,
+          ! --- which the trial function loop below cannot produce (l2 = direction(l) only), so the
+          ! --- term ends up effectively explicit and grows boundary structures. It is also
+          ! --- unnecessary while dirichlet%w = .true., because these rows are overwritten anyway.
+          ! --- Kept as the starting point for a correct implementation, see mod_sheath_bc.f90.
           if ( apply_natural_bc(var_w) ) &
             rhs_ij(var_w)  = + v * BigR * gradu0dotn * dl
 
-          ! --- Surface term of the current definition (zj = Delta*psi), so that the boundary trace
-          ! --- of zj is the honest Ampere current instead of implying grad(psi).n = 0
+          ! --- Surface term of the current definition (zj = Delta*psi). REFUSED for the same
+          ! --- reason as the w term above, and equally unnecessary: the frozen zj trace cancels
+          ! --- exactly between the strong-form volume term and the sheath surface flux.
           if ( apply_natural_bc(var_zj) ) &
             rhs_ij(var_zj) = + v * gradps0dotn / BigR * dl
 
