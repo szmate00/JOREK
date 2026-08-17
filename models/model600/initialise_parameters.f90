@@ -345,12 +345,12 @@ if (my_id .eq. 0) then
     ! --- u is continuous along the boundary. A type with the BC adjacent to one without it puts
     ! --- a step of order Lambda*Te/e across a single element, and since v.n = R*du/dl that is a
     ! --- large artificial ExB flow through the wall right at the junction.
-    do i = 1, max_bnd_types
-      if ( bcs(i)%sheath_u .or. .not. bcs(i)%dirichlet%u ) cycle
-      write(*,*) 'NOTE: bcs(', i, ')%sheath_u is .false. while other types have it. If this'
-      write(*,*) '      boundary type touches one that has it, u steps from ~Lambda*Te/e to 0'
-      write(*,*) '      across one element there. Enable it on every type bounding the plasma.'
-    enddo
+    !do i = 1, max_bnd_types
+    !  if ( bcs(i)%sheath_u .or. .not. bcs(i)%dirichlet%u ) cycle
+    !  write(*,*) 'NOTE: bcs(', i, ')%sheath_u is .false. while other types have it. If this'
+    !  write(*,*) '      boundary type touches one that has it, u steps from ~Lambda*Te/e to 0'
+    !  write(*,*) '      across one element there. Enable it on every type bounding the plasma.'
+    !enddo
 
   endif
 
