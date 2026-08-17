@@ -63,6 +63,8 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 gamma_sheath, gamma_sheath_i, gamma_sheath_e,       &
                 sheath_Lambda, sheath_V_wall, sheath_u_relax,       &
                 sheath_u_exp_max, sheath_u_exp_min,                 &
+                sheath_Lambda_local, sheath_X_min, sheath_smooth_dX,&
+                sheath_min_bn, sheath_ramp_time,                    &
                 deuterium_adas, deuterium_adas_1e20,                &
                 old_deuterium_atomic,                               &
                 density_reflection,                                 &
@@ -349,6 +351,97 @@ if (my_id .eq. 0) then
       write(*,*) '      boundary type touches one that has it, u steps from ~Lambda*Te/e to 0'
       write(*,*) '      across one element there. Enable it on every type bounding the plasma.'
     enddo
+
+  endif
+
+  ! --- Consistency checks for the charge-conserving sheath boundary condition, i.e. the surface
+  ! --- terms of the u, w and zj weak forms (see models/model600/mod_boundary_matrix_open.f90).
+  if ( any(bcs(:)%natural%u) .or. any(bcs(:)%natural%w) .or. any(bcs(:)%natural%zj) ) then
+
+    if ( .not. bc_natural_open ) then
+      write(*,*) 'ERROR: bcs(:)%natural%u / %w / %zj require bc_natural_open = .true.,'
+      write(*,*) '       because the boundary integrals are only assembled in that branch of'
+      write(*,*) '       construct_matrix.'
+      stop
+    endif
+
+    do i = 1, max_bnd_types
+
+      if ( bcs(i)%natural%w .and. bcs(i)%dirichlet%w ) then
+        write(*,*) 'ERROR: bcs(', i, ')%natural%w together with dirichlet%w: the Dirichlet row'
+        write(*,*) '       would overwrite the equation the surface term belongs to.'
+        stop
+      endif
+      if ( bcs(i)%natural%zj .and. bcs(i)%dirichlet%zj ) then
+        write(*,*) 'ERROR: bcs(', i, ')%natural%zj together with dirichlet%zj. Set'
+        write(*,*) '       dirichlet%zj = .false. so that zj can follow Ampere''s law.'
+        stop
+      endif
+
+      if ( .not. bcs(i)%natural%u ) cycle
+
+      if ( bcs(i)%dirichlet%u ) then
+        write(*,*) 'ERROR: bcs(', i, ')%natural%u needs dirichlet%u = .false.; the whole point'
+        write(*,*) '       is that u is free and set by charge continuity at the wall.'
+        stop
+      endif
+      if ( .not. bcs(i)%natural%w ) then
+        write(*,*) 'ERROR: bcs(', i, ')%natural%u needs bcs(', i, ')%natural%w = .true.'
+        write(*,*) '       Without the surface term of the vorticity definition, a free u weakly'
+        write(*,*) '       imposes grad(u).n = 0, which is E_r = 0 at a grazing target.'
+        stop
+      endif
+      if ( .not. bcs(i)%natural%zj ) then
+        write(*,*) 'ERROR: bcs(', i, ')%natural%u needs bcs(', i, ')%natural%zj = .true.,'
+        write(*,*) '       otherwise the interior current the sheath is compared against is'
+        write(*,*) '       frozen at its initial value and the j-V loop stays open.'
+        stop
+      endif
+      if ( bcs(i)%sheath_u ) then
+        write(*,*) 'ERROR: bcs(', i, ')%natural%u and %sheath_u are two different implementations'
+        write(*,*) '       of the same boundary condition. Enable only one of them.'
+        stop
+      endif
+      if ( .not. bcs(i)%mach1 ) then
+        write(*,*) 'WARNING: bcs(', i, ')%natural%u is active but mach1 is .false.; the sheath'
+        write(*,*) '         current uses v_par = g(b_n)*c_s/|B|, which assumes the Mach 1'
+        write(*,*) '         condition holds at the same boundary.'
+      endif
+
+    enddo
+
+    ! --- u enters the vorticity equation only through its gradient, so its constant mode is
+    ! --- pinned by the sheath term alone, and that term loses its grip on u in ion saturation
+    ! --- (dj/du -> 0). Keep at least one boundary type with a Dirichlet on u, as GBS does by
+    ! --- using phi = Lambda*Te/e on the walls without strike points.
+    if ( .not. any( bcs(:)%dirichlet%u .and. .not. bcs(:)%natural%u ) ) then
+      write(*,*) 'ERROR: every boundary type has natural%u, so nothing pins the constant mode of'
+      write(*,*) '       u any more. Keep dirichlet%u = .true. on at least one type (typically'
+      write(*,*) '       the main chamber wall, where the sheath current is negligible anyway).'
+      stop
+    endif
+
+    ! --- mod_boundary_matrix_open divides by vpar_smoothing_coef(2) without guarding it, and the
+    ! --- sheath current uses that same smoothing function g(b_n) = normal_sign*factor
+    if ( vpar_smoothing .and. (vpar_smoothing_coef(2) .le. 0.d0) ) then
+      write(*,*) 'ERROR: vpar_smoothing = .true. with vpar_smoothing_coef(2) <= 0 divides by zero'
+      write(*,*) '       in the boundary integrals, which the sheath current depends on.'
+      write(*,*) '       Use the Chodura values (0.02, 0.016, 0.005754) or vpar_smoothing = .false.'
+      stop
+    endif
+
+    if ( sheath_X_min .gt. 0.d0 ) then
+      write(*,*) 'WARNING: sheath_X_min > 0 also limits the ion side of the characteristic,'
+      write(*,*) '         which the forward form does not need. Use a negative value.'
+    endif
+    if ( sheath_min_bn .le. 0.d0 ) then
+      write(*,*) 'NOTE: sheath_min_bn = 0, so the sheath current vanishes where the field is'
+      write(*,*) '      tangent to the wall. Set it to sin(1 deg) = 0.0175 to keep a floor there.'
+    endif
+    if ( freeboundary .and. any(bcs(:)%natural%zj) ) then
+      write(*,*) 'NOTE: freeboundary is on; is_freebound already removes the zj Dirichlet for the'
+      write(*,*) '      vacuum harmonics, and natural%zj now removes it for the others too.'
+    endif
 
   endif
 

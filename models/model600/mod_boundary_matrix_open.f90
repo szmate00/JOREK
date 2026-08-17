@@ -17,6 +17,8 @@ use phys_module
 use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
+use mod_sheath_bc, only: sheath_current
+use mod_sheath_diag, only: sheath_diag_add
 
 implicit none
 
@@ -61,6 +63,11 @@ real*8     :: grad_t(2), B0_R, B0_Z, factor_cs_bnd_integral
 logical    :: xpoint2
 integer    :: n_tor_local 
 logical    :: apply_natural_bc(0:n_var)
+
+! --- Charge-conserving sheath boundary condition and the two supporting surface terms
+real*8     :: u0, u0_s, u0_t, u0_x, u0_y, zj0, sh_Bn, g_bn, sheath_ramp
+real*8     :: gradu0dotn, gradps0dotn, gradudotn, gradpsidotn
+real*8     :: zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, zj_sat_g, x_sheath
 
 type (type_node)         :: tmp_node
 
@@ -137,6 +144,9 @@ do i_var=1, n_var
   if ( (i_var==var_Te  ) .and. (bcs(bnd_type1)%natural%Te   .or. bcs(bnd_type2)%natural%Te  ))  apply_natural_bc(i_var)=.true.
   if ( (i_var==var_rhon) .and. (bcs(bnd_type1)%natural%rhon .or. bcs(bnd_type2)%natural%rhon))  apply_natural_bc(i_var)=.true.
   if ( (i_var==var_vpar) .and. (bcs(bnd_type1)%natural%vpar .or. bcs(bnd_type2)%natural%vpar))  apply_natural_bc(i_var)=.true.
+  if ( (i_var==var_u   ) .and. (bcs(bnd_type1)%natural%u    .or. bcs(bnd_type2)%natural%u   ))  apply_natural_bc(i_var)=.true.
+  if ( (i_var==var_w   ) .and. (bcs(bnd_type1)%natural%w    .or. bcs(bnd_type2)%natural%w   ))  apply_natural_bc(i_var)=.true.
+  if ( (i_var==var_zj  ) .and. (bcs(bnd_type1)%natural%zj   .or. bcs(bnd_type2)%natural%zj  ))  apply_natural_bc(i_var)=.true.
 enddo
 
 do i=1,2    ! sum over 2 verices
@@ -320,6 +330,57 @@ do ms=1, n_gauss
     factor_cs_bnd_integral = 0.d0
     if (mach_one_bnd_integral) factor_cs_bnd_integral = 1.d0
 
+    !-------------------------------------------------------------------------------------------
+    ! --- Charge-conserving sheath boundary condition (see models/model600/mod_sheath_bc.f90)
+    !
+    ! --- The current term of the vorticity equation is assembled in strong form,
+    ! ---     - v R (B.grad zj) xjac  ==  - v R div(zj B) xjac ,
+    ! --- which is identically equal to its conservative form INCLUDING the surface integral
+    ! ---     - oint v R zj (B.n) dl .
+    ! --- Replacing the parallel current that leaves the domain by the current the sheath can
+    ! --- actually pass therefore only requires adding the difference,
+    ! ---     - oint v R ( zj_sheath - zj ) (B.n) dl ,
+    ! --- to the u row. The mismatch is taken up by the perpendicular (polarisation and viscous)
+    ! --- current of the same equation: charge piles up, the potential moves, the ExB response
+    ! --- redistributes it. The term vanishes identically when the two currents agree.
+    !
+    ! --- The characteristic is evaluated in the forward direction, j = j(Phi), whose derivative
+    ! --- tends smoothly to zero at ion saturation. Its contribution to amat has the same sign as
+    ! --- the (negative definite) polarisation operator, i.e. it is dissipative.
+    !-------------------------------------------------------------------------------------------
+    u0    = eq_g(mp,var_u ,ms)
+    u0_s  = eq_s(mp,var_u ,ms)
+    u0_t  = eq_t(mp,var_u ,ms)
+    u0_x  = (   y_t(ms) * u0_s - y_s(ms) * u0_t ) / xjac
+    u0_y  = ( - x_t(ms) * u0_s + x_s(ms) * u0_t ) / xjac
+    zj0   = eq_g(mp,var_zj,ms)
+
+    gradu0dotn  = u0_x  * normal(1) + u0_y  * normal(2)
+    gradps0dotn = ps0_x * normal(1) + ps0_y * normal(2)
+
+    sh_Bn = bdotn * Btot                                          ! B.n, from the value already
+                                                                  ! computed above for the fluxes
+    g_bn  = normal_sign * factor                                  ! Chodura-Riemann g(b_n), signed
+
+    sheath_ramp = 1.d0
+    if ( sheath_ramp_time .gt. 0.d0 ) &
+      sheath_ramp = max(0.d0, min(1.d0, (t_now - t_start) / sheath_ramp_time))
+
+    zj_sh = 0.d0; dzj_du = 0.d0; dzj_drho = 0.d0; dzj_dTi = 0.d0; dzj_dTe = 0.d0
+    if ( apply_natural_bc(var_u) ) then
+      call sheath_current(u0, r0_corr, Ti0_corr, Te0_corr, g_bn, normal_sign, Btot, &
+                          zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, zj_sat_g, x_sheath)
+      ! --- chain rule through the corr_neg corrections, so the Jacobian stays exact where the
+      ! --- density and temperature floors are active (which is exactly the cold divertor)
+      dzj_drho = dzj_drho * dcorr_neg_dens_drho1(r0)
+      dzj_dTi  = dzj_dTi  * dcorr_neg_temp_dT1(Ti0)
+      dzj_dTe  = dzj_dTe  * dcorr_neg_temp_dT1(Te0)
+
+      ! --- wall current / potential diagnostic; dS is the toroidally integrated surface element
+      call sheath_diag_add(bnd_type1, zj_sh, zj0, zj_sat_g, x_sheath, u0, Te0_corr, sh_Bn, &
+                           ws * dl * BigR * TWOPI / dble(n_plane))
+    endif
+
     do i=1,2                ! loop over nodes
 
       do j=1,2              ! loop over basis functions
@@ -330,6 +391,21 @@ do ms=1, n_gauss
         do im=i_tor_min, i_tor_max
 
           v   =  H1(i,j,ms) * element_size_ij * HZ(im,mp)         ! test function
+
+          ! --- Sheath current: charge continuity closed at the wall (see the derivation above)
+          if ( apply_natural_bc(var_u) ) &
+            rhs_ij(var_u)  = - v * BigR * ( zj_sh - zj0 ) * sh_Bn * dl * tstep * sheath_ramp
+
+          ! --- Surface term of the vorticity definition (w = Delta_pol u). Without it, leaving u
+          ! --- free at the boundary would weakly impose grad(u).n = 0, i.e. E_r = 0 at a grazing
+          ! --- target, which would destroy the field structure this BC exists to produce.
+          if ( apply_natural_bc(var_w) ) &
+            rhs_ij(var_w)  = + v * BigR * gradu0dotn * dl
+
+          ! --- Surface term of the current definition (zj = Delta*psi), so that the boundary trace
+          ! --- of zj is the honest Ampere current instead of implying grad(psi).n = 0
+          if ( apply_natural_bc(var_zj) ) &
+            rhs_ij(var_zj) = + v * gradps0dotn / BigR * dl
 
           ! --- Neutral sources
           if (with_neutrals) then
@@ -407,6 +483,31 @@ do ms=1, n_gauss
                 vpar_y = ( - x_t(ms) * vpar_s + x_s(ms) * vpar_t ) / xjac
 
                 gradvpardotn  = (+ vpar_x * normal(1) + vpar_y * normal(2)) 
+
+                gradudotn   = rho_x * normal(1) + rho_y * normal(2)   ! grad(trial function).n
+                gradpsidotn = gradudotn                               ! (all trial functions equal)
+
+                ! --- Jacobian of the sheath current term. amat = -d(rhs)/dx, and the diagonal
+                ! --- entry adds to the negative definite polarisation operator, i.e. it damps.
+                if ( apply_natural_bc(var_u) ) then
+                  amat(var_u,var_u  ) = + v * BigR * dzj_du   * psi * sh_Bn * dl * theta * tstep * sheath_ramp
+                  amat(var_u,var_zj ) = - v * BigR             * psi * sh_Bn * dl * theta * tstep * sheath_ramp
+                  amat(var_u,var_rho) = + v * BigR * dzj_drho * psi * sh_Bn * dl * theta * tstep * sheath_ramp
+                  if ( with_TiTe ) then
+                    amat(var_u,var_Ti) = + v * BigR * dzj_dTi * psi * sh_Bn * dl * theta * tstep * sheath_ramp
+                    amat(var_u,var_Te) = + v * BigR * dzj_dTe * psi * sh_Bn * dl * theta * tstep * sheath_ramp
+                  else
+                    amat(var_u,var_T ) = + v * BigR * 0.5d0 * (dzj_dTi + dzj_dTe) * psi * sh_Bn * dl * theta * tstep * sheath_ramp
+                  endif
+                endif
+
+                ! --- Vorticity definition surface term (algebraic equation: no theta, no tstep)
+                if ( apply_natural_bc(var_w) ) &
+                  amat(var_w,var_u)   = - v * BigR * gradudotn * dl
+
+                ! --- Current definition surface term (algebraic equation: no theta, no tstep)
+                if ( apply_natural_bc(var_zj) ) &
+                  amat(var_zj,var_psi) = - v * gradpsidotn / BigR * dl
 
                 cs_T   = gamma * T  / (2.d0 * cs0)
                 cs_Ti  = gamma * Ti / (2.d0 * cs0)

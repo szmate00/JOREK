@@ -97,6 +97,15 @@ subroutine preset_parameters
   sheath_u_exp_max   =  2.d0
   sheath_u_exp_min   = -3.d0
   sheath_u_relax     =  1.d0
+
+  ! --- Charge-conserving sheath BC (bcs(:)%natural%u, model600). The characteristic is evaluated
+  ! --- in the forward direction (current as a function of the potential), so no clip is needed on
+  ! --- the ion side; only the electron branch is limited, by default at Phi = 0.
+  sheath_Lambda_local= .true. ! Lambda = Lambda_0 - ln sqrt(gamma*(1+Ti/Te)), consistent with c_s
+  sheath_X_min       = -3.d0  ! electron saturation limit; ~ -Lambda_0, i.e. Phi >= 0
+  sheath_smooth_dX   =  0.5d0
+  sheath_min_bn      =  0.d0  ! set e.g. to sin(1 deg) to keep the sheath alive at tangency points
+  sheath_ramp_time   =  0.d0
   density_reflection = 0.d0   ! reflection coefficient for outgoing density
   neutral_reflection = 0.d0   ! reflection coefficient for (fluid) neutrals
   imp_reflection     = 0.d0   ! reflection coefficient for (fluid) impurities
@@ -466,6 +475,12 @@ subroutine preset_parameters
   bcs( 19)%mach1 = .true.
 
   ! --- Natural BCs
+  ! --- Surface terms of the model600 u / w / zj weak forms. All off by default, so the
+  ! --- discretisation is bit-identical to before unless they are explicitly switched on.
+  bcs(:)%natural%u       = .false.
+  bcs(:)%natural%w       = .false.
+  bcs(:)%natural%zj      = .false.
+
   bcs(:)%natural%rho     = .false.
   bcs(:)%natural%T       = .false.
   bcs(:)%natural%Ti      = .false.

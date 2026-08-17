@@ -52,11 +52,18 @@ module phys_module
   real*8  :: gamma_i_stangeby     !< Sheath tranmission coefficient given by P. Stangeby in (The plasma boundary of magnetic fusion devices)
   ! --- Sheath j-V boundary condition for the electric potential (model600), see
   ! --- J. Artola, "Sheath boundary conditions for the electric potential in JOREK" (rev. 2026).
-  real*8  :: sheath_Lambda        !< Sheath factor in f = 1 - exp(-(e*Phi/(k*Te) - Lambda)). Phi is referenced to the wall, so zero current is at Phi = Lambda*Te/e (the floating potential) and Phi = 0 is electron saturation. Lambda = ln(sqrt(m_i/(2*pi*m_e))), ~3 for deuterium
+  real*8  :: sheath_Lambda        !< Sheath factor Lambda_0 in f = 1 - exp(-(e*Phi/(k*Te) - Lambda)). Phi is referenced to the wall, so zero current is at Phi = Lambda*Te/e (the floating potential) and Phi = 0 is electron saturation. Lambda_0 = ln(sqrt(m_i/(2*pi*m_e))), ~3 for deuterium; set it <= 0 to have it computed from central_mass
   real*8  :: sheath_V_wall        !< Wall potential in volts: Phi = V_sheath_entrance - V_wall. 0 = grounded wall
   real*8  :: sheath_u_exp_max     !< Upper clip of the sheath exponent X. Caps Phi at (Lambda+X_max)*Te/e and |j| at (1-exp(-X_max))*j_sat
   real*8  :: sheath_u_exp_min     !< Lower clip of X. Effective electron saturation limit; -Lambda puts it at Phi = 0, where |j| = (exp(Lambda)-1)*j_sat
   real*8  :: sheath_u_relax       !< Under-relaxation: u moves this fraction of the way to the characteristic per step. Fixed point unchanged. 1 = none
+  ! --- Parameters of the charge-conserving (natural boundary condition) form of the sheath BC,
+  ! --- see models/model600/mod_sheath_bc.f90. Used by bcs(:)%natural%u.
+  logical :: sheath_Lambda_local  !< Make Lambda a function of the local Ti/Te: Lambda = Lambda_0 - ln sqrt(gamma*(1+Ti/Te))
+  real*8  :: sheath_X_min         !< Smooth lower limit of the sheath exponent X (electron saturation side); -Lambda_0 puts it at Phi = 0
+  real*8  :: sheath_smooth_dX     !< Width of that smooth limit, in units of X
+  real*8  :: sheath_min_bn        !< Floor on |g(b_n)| at grazing incidence, so the sheath does not switch off at tangency points. 0 disables
+  real*8  :: sheath_ramp_time     !< The sheath surface term is ramped in linearly over this time (JOREK units), measured from t_start. 0 = no ramp
   real*8  :: density_reflection   !< density reflection coeefficient on open fieldlines
   real*8  :: neutral_reflection   !< reflection coefficient of ions into neutrals (model500)
   real*8  :: imp_reflection       !< impurity reflection coefficient on open fieldlines
@@ -190,6 +197,9 @@ module phys_module
   end type type_dirichlet_bc
 
   type type_natural_bc                           
+    logical :: u       !< Charge-continuity surface term carrying the sheath current (model600; the sheath BC proper)
+    logical :: w       !< Surface term of the vorticity definition; required whenever u is left free at the boundary
+    logical :: zj      !< Surface term of the current definition, so the boundary zj is the true Delta*psi
     logical :: rho  
     logical :: T    
     logical :: Ti   

@@ -839,6 +839,19 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,REAL_FMT) 'sheath_u_exp_max      ', sheath_u_exp_max
     write(*,REAL_FMT) 'sheath_u_exp_min      ', sheath_u_exp_min
     write(*,REAL_FMT) 'sheath_u_relax        ', sheath_u_relax
+  end if
+
+  if ( any(bcs(:)%natural%u) .or. any(bcs(:)%natural%w) .or. any(bcs(:)%natural%zj) ) then
+    write(*,'(A,30(1x,i0))') ' natural%u  bnd types  :', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%natural%u  )
+    write(*,'(A,30(1x,i0))') ' natural%w  bnd types  :', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%natural%w  )
+    write(*,'(A,30(1x,i0))') ' natural%zj bnd types  :', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%natural%zj )
+    write(*,REAL_FMT) 'sheath_Lambda (Lambda0)', sheath_Lambda
+    write(*,LOGI_FMT) 'sheath_Lambda_local   ', sheath_Lambda_local
+    write(*,REAL_FMT) 'sheath_V_wall [V]     ', sheath_V_wall
+    write(*,REAL_FMT) 'sheath_X_min          ', sheath_X_min
+    write(*,REAL_FMT) 'sheath_smooth_dX      ', sheath_smooth_dX
+    write(*,REAL_FMT) 'sheath_min_bn         ', sheath_min_bn
+    write(*,REAL_FMT) 'sheath_ramp_time      ', sheath_ramp_time
   end if     
 
   write(*,LOGI_FMT) 'bc_natural_open       ', bc_natural_open

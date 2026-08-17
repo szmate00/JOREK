@@ -33,6 +33,7 @@ use mod_assembly, only : boundary_conditions_add_one_entry, boundary_conditions_
 use data_structure
 use vacuum, ONLY: is_freebound
 use corr_neg, only: corr_neg_temp
+use mod_sheath_bc, only: sheath_get_lambda
 use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_cos_dR, dpsi_RMP_cos_dZ, &
        psi_RMP_sin, dpsi_RMP_sin_dR, dpsi_RMP_sin_dZ, t_now, RMP_growth_rate, RMP_ramp_up_time,            &
        RMP_start_time, tstep, RMP_har_cos, RMP_har_sin, T_min,                                             &
@@ -88,6 +89,7 @@ logical :: apply_sheath_u
 
 ! --- Sheath j-V boundary condition for the electric potential
 real*8  :: u0, sh_a_n, sh_c_sat, sh_vw, sh_rho, sh_zj, sh_Ti, sh_Te, sh_T, sh_cs, sh_jsat
+real*8  :: sh_lam, sh_dlam_dTi, sh_dlam_dTe
 real*8  :: sh_ratio, sh_ratio_raw, sh_f_min, sh_f_max, sh_x, sh_xi, sh_dr, sh_u_targ
 real*8  :: sh_R, sh_R_b, sh_R_bb
 real*8  :: sh_coef(0:n_var)     ! index 0 is a scratch slot: var_T / var_Ti / var_Te are 0 in
@@ -318,6 +320,9 @@ do i=1, n_local_elms !=== do elements
           apply_current_BC = .false.
           if (k == var_zj) then
             if ( .not. is_freebound(in,k) )   apply_current_BC = .true.
+            ! --- with the surface term of the current definition restored, zj is the honest
+            ! --- Delta*psi and must not be frozen (see mod_boundary_matrix_open)
+            if ( bcs(bnd_type)%natural%zj )   apply_current_BC = .false.
           endif
           !---------------------------------------------------------------------------------------------------                      
 
@@ -350,6 +355,9 @@ do i=1, n_local_elms !=== do elements
             if ( (k==var_psi  ) .and. (.not. apply_psi_BC    ) )       cycle
             if ( (k==var_zj   ) .and. (.not. apply_current_BC) )       cycle
             if ( (k==var_u    ) .and.  apply_sheath_u                )  cycle  ! u is set by the sheath BC below
+            if ( (k==var_u    ) .and.  bcs(bnd_type)%natural%u        )  cycle  ! u is free: the charge-continuity
+            if ( (k==var_w    ) .and.  bcs(bnd_type)%natural%w        )  cycle  ! surface terms take over (see
+                                                                                ! mod_boundary_matrix_open)
             if ( (k==var_vpar ) .and.  apply_cs .and. (bnd_type/=3)  ) cycle  ! vpar=cs is a special case (this is done below)
                                                                               ! however bnd_type=3 needs both BCs for different directions
 
@@ -804,8 +812,13 @@ do i=1, n_local_elms !=== do elements
           !--------------------------------------------------------------------------------------
           if ( apply_sheath_u ) then
 
-            ! --- Normalisation constants (Artola eqs. 5 and 8; c_sat = -a_n/2 identically)
-            sh_a_n   = 2.d0 * EL_CHG * F0 * sqrt(MU_ZERO * central_density * 1.d20 * central_mass * ATOMIC_MASS_UNIT) &
+            ! --- Normalisation constants (Artola eqs. 5 and 8; c_sat = -a_n/2 identically).
+            ! --- NOTE the leading minus: the electrostatic potential is Phi = -F0*u in the code's
+            ! --- variables. The JOREK reference paper (Hoelzl et al 2021 eq. 26) defines u = Phi/F0
+            ! --- for v_pol = -R grad(u) x e_phi, while model600 implements v_pol = +R grad(u) x e_phi,
+            ! --- so the code's u is minus the paper's. Flipping a_n propagates the correct sign to
+            ! --- c_sat, to u_target and to every coefficient below, since all of them derive from it.
+            sh_a_n   = - 2.d0 * EL_CHG * F0 * sqrt(MU_ZERO * central_density * 1.d20 * central_mass * ATOMIC_MASS_UNIT) &
                      / (central_mass * ATOMIC_MASS_UNIT)
             sh_c_sat = - 0.5d0 * sh_a_n
             sh_vw    = EL_CHG * sheath_V_wall * MU_ZERO * central_density * 1.d20
@@ -817,9 +830,18 @@ do i=1, n_local_elms !=== do elements
             sh_Te    = corr_neg_temp(Te0)
             sh_T     = sh_Ti + sh_Te
 
+            ! --- Shared sheath factor, so this legacy nodal path and the charge-conserving
+            ! --- surface-term form always use the same Lambda. NOTE: the dLambda/dT contribution
+            ! --- to the coefficients below is neglected here (as are the corr_neg derivatives);
+            ! --- this path is kept for A/B comparison only.
+            call sheath_get_lambda(sh_Ti, sh_Te, sh_lam, sh_dlam_dTi, sh_dlam_dTe)
+
             ! --- Ion saturation current in JOREK units (Artola eqs. 5 and 16)
             sh_cs    = sqrt(GAMMA * sh_T)
-            sh_jsat  = sh_c_sat * sh_rho * direction * sh_cs / Btot
+            ! --- direction*factor is Artola's g(b_n): with vpar_smoothing and
+            ! --- vpar_smoothing_coef(2) <= 0, direction is forced to +1 above and the sign of the
+            ! --- field projection is carried by factor alone, so both are needed here.
+            sh_jsat  = sh_c_sat * sh_rho * direction * factor * sh_cs / Btot
 
             ! --- Invert the characteristic, clipping the current ratio
             sh_f_min     = 1.d0 - exp(-sheath_u_exp_min)
@@ -828,7 +850,7 @@ do i=1, n_local_elms !=== do elements
             sh_ratio     = min( max( sh_ratio_raw, sh_f_min ), sh_f_max )
 
             sh_x      = - log( 1.d0 - sh_ratio )              ! inside the clip range by construction
-            sh_u_targ = 2.d0 * ( sh_Te * (sh_x + sheath_Lambda) + sh_vw ) / sh_a_n
+            sh_u_targ = 2.d0 * ( sh_Te * (sh_x + sh_lam) + sh_vw ) / sh_a_n
             sh_xi     = 2.d0 * sh_Te / ( sh_a_n * (1.d0 - sh_ratio) )
 
             sh_dr     = 1.d0
@@ -842,10 +864,10 @@ do i=1, n_local_elms !=== do elements
             if ( with_TiTe ) then
               sh_coef(var_Ti)   =   sh_dr * sh_xi * sh_ratio / (2.d0 * sh_T)
               sh_coef(var_Te)   =   sh_dr * sh_xi * sh_ratio / (2.d0 * sh_T) &
-                                  - 2.d0 * (sh_x + sheath_Lambda) / sh_a_n
+                                  - 2.d0 * (sh_x + sh_lam) / sh_a_n
             else
               sh_coef(var_T )   =   sh_dr * sh_xi * sh_ratio / (2.d0 * sh_T) &
-                                  -        (sh_x + sheath_Lambda) / sh_a_n
+                                  -        (sh_x + sh_lam) / sh_a_n
             endif
             sh_R                =   sh_u_targ - u0
 

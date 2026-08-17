@@ -316,6 +316,9 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   use mod_integer_types
   use mod_axis_treatment
   use mod_simulation_data, only: type_MHD_SIM
+#if JOREK_MODEL == 600
+  use mod_sheath_diag, only: sheath_diag_reset, sheath_diag_report
+#endif
   use global_distributed_matrix, only: global_matrix_structure_vacuum
   
   !$ use omp_lib
@@ -462,6 +465,13 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
 
 
  
+#if JOREK_MODEL == 600
+  ! --- reset the sheath wall-current diagnostic; it is accumulated in mod_boundary_matrix_open
+  ! --- and reported after the element loop below (only for the real matrix, not the harmonic
+  ! --- preconditioner matrix, which would otherwise double count)
+  if ( (.not. harmonic_matrix) .and. any(bcs(:)%natural%u) ) call sheath_diag_reset()
+#endif
+
   ! --- Declare shared and private variables for omp
   !$omp parallel default(none) &
   !$omp   shared(n_local_elms,local_elms,element_list,node_list, aux_node_list,                                &
@@ -744,6 +754,13 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
     call dealloc_node(aux_nodes(iv))
   enddo
   !$omp end parallel
+
+#if JOREK_MODEL == 600
+  ! --- reduce and print the sheath wall current / potential diagnostic
+  ! --- the guard is evaluated identically on every rank (bcs is broadcast), so the
+  ! --- collective inside the report is either entered by all ranks or by none
+  if ( (.not. harmonic_matrix) .and. any(bcs(:)%natural%u) ) call sheath_diag_report(my_id)
+#endif
  
   ! --- Memory tracking
   call tr_vnorms("cm_A_bef_bc", a_mat%val, a_mat%nnz)
