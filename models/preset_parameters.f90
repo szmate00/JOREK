@@ -106,6 +106,9 @@ subroutine preset_parameters
   sheath_smooth_dX   =  0.5d0
   sheath_min_bn      =  0.d0  ! set e.g. to sin(1 deg) to keep the sheath alive at tangency points
   sheath_ramp_time   =  0.d0
+  sheath_stiff_max   =  0.d0  ! 0 = no cap; 1.0 keeps the sheath term comparable to the polarisation term
+  sheath_init_u      = .false.
+  sheath_flux_sign   =  1.d0  ! debug knob, see phys_module
   density_reflection = 0.d0   ! reflection coefficient for outgoing density
   neutral_reflection = 0.d0   ! reflection coefficient for (fluid) neutrals
   imp_reflection     = 0.d0   ! reflection coefficient for (fluid) impurities

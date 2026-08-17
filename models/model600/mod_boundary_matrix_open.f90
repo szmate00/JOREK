@@ -68,6 +68,7 @@ logical    :: apply_natural_bc(0:n_var)
 real*8     :: u0, u0_s, u0_t, u0_x, u0_y, zj0, sh_Bn, g_bn, sheath_ramp
 real*8     :: gradu0dotn, gradps0dotn, gradudotn, gradpsidotn
 real*8     :: zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, zj_sat_g, x_sheath
+real*8     :: sheath_alpha, sh_d_pol, sh_d_robin
 
 type (type_node)         :: tmp_node
 
@@ -375,6 +376,23 @@ do ms=1, n_gauss
       dzj_drho = dzj_drho * dcorr_neg_dens_drho1(r0)
       dzj_dTi  = dzj_dTi  * dcorr_neg_temp_dT1(Ti0)
       dzj_dTe  = dzj_dTe  * dcorr_neg_temp_dT1(Te0)
+
+      ! --- Cap the stiffness of the Robin term. Its diagonal scales as
+      ! --- R*|dzj/du|*|B.n|*dl*theta*tstep while the row's own polarisation diagonal scales as
+      ! --- rho*R^3; at a cold dense target the first can exceed the second by three orders of
+      ! --- magnitude, which turns this boundary condition into a pointwise Dirichlet. u is then
+      ! --- slaved to the local Te, rho and zj, so node-to-node variation in those is imprinted
+      ! --- straight onto u - and grad(u) along the wall is ExB flow through it. Scaling the
+      ! --- residual AND the Jacobian by the same alpha leaves the fixed point untouched while
+      ! --- handing control of u back to the vorticity equation.
+      sheath_alpha = 1.d0
+      if ( sheath_stiff_max .gt. 0.d0 ) then
+        sh_d_pol   = r0_corr * BigR**3
+        sh_d_robin = BigR * abs(dzj_du) * abs(sh_Bn) * dl * max(theta,1.d-2) * tstep
+        if ( sh_d_robin .gt. sheath_stiff_max * sh_d_pol ) &
+          sheath_alpha = sheath_stiff_max * sh_d_pol / max(sh_d_robin, 1.d-300)
+      endif
+      sheath_ramp = sheath_ramp * sheath_alpha * sheath_flux_sign   ! recomputed every Gauss point
 
       ! --- wall current / potential diagnostic; dS is the toroidally integrated surface element
       call sheath_diag_add(bnd_type1, zj_sh, zj0, zj_sat_g, x_sheath, u0, Te0_corr, sh_Bn, &

@@ -158,4 +158,77 @@ subroutine sheath_diag_report(my_id)
 
 end subroutine sheath_diag_report
 
+
+!> Initialise u on the natural%u boundary types to the floating potential, Lambda*Te/e.
+!!
+!! Without this the run starts at u = 0, i.e. Phi = 0, which is electron saturation: the sheath
+!! immediately demands the full electron saturation current everywhere and the boundary condition
+!! has to travel ~Lambda*Te away from where the plasma is, through an exponential, in one implicit
+!! step. Starting at X = 0 puts the state where the linearisation is valid.
+!!
+!! Only the axisymmetric component is touched. Lambda is treated as locally constant so that the
+!! derivative degrees of freedom can carry the same relation, keeping grad(u) consistent with
+!! grad(Te) rather than leaving it at the old field's value.
+subroutine sheath_init_potential(node_list, my_id)
+
+  use mod_parameters
+  use data_structure
+  use phys_module,   only: bcs
+  use mod_sheath_bc, only: sheath_norm, sheath_get_lambda
+  use mpi_mod
+
+  implicit none
+
+  type (type_node_list), intent(inout) :: node_list
+  integer,               intent(in)    :: my_id
+
+  integer :: i, id, ib, ierr
+  real*8  :: a_n, c_sat, vw, Ti0, Te0, T0, lam, dlam_dTi, dlam_dTe, cfac
+  real*8  :: n_loc(1), n_glo(1)
+
+  call sheath_norm(a_n, c_sat, vw)
+  n_loc(1) = 0.d0
+
+  do i = 1, node_list%n_nodes
+
+    ib = node_list%node(i)%boundary
+    if ( ib .lt. 1 .or. ib .gt. max_bnd_types ) cycle
+    if ( .not. bcs(ib)%natural%u ) cycle
+
+    if ( with_TiTe ) then
+      Ti0 = node_list%node(i)%values(1,1,var_Ti)
+      Te0 = node_list%node(i)%values(1,1,var_Te)
+    else
+      T0  = node_list%node(i)%values(1,1,var_T)
+      Ti0 = 0.5d0 * T0
+      Te0 = 0.5d0 * T0
+    endif
+    if ( Te0 .le. 0.d0 ) cycle
+
+    call sheath_get_lambda(Ti0, Te0, lam, dlam_dTi, dlam_dTe)
+
+    ! --- zero net current (X = 0) sits at e*Phi/(k*Te) = Lambda, i.e. a_n*u/2 - vw = Lambda*Te
+    cfac = 2.d0 * lam / a_n
+    node_list%node(i)%values(1,1,var_u) = cfac * Te0 + 2.d0 * vw / a_n
+
+    do id = 2, n_degrees
+      if ( with_TiTe ) then
+        node_list%node(i)%values(1,id,var_u) = cfac * node_list%node(i)%values(1,id,var_Te)
+      else
+        node_list%node(i)%values(1,id,var_u) = cfac * 0.5d0 * node_list%node(i)%values(1,id,var_T)
+      endif
+    enddo
+
+    n_loc(1) = n_loc(1) + 1.d0
+
+  enddo
+
+  call MPI_Reduce(n_loc, n_glo, 1, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
+
+  if ( my_id .eq. 0 ) write(*,'(A,i0,A)')                                            &
+    ' SHEATH: sheath_init_u set u to the floating potential on ', nint(n_glo(1)),    &
+    ' boundary nodes'
+
+end subroutine sheath_init_potential
+
 end module mod_sheath_diag

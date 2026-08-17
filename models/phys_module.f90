@@ -64,6 +64,9 @@ module phys_module
   real*8  :: sheath_smooth_dX     !< Width of that smooth limit, in units of X
   real*8  :: sheath_min_bn        !< Floor on |g(b_n)| at grazing incidence, so the sheath does not switch off at tangency points. 0 disables
   real*8  :: sheath_ramp_time     !< The sheath surface term is ramped in linearly over this time (JOREK units), measured from t_start. 0 = no ramp
+  real*8  :: sheath_stiff_max     !< Cap on the sheath Robin term: it may not exceed this multiple of the row's own polarisation diagonal, so u stays solved by the vorticity equation instead of being slaved pointwise. <= 0 disables the cap
+  logical :: sheath_init_u        !< Initialise u on the natural%u boundary types to the floating potential Lambda*Te/e at t_start, so the boundary condition does not start ~Lambda*Te away from its own fixed point
+  real*8  :: sheath_flux_sign     !< DEBUG multiplier on the sheath surface term (+1 or -1). The derivation gives +1; -1 tests the hypothesis that the coupling into the u row is inverted, without a rebuild
   real*8  :: density_reflection   !< density reflection coeefficient on open fieldlines
   real*8  :: neutral_reflection   !< reflection coefficient of ions into neutrals (model500)
   real*8  :: imp_reflection       !< impurity reflection coefficient on open fieldlines

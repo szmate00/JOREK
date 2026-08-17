@@ -38,6 +38,9 @@ program JOREK2
   use live_data
   use mod_bootstrap_functions
   use construct_matrix_mod, only : construct_matrix
+#if JOREK_MODEL == 600
+  use mod_sheath_diag, only : sheath_init_potential
+#endif
   use mod_global_matrix_structure
   use mod_import_restart
   use mod_export_restart
@@ -590,6 +593,12 @@ write(*,*) "n elements:", element_list%n_elements
   !***********************************************************************
   
   t_now     = t_start      ! t_now: current time in the simulation
+
+#if JOREK_MODEL == 600
+  ! --- put the sheath boundary condition at (or near) its own fixed point before the first step,
+  ! --- instead of starting from u = 0, which is electron saturation
+  if ( sheath_init_u ) call sheath_init_potential(node_list, my_id)
+#endif
   
   if (nstep > 0) then
 
