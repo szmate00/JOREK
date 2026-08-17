@@ -84,6 +84,19 @@ subroutine preset_parameters
   gamma_e_stangeby   = -1.d99 ! sheath transmission factor (electron fluid) given by Stangeby
   gamma_sheath_i     = -1.11d-1! sheath transmission factor (ion fluid) in the JOREK definition
   gamma_i_stangeby   = -1.d99 ! sheath transmission factor (ion fluid) given by Stangeby
+
+  ! --- Sheath j-V boundary condition for the electric potential (bcs(:)%sheath_u, model600).
+  ! --- f = 1 - exp(-X),  X = e*Phi/(k*Te) - Lambda,  Phi = V_sheath_entrance - V_wall.
+  ! --- Phi is referenced to the wall: zero current sits at Phi = Lambda*Te/e, the floating
+  ! --- potential, and Phi = 0 is electron saturation. Lambda = ln(sqrt(m_i/(2*pi*m_e))).
+  sheath_Lambda      =  3.d0
+  sheath_V_wall      =  0.d0  ! grounded wall
+  ! --- Clips on X. The upper one caps Phi and keeps |j| below j_sat; the lower one is the
+  ! --- electron saturation limit and belongs at -Lambda, where Phi = 0 and |j| = (e^Lambda-1)*j_sat,
+  ! --- close to the deuterium ratio 0.5*sqrt(m_i/(pi*m_e)) ~ 17. Change both together with Lambda.
+  sheath_u_exp_max   =  2.d0
+  sheath_u_exp_min   = -3.d0
+  sheath_u_relax     =  1.d0
   density_reflection = 0.d0   ! reflection coefficient for outgoing density
   neutral_reflection = 0.d0   ! reflection coefficient for (fluid) neutrals
   imp_reflection     = 0.d0   ! reflection coefficient for (fluid) impurities
@@ -437,6 +450,12 @@ subroutine preset_parameters
   bcs( 19)%dirichlet%rho_imp  = .false.
 
   ! --- Mach 1
+  ! --- Sheath j-V BC: off by default, opt in per boundary type. Enable it on EVERY type that
+  ! --- bounds the plasma, not just the targets: u is continuous along the boundary, so a type
+  ! --- with the BC next to one without it puts a step in u across a single element, which is a
+  ! --- large artificial ExB flow through the wall at the junction.
+  bcs(:)%sheath_u = .false.
+
   bcs(:)%mach1   = .false.
 
   bcs(  1)%mach1 = .true.

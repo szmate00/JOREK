@@ -28,16 +28,18 @@ subroutine boundary_conditions( my_id, node_list, element_list, bnd_node_list, l
                                 xcase2, R_axis, Z_axis, psi_axis, psi_bnd,                &
                                 R_xpoint, Z_xpoint, psi_xpoint, a_mat)
 
-use constants, only : PI, MU_ZERO, ATOMIC_MASS_UNIT
+use constants, only : PI, MU_ZERO, ATOMIC_MASS_UNIT, EL_CHG
 use mod_assembly, only : boundary_conditions_add_one_entry, boundary_conditions_add_RHS
 use data_structure
 use vacuum, ONLY: is_freebound
+use corr_neg, only: corr_neg_temp
 use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_cos_dR, dpsi_RMP_cos_dZ, &
        psi_RMP_sin, dpsi_RMP_sin_dR, dpsi_RMP_sin_dZ, t_now, RMP_growth_rate, RMP_ramp_up_time,            &
        RMP_start_time, tstep, RMP_har_cos, RMP_har_sin, T_min,                                             &
        mach_one_bnd_integral, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,                            &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
-       bcs, loop_voltage, central_density, central_mass 
+       bcs, loop_voltage, central_density, central_mass,                                                    &
+       sheath_Lambda, sheath_V_wall, sheath_u_exp_max, sheath_u_exp_min, sheath_u_relax
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -82,6 +84,20 @@ integer :: ilarge2, kv, kT, kTi, kTe, ku, kn, ilarge_vv, ilarge_vT, ilarge_vus, 
 integer :: ilarge_vsvs, ilarge_vsTs, ilarge_vsT, ilarge_vut, ilarge_vtvt, ilarge_vtTt, ilarge_vtT
 integer :: ierr
 logical :: apply_psi_BC, apply_current_BC, s_constant_boundary, t_constant_boundary, apply_cs, apply_dirichlet_1234, apply_dirichlet_all
+logical :: apply_sheath_u
+
+! --- Sheath j-V boundary condition for the electric potential
+real*8  :: u0, sh_a_n, sh_c_sat, sh_vw, sh_rho, sh_zj, sh_Ti, sh_Te, sh_T, sh_cs, sh_jsat
+real*8  :: sh_ratio, sh_ratio_raw, sh_f_min, sh_f_max, sh_x, sh_xi, sh_dr, sh_u_targ
+real*8  :: sh_R, sh_R_b, sh_R_bb
+real*8  :: sh_coef(0:n_var)     ! index 0 is a scratch slot: var_T / var_Ti / var_Te are 0 in
+real*8  :: sh_coef_d(0:n_var)   ! the model variants that lack them, so never index-checked
+integer :: k_sh
+
+!> Density floor (JOREK units) keeping 1/j_sat finite. Far below any physical SOL density.
+!! corr_neg_dens is deliberately not used: its floor scales with rho_1, which is itself of the
+!! order of the SOL density and would bias j_sat.
+real*8, parameter :: sheath_rho_floor = 1.d-6
 
 real*8, allocatable :: psi_RMP_cos1(:),dpsi_RMP_cos_dR1(:),dpsi_RMP_cos_dZ1(:)
 real*8, allocatable :: psi_RMP_sin1(:),dpsi_RMP_sin_dR1(:),dpsi_RMP_sin_dZ1(:)
@@ -311,6 +327,9 @@ do i=1, n_local_elms !=== do elements
           if ( (.not. mach_one_bnd_integral) .and. bcs(bnd_type)%mach1 .and. with_vpar) then
             apply_cs = .true.
           endif
+
+          !------------ Decide when to replace the Dirichlet BC on u by the sheath j-V BC --------
+          apply_sheath_u = bcs(bnd_type)%sheath_u
           !---------------------------------------------------------------------------------------------------                      
 
           if (  ( (k == var_psi     ) .and. bcs(bnd_type)%dirichlet%psi     )  .or.  &
@@ -330,6 +349,7 @@ do i=1, n_local_elms !=== do elements
             ! --- If special conditions apply (e.g. freeboundary, mach1), do not apply Dirichlet even if specified in the namelist
             if ( (k==var_psi  ) .and. (.not. apply_psi_BC    ) )       cycle
             if ( (k==var_zj   ) .and. (.not. apply_current_BC) )       cycle
+            if ( (k==var_u    ) .and.  apply_sheath_u                )  cycle  ! u is set by the sheath BC below
             if ( (k==var_vpar ) .and.  apply_cs .and. (bnd_type/=3)  ) cycle  ! vpar=cs is a special case (this is done below)
                                                                               ! however bnd_type=3 needs both BCs for different directions
 
@@ -369,8 +389,8 @@ do i=1, n_local_elms !=== do elements
 
         if ((node_list%node(inode)%boundary .eq.  3) .and. (node_list%node(inode2)%boundary .eq.  2)) cycle
 
-        ! --- Mach1 Boundary Conditions
-        if ( apply_cs ) then
+        ! --- Boundary conditions needing the local geometry (Mach1, sheath j-V BC for u)
+        if ( apply_cs .or. apply_sheath_u ) then
 
           call basisfunctions1(0.d0, H1, H1_s, H1_ss)
 
@@ -512,9 +532,17 @@ do i=1, n_local_elms !=== do elements
             Te0_b = T0_b / 2.d0
           end if
 
-          Vpar0     = node_list%node(inode)%values(1,1,var_vpar)
-          Vpar0_b   = node_list%node(inode)%values(1,iv_dir,var_Vpar) * element_size_0 
+          ! --- the sheath BC does not need vpar, so this block can be reached without it
+          ! --- (var_Vpar is 0 in that case, which would index out of bounds)
+          if ( with_vpar ) then
+            Vpar0   = node_list%node(inode)%values(1,1,var_vpar)
+            Vpar0_b = node_list%node(inode)%values(1,iv_dir,var_Vpar) * element_size_0
+          else
+            Vpar0   = 0.d0
+            Vpar0_b = 0.d0
+          endif
 
+          u0        = node_list%node(inode)%values(1,1,var_u)
           u0_b      = node_list%node(inode)%values(1,iv_dir,var_u)    * element_size_0 
 
           if (n_order .ge. 5) then
@@ -527,9 +555,15 @@ do i=1, n_local_elms !=== do elements
               Ti0_bb = T0_bb / 2.d0
               Te0_bb = T0_bb / 2.d0
             endif
-            Vpar0_bb  = node_list%node(inode)%values(1,iv_dir+3,var_Vpar) * element_size_3 
+            if ( with_vpar ) then
+              Vpar0_bb = node_list%node(inode)%values(1,iv_dir+3,var_Vpar) * element_size_3
+            else
+              Vpar0_bb = 0.d0
+            endif
             u0_bb     = node_list%node(inode)%values(1,iv_dir+3,var_u)    * element_size_3 
           endif
+
+          Mach1: if ( apply_cs ) then
 
           ! --- Mach1 BC's and derivatives
           cs0      =   sqrt(gamma*(Ti0+Te0))
@@ -734,7 +768,200 @@ do i=1, n_local_elms !=== do elements
             enddo
           enddo
 
-        endif   !=== apply_cs
+          endif Mach1
+
+          !--------------------------------------------------------------------------------------
+          ! --- Sheath j-V characteristic as boundary condition for the electric potential
+          !
+          ! --- J. Artola, "Sheath boundary conditions for the electric potential in JOREK".
+          ! --- Stangeby 2.68 with the sheath factor:
+          !
+          ! ---     j = j_sat * f ,   f = 1 - exp(-X) ,   X = e*Phi/(k*Te) - Lambda
+          !
+          ! --- Phi = V_sheath_entrance - V_wall is referenced to the WALL, so f = 0 (zero current)
+          ! --- sits at Phi = Lambda*Te/e, the floating potential, and Phi = 0 is electron
+          ! --- saturation. In JOREK units, with Phi = F0*u,
+          !
+          ! ---     e*Phi/(k*Te) = ( a_n*u/2 - e*V_wall*mu0*n0 ) / Te
+          ! ---     a_n   = 2*e*F0*sqrt(mu0*rho0)/(m_c*m_amu)
+          ! ---     j_sat = c_sat*rho*v_par ,  c_sat = -e*F0*n0*sqrt(mu0/rho0) = -a_n/2
+          ! ---     v_par = direction * c_s / |B|          (Mach 1 at the sheath entrance)
+          !
+          ! --- The characteristic is INVERTED for u rather than iterated on. With r = j/j_sat the
+          ! --- exact solution of j = j_sat*(1-exp(-X)) is X = -ln(1-r), u = 2*(Te*(X+Lambda)+vw)/a_n.
+          ! --- Clipping r - not the exponent - to the reachable range bounds X to
+          ! --- [exp_min, exp_max] by construction, so u can never run away, and dr = 0 outside
+          ! --- that range makes the Jacobian honest: where the requested current is beyond what
+          ! --- the sheath can pass, u is simply the cap and has no rho or j dependence at all.
+          ! --- Clipping the exponent instead keeps the row invertible but leaves every coefficient
+          ! --- at its exponentially amplified value, which slaves u to the boundary noise in T,
+          ! --- rho and j. Away from saturation this is Artola eq. 17 with f0 replaced by r.
+          !
+          ! --- The BC takes the u row. The current stays Dirichlet: psi, u, w and zj weak forms
+          ! --- are all assembled without their surface terms (only rho, T, Ti, Te, rhon and vpar
+          ! --- have natural BC support), so leaving any of them to its own equation at a boundary
+          ! --- node makes that node absorb the missing surface integral.
+          !--------------------------------------------------------------------------------------
+          if ( apply_sheath_u ) then
+
+            ! --- Normalisation constants (Artola eqs. 5 and 8; c_sat = -a_n/2 identically)
+            sh_a_n   = 2.d0 * EL_CHG * F0 * sqrt(MU_ZERO * central_density * 1.d20 * central_mass * ATOMIC_MASS_UNIT) &
+                     / (central_mass * ATOMIC_MASS_UNIT)
+            sh_c_sat = - 0.5d0 * sh_a_n
+            sh_vw    = EL_CHG * sheath_V_wall * MU_ZERO * central_density * 1.d20
+
+            ! --- State at the boundary node (axisymmetric component)
+            sh_rho   = max( node_list%node(inode)%values(1,1,var_rho), sheath_rho_floor )
+            sh_zj    =      node_list%node(inode)%values(1,1,var_zj )
+            sh_Ti    = corr_neg_temp(Ti0)
+            sh_Te    = corr_neg_temp(Te0)
+            sh_T     = sh_Ti + sh_Te
+
+            ! --- Ion saturation current in JOREK units (Artola eqs. 5 and 16)
+            sh_cs    = sqrt(GAMMA * sh_T)
+            sh_jsat  = sh_c_sat * sh_rho * direction * sh_cs / Btot
+
+            ! --- Invert the characteristic, clipping the current ratio
+            sh_f_min     = 1.d0 - exp(-sheath_u_exp_min)
+            sh_f_max     = 1.d0 - exp(-sheath_u_exp_max)
+            sh_ratio_raw = sh_zj / sh_jsat
+            sh_ratio     = min( max( sh_ratio_raw, sh_f_min ), sh_f_max )
+
+            sh_x      = - log( 1.d0 - sh_ratio )              ! inside the clip range by construction
+            sh_u_targ = 2.d0 * ( sh_Te * (sh_x + sheath_Lambda) + sh_vw ) / sh_a_n
+            sh_xi     = 2.d0 * sh_Te / ( sh_a_n * (1.d0 - sh_ratio) )
+
+            sh_dr     = 1.d0
+            if ( sh_ratio /= sh_ratio_raw ) sh_dr = 0.d0
+
+            ! --- Row:  du + sum_k coef(k)*dx_k = u_target - u0 ,  coef = -d(u_target)/dx
+            sh_coef             = 0.d0
+            sh_coef(var_u  )    =   1.d0
+            sh_coef(var_rho)    =   sh_dr * sh_xi * sh_ratio / sh_rho
+            sh_coef(var_zj )    = - sh_dr * sh_xi / sh_jsat
+            if ( with_TiTe ) then
+              sh_coef(var_Ti)   =   sh_dr * sh_xi * sh_ratio / (2.d0 * sh_T)
+              sh_coef(var_Te)   =   sh_dr * sh_xi * sh_ratio / (2.d0 * sh_T) &
+                                  - 2.d0 * (sh_x + sheath_Lambda) / sh_a_n
+            else
+              sh_coef(var_T )   =   sh_dr * sh_xi * sh_ratio / (2.d0 * sh_T) &
+                                  -        (sh_x + sheath_Lambda) / sh_a_n
+            endif
+            sh_R                =   sh_u_targ - u0
+
+            ! --- Same constraint differentiated along the boundary, for the derivative degrees of
+            ! --- freedom. |B| and R are treated as constant along the boundary, as for Mach1.
+            ! --- The dj/dl term is dropped: zj at a boundary node is a second derivative of psi,
+            ! --- so its derivative degree of freedom is a third derivative, discontinuous across
+            ! --- C1 cubic Bezier elements. It is grid noise rather than a gradient, and it
+            ! --- dominates this row - and since du/dl is the ExB flow through the wall,
+            ! --- v.n = R*du/dl, that noise would be fed straight back into the plasma. The value
+            ! --- row keeps the full coupling, so the characteristic still holds exactly at the
+            ! --- nodes; only the interpolation between them is affected.
+            sh_coef_d           = sh_coef
+            sh_coef_d(var_zj)   = 0.d0
+
+            ! --- The derivative rows are written in nodal degree of freedom units, without the
+            ! --- element_size scaling: it is common to all variables and cancels out, which keeps
+            ! --- the diagonal entry at zbig.
+            sh_R_b = 0.d0
+            do k_sh = 1, n_var
+              if ( sh_coef_d(k_sh) .ne. 0.d0 ) &
+                sh_R_b = sh_R_b - sh_coef_d(k_sh) * node_list%node(inode)%values(1,iv_dir,k_sh)
+            enddo
+
+            index_node    = node_list%node(inode)%index(1)          ! position of value
+            index_node2   = node_list%node(inode)%index(iv_dir)     ! position of first derivative
+
+            ! --- Impose the characteristic on the node value of u. The diagonal is never relaxed,
+            ! --- so the row stays well scaled and the zero-relaxation limit is du = 0 rather than
+            ! --- a singular row.
+            do k_sh = 1, n_var
+              if ( sh_coef(k_sh) .eq. 0.d0 ) cycle
+              if ( k_sh .eq. var_u ) then
+                call boundary_conditions_add_one_entry(                      &
+                       index_node, var_u, in, index_node, k_sh, in,          &
+                       zbig * sh_coef(k_sh), index_min, index_max, a_mat)
+              else
+                call boundary_conditions_add_one_entry(                      &
+                       index_node, var_u, in, index_node, k_sh, in,          &
+                       zbig * sheath_u_relax * sh_coef(k_sh), index_min, index_max, a_mat)
+              endif
+            enddo
+
+            if (in .eq. 1) then
+              call boundary_conditions_add_RHS(                              &
+                     index_node, var_u, in, index_min, index_max, RHS_loc,   &
+                     zbig * sheath_u_relax * sh_R, a_mat%i_tor_min, a_mat%i_tor_max)
+            else
+              call boundary_conditions_add_RHS(                              &
+                     index_node, var_u, in, index_min, index_max, RHS_loc,   &
+                     0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
+            endif
+
+            ! --- ... and on the first derivative of u along the boundary
+            do k_sh = 1, n_var
+              if ( sh_coef_d(k_sh) .eq. 0.d0 ) cycle
+              if ( k_sh .eq. var_u ) then
+                call boundary_conditions_add_one_entry(                      &
+                       index_node2, var_u, in, index_node2, k_sh, in,        &
+                       zbig * sh_coef_d(k_sh), index_min, index_max, a_mat)
+              else
+                call boundary_conditions_add_one_entry(                      &
+                       index_node2, var_u, in, index_node2, k_sh, in,        &
+                       zbig * sheath_u_relax * sh_coef_d(k_sh), index_min, index_max, a_mat)
+              endif
+            enddo
+
+            if (in .eq. 1) then
+              call boundary_conditions_add_RHS(                              &
+                     index_node2, var_u, in, index_min, index_max, RHS_loc,  &
+                     zbig * sheath_u_relax * sh_R_b, a_mat%i_tor_min, a_mat%i_tor_max)
+            else
+              call boundary_conditions_add_RHS(                              &
+                     index_node2, var_u, in, index_min, index_max, RHS_loc,  &
+                     0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
+            endif
+
+            ! --- Second derivative along the boundary, higher order elements only. The variation
+            ! --- of the coefficients along the boundary is neglected, so this row is consistent
+            ! --- to first order only.
+            if (n_order .ge. 5) then
+              index_node3 = node_list%node(inode)%index(iv_dir+3)
+
+              sh_R_bb = 0.d0
+              do k_sh = 1, n_var
+                if ( sh_coef_d(k_sh) .ne. 0.d0 ) &
+                  sh_R_bb = sh_R_bb - sh_coef_d(k_sh) * node_list%node(inode)%values(1,iv_dir+3,k_sh)
+              enddo
+
+              do k_sh = 1, n_var
+                if ( sh_coef_d(k_sh) .eq. 0.d0 ) cycle
+                if ( k_sh .eq. var_u ) then
+                  call boundary_conditions_add_one_entry(                    &
+                         index_node3, var_u, in, index_node3, k_sh, in,      &
+                         zbig * sh_coef_d(k_sh), index_min, index_max, a_mat)
+                else
+                  call boundary_conditions_add_one_entry(                    &
+                         index_node3, var_u, in, index_node3, k_sh, in,      &
+                         zbig * sheath_u_relax * sh_coef_d(k_sh), index_min, index_max, a_mat)
+                endif
+              enddo
+
+              if (in .eq. 1) then
+                call boundary_conditions_add_RHS(                            &
+                       index_node3, var_u, in, index_min, index_max, RHS_loc, &
+                       zbig * sheath_u_relax * sh_R_bb, a_mat%i_tor_min, a_mat%i_tor_max)
+              else
+                call boundary_conditions_add_RHS(                            &
+                       index_node3, var_u, in, index_min, index_max, RHS_loc, &
+                       0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
+              endif
+            endif
+
+          endif   !=== apply_sheath_u
+
+        endif   !=== apply_cs .or. apply_sheath_u
         
       enddo     !=== enddo loop n_tor
     

@@ -61,6 +61,8 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 F0,                                                 &
                 gamma_stangeby,gamma_i_stangeby,gamma_e_stangeby,   &
                 gamma_sheath, gamma_sheath_i, gamma_sheath_e,       &
+                sheath_Lambda, sheath_V_wall, sheath_u_relax,       &
+                sheath_u_exp_max, sheath_u_exp_min,                 &
                 deuterium_adas, deuterium_adas_1e20,                &
                 old_deuterium_atomic,                               &
                 density_reflection,                                 &
@@ -292,6 +294,63 @@ if (my_id .eq. 0) then
       gamma_stangeby = 2.d0 * ( gamma_sheath / (gamma-1.d0) + 1.d0 + 0.5d0 * gamma )
     end if
   end if
+
+  ! --- Consistency checks for the sheath j-V boundary condition on the electric potential
+  if ( any(bcs(:)%sheath_u) ) then
+
+    if ( sheath_u_exp_min .ge. sheath_u_exp_max ) then
+      write(*,*) 'ERROR: sheath_u_exp_min must be smaller than sheath_u_exp_max.'
+      stop
+    endif
+
+    ! --- The lower clip is the electron saturation limit. At X = -Lambda the potential is zero
+    ! --- and the current is the full electron thermal flux, which is where that limit belongs.
+    if ( abs(sheath_u_exp_min + sheath_Lambda) .gt. 1.d-8 ) then
+      write(*,*) 'NOTE: sheath_u_exp_min is not -sheath_Lambda. The lower clip is the electron'
+      write(*,*) '      saturation limit and it sits at Phi = 0 when it equals -Lambda, which is'
+      write(*,*) '      where electron saturation physically is. Present setting caps |j| at'
+      write(*,*) '      (exp(-sheath_u_exp_min)-1) =', exp(-sheath_u_exp_min)-1.d0, ' times j_sat.'
+    endif
+
+    do i = 1, max_bnd_types
+      if ( .not. bcs(i)%sheath_u ) cycle
+
+      ! --- The characteristic occupies the u row, so the plain Dirichlet on u is skipped there.
+      ! --- The current stays Dirichlet: every attempt to leave psi, u, w or zj to its own weak
+      ! --- form at a boundary node fails, because those forms are assembled without their
+      ! --- surface terms (only rho, T, Ti, Te, rhon and vpar have natural BC support in
+      ! --- mod_boundary_matrix_open). A free zj picks up the missing grad(psi).n integral as a
+      ! --- spurious current of order grad(psi).n / h.
+      if ( .not. bcs(i)%dirichlet%zj ) then
+        write(*,*) 'ERROR: bcs(', i, ')%sheath_u needs bcs(', i, ')%dirichlet%zj = .true.'
+        write(*,*) '       The current definition weak form has no surface term, so a free zj at'
+        write(*,*) '       the boundary absorbs it as a spurious current.'
+        stop
+      endif
+      if ( .not. bcs(i)%dirichlet%w ) then
+        write(*,*) 'ERROR: bcs(', i, ')%sheath_u needs bcs(', i, ')%dirichlet%w = .true.'
+        write(*,*) '       The w row carries the definition w = grad^2 u, which has no surface'
+        write(*,*) '       term either.'
+        stop
+      endif
+      if ( .not. bcs(i)%mach1 ) then
+        write(*,*) 'WARNING: bcs(', i, ')%sheath_u is active but bcs(', i, ')%mach1 is .false.;'
+        write(*,*) '         j_sat is evaluated with v_par = +-c_s/|B|, which assumes the Mach 1'
+        write(*,*) '         condition holds at the same boundary.'
+      endif
+    enddo
+
+    ! --- u is continuous along the boundary. A type with the BC adjacent to one without it puts
+    ! --- a step of order Lambda*Te/e across a single element, and since v.n = R*du/dl that is a
+    ! --- large artificial ExB flow through the wall right at the junction.
+    do i = 1, max_bnd_types
+      if ( bcs(i)%sheath_u .or. .not. bcs(i)%dirichlet%u ) cycle
+      write(*,*) 'NOTE: bcs(', i, ')%sheath_u is .false. while other types have it. If this'
+      write(*,*) '      boundary type touches one that has it, u steps from ~Lambda*Te/e to 0'
+      write(*,*) '      across one element there. Enable it on every type bounding the plasma.'
+    enddo
+
+  endif
 
   if (sum(nstep_n) .gt. 0) then
     nstep = sum(nstep_n)

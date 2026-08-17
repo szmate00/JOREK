@@ -830,7 +830,16 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   if ( vpar_smoothing ) then
     write(*,REAL_FMT) 'vpar_smoothing_coef   ', vpar_smoothing_coef(:)
   end if
-  write(*,REAL_FMT) 'min_sheath_angle      ', min_sheath_angle     
+  write(*,REAL_FMT) 'min_sheath_angle      ', min_sheath_angle
+
+  if ( any(bcs(:)%sheath_u) ) then
+    write(*,'(A,30(1x,i0))') ' sheath_u bnd types    :', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%sheath_u )
+    write(*,REAL_FMT) 'sheath_Lambda         ', sheath_Lambda
+    write(*,REAL_FMT) 'sheath_V_wall [V]     ', sheath_V_wall
+    write(*,REAL_FMT) 'sheath_u_exp_max      ', sheath_u_exp_max
+    write(*,REAL_FMT) 'sheath_u_exp_min      ', sheath_u_exp_min
+    write(*,REAL_FMT) 'sheath_u_relax        ', sheath_u_relax
+  end if     
 
   write(*,LOGI_FMT) 'bc_natural_open       ', bc_natural_open
   write(*,LOGI_FMT) 'produce_live_data     ', produce_live_data

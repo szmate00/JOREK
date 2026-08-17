@@ -50,6 +50,13 @@ module phys_module
   real*8  :: gamma_e_stangeby     !< Sheath tranmission coefficient given by P. Stangeby in (The plasma boundary of magnetic fusion devices)
   real*8  :: gamma_sheath_i       !< sheath boundary condition on open fieldlines (JOREK units); you can also provide gamma_stangeby in normal units instead!
   real*8  :: gamma_i_stangeby     !< Sheath tranmission coefficient given by P. Stangeby in (The plasma boundary of magnetic fusion devices)
+  ! --- Sheath j-V boundary condition for the electric potential (model600), see
+  ! --- J. Artola, "Sheath boundary conditions for the electric potential in JOREK" (rev. 2026).
+  real*8  :: sheath_Lambda        !< Sheath factor in f = 1 - exp(-(e*Phi/(k*Te) - Lambda)). Phi is referenced to the wall, so zero current is at Phi = Lambda*Te/e (the floating potential) and Phi = 0 is electron saturation. Lambda = ln(sqrt(m_i/(2*pi*m_e))), ~3 for deuterium
+  real*8  :: sheath_V_wall        !< Wall potential in volts: Phi = V_sheath_entrance - V_wall. 0 = grounded wall
+  real*8  :: sheath_u_exp_max     !< Upper clip of the sheath exponent X. Caps Phi at (Lambda+X_max)*Te/e and |j| at (1-exp(-X_max))*j_sat
+  real*8  :: sheath_u_exp_min     !< Lower clip of X. Effective electron saturation limit; -Lambda puts it at Phi = 0, where |j| = (exp(Lambda)-1)*j_sat
+  real*8  :: sheath_u_relax       !< Under-relaxation: u moves this fraction of the way to the characteristic per step. Fixed point unchanged. 1 = none
   real*8  :: density_reflection   !< density reflection coeefficient on open fieldlines
   real*8  :: neutral_reflection   !< reflection coefficient of ions into neutrals (model500)
   real*8  :: imp_reflection       !< impurity reflection coefficient on open fieldlines
@@ -197,6 +204,7 @@ module phys_module
     type (type_dirichlet_bc) :: dirichlet
     type (type_natural_bc)   :: natural
     logical                  :: mach1 
+    logical                  :: sheath_u !< Impose the sheath j-V characteristic on the u equation at this boundary type (model600)
   end type type_bcs
 
   type (type_bcs), dimension(max_bnd_types) :: bcs   
