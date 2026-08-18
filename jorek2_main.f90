@@ -39,7 +39,7 @@ program JOREK2
   use mod_bootstrap_functions
   use construct_matrix_mod, only : construct_matrix
 #if JOREK_MODEL == 600
-  use mod_sheath_diag, only : sheath_init_potential, sheath_store_psi0
+  use mod_sheath_diag, only : sheath_init_potential
 #endif
   use mod_global_matrix_structure
   use mod_import_restart
@@ -598,8 +598,6 @@ write(*,*) "n elements:", element_list%n_elements
   ! --- put the sheath boundary condition at (or near) its own fixed point before the first step,
   ! --- instead of starting from u = 0, which is electron saturation
   if ( sheath_init_u ) call sheath_init_potential(node_list, my_id)
-  ! --- record psi at t_start; the resistive wall relaxes dpsi/dn towards this, not towards zero
-  if ( sheath_wall_vel .gt. 0.d0 ) call sheath_store_psi0(node_list)
 #endif
   
   if (nstep > 0) then

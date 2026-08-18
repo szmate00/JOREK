@@ -34,7 +34,7 @@ use data_structure
 use vacuum, ONLY: is_freebound
 use corr_neg, only: corr_neg_temp
 use mod_sheath_bc, only: sheath_get_lambda
-use mod_sheath_diag, only: sheath_psi0
+use mod_sheath_diag, only: sheath_psi0, sheath_store_psi0
 use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_cos_dR, dpsi_RMP_cos_dZ, &
        psi_RMP_sin, dpsi_RMP_sin_dR, dpsi_RMP_sin_dZ, t_now, RMP_growth_rate, RMP_ramp_up_time,            &
        RMP_start_time, tstep, RMP_har_cos, RMP_har_sin, T_min,                                             &
@@ -179,6 +179,12 @@ RMPspectrum: if (RMP_on .and. (n_tor .ge. 3)) then !*****
   endif
 
 end if RMPspectrum
+
+! --- Record psi at the first call, from the very node_list this routine indexes. Doing it here
+! --- rather than in jorek2_main avoids any question of node redistribution or restart ordering
+! --- changing the size or the contents between the two.
+if ( (sheath_wall_vel .gt. 0.d0) .and. (.not. allocated(sheath_psi0)) ) &
+  call sheath_store_psi0(node_list)
 
 zbig        = 1.d12
 zbig_backup = zbig
@@ -1054,7 +1060,11 @@ do i=1, n_local_elms !=== do elements
             ! --- gradient moves psi to reduce it. A useful magnitude is v_n itself - the wall has
             ! --- to pass flux about as fast as the flow delivers it.
             !------------------------------------------------------------------------------------
-            if ( (sheath_wall_vel .gt. 0.d0) .and. (.not. is_freebound(in,var_psi)) ) then
+            if ( (sheath_wall_vel .gt. 0.d0) .and. (.not. is_freebound(in,var_psi))            &
+                 .and. allocated(sheath_psi0) ) then
+              if ( inode .gt. size(sheath_psi0,2) ) then
+                if (my_id .eq. 0) write(*,*) 'WARNING: sheath_psi0 too small, wall relaxation off'
+              else
 
               index_node_p = node_list%node(inode)%index(iv_perp_dir)
 
@@ -1079,6 +1089,7 @@ do i=1, n_local_elms !=== do elements
                 call boundary_conditions_add_RHS(                             &
                        index_node, var_psi, in, index_min, index_max, RHS_loc,&
                        0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
+              endif
               endif
 
             endif
