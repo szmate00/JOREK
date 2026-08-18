@@ -389,8 +389,14 @@ do ms=1, n_gauss
       if ( sheath_stiff_max .gt. 0.d0 ) then
         sh_d_pol   = r0_corr * BigR**3
         sh_d_robin = BigR * abs(dzj_du) * abs(sh_Bn) * dl * max(theta,1.d-2) * tstep
-        if ( sh_d_robin .gt. sheath_stiff_max * sh_d_pol ) &
-          sheath_alpha = sheath_stiff_max * sh_d_pol / max(sh_d_robin, 1.d-300)
+        ! --- Smooth cap, alpha = 1/(1+r) with r = d_robin/(stiff_max*d_pol): alpha -> 1 for
+        ! --- r << 1 and -> stiff_max*d_pol/d_robin for r >> 1, i.e. the same two limits as the
+        ! --- hard switch it replaces, but C-infinity in between. The switch put a kink in the
+        ! --- residual as a function of the state, which costs Newton iterations for nothing.
+        ! --- NOTE the omitted d(alpha)/d(state) in the Jacobian is harmless: the missing term is
+        ! --- proportional to alpha' * (zj_sh - zj0), and (zj_sh - zj0) -> 0 at the solution, so
+        ! --- it vanishes there and the local convergence rate is preserved.
+        sheath_alpha = 1.d0 / ( 1.d0 + sh_d_robin / max(sheath_stiff_max * sh_d_pol, 1.d-300) )
       endif
       sheath_ramp = sheath_ramp * sheath_alpha * sheath_flux_sign   ! recomputed every Gauss point
 
@@ -407,6 +413,13 @@ do ms=1, n_gauss
         element_size_ij = element%size(vertex(i),j2)
 
         do im=i_tor_min, i_tor_max
+
+          ! --- Reset here, not once at routine entry. Every component written below sits under a
+          ! --- loop-invariant condition today, so nothing is stale - but that invariant is
+          ! --- undocumented and one component added under an index-dependent condition would leak
+          ! --- silently into the next iteration. Zeroing per iteration removes the hazard; the
+          ! --- cost is n_var stores on boundary elements only.
+          rhs_ij = 0.d0
 
           v   =  H1(i,j,ms) * element_size_ij * HZ(im,mp)         ! test function
 
@@ -485,6 +498,9 @@ do ms=1, n_gauss
               element_size_perp = - element%size(vertex(k),direction_perp(1)) * 3.d0
 
               do in = i_tor_min, i_tor_max                                              ! loop over toroidal harmonics
+
+                amat = 0.d0        ! see the note on rhs_ij above; amat is never accumulated onto
+                                   ! itself, so a per-iteration reset is always safe here
 
                 psi    = H1(k,l,ms)    * element_size_kl * HZ(in,mp)
                 psi_s  = H1_s(k,l,ms)  * element_size_kl * HZ(in,mp)

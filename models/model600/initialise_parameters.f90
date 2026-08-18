@@ -425,6 +425,23 @@ if (my_id .eq. 0) then
         write(*,*) '         condition holds at the same boundary.'
       endif
 
+      ! --- The grazing-incidence floor is inherently DISCONTINUOUS: g_eff = sgn(b_n)*max(|g|,
+      ! --- g_min) jumps from -g_min to +g_min as the field crosses tangency, so j_sat flips sign
+      ! --- by a finite amount between neighbouring Gauss points. No continuous function can floor
+      ! --- a magnitude while preserving a sign that changes.
+      ! --- The natural form does not need it. The added term is -(zj_sh - zj)*(B.n), which
+      ! --- vanishes with B.n whatever j_sat does, and dzj/du -> 0 with it, so the Robin diagonal
+      ! --- vanishes smoothly too and u stays governed by the vorticity equation there. That is
+      ! --- also the physics: a tangential field delivers no parallel flux, so there is no sheath.
+      ! --- The floor exists for the NODAL path, where u is slaved to the characteristic and a
+      ! --- vanishing j_sat makes the row singular.
+      if ( sheath_min_bn .gt. 0.d0 ) then
+        write(*,*) 'ERROR: sheath_min_bn > 0 with bcs(', i, ')%natural%u. The floor is'
+        write(*,*) '       discontinuous at tangency and the forward form does not need it:'
+        write(*,*) '       the surface term vanishes with B.n on its own. Set sheath_min_bn = 0.'
+        stop
+      endif
+
     enddo
 
     ! --- u enters the vorticity equation only through its gradient, so its constant mode is
@@ -453,7 +470,10 @@ if (my_id .eq. 0) then
     endif
     if ( sheath_min_bn .le. 0.d0 ) then
       write(*,*) 'NOTE: sheath_min_bn = 0, so the sheath current vanishes where the field is'
-      write(*,*) '      tangent to the wall. Set it to sin(1 deg) = 0.0175 to keep a floor there.'
+      write(*,*) '      tangent to the wall. That is correct for the forward form: no parallel'
+      write(*,*) '      flux reaches such a surface, so there is no sheath, and the surface term'
+      write(*,*) '      switches itself off smoothly through B.n. The floor is for the NODAL'
+      write(*,*) '      path only, where it keeps the slaved row from going singular.'
     endif
 
   endif

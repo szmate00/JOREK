@@ -88,6 +88,7 @@ integer :: ilarge_vsvs, ilarge_vsTs, ilarge_vsT, ilarge_vut, ilarge_vtvt, ilarge
 integer :: ierr
 logical :: apply_psi_BC, apply_current_BC, s_constant_boundary, t_constant_boundary, apply_cs, apply_dirichlet_1234, apply_dirichlet_all
 logical :: apply_sheath_u
+logical :: apply_natural_u
 
 ! --- Sheath j-V boundary condition for the electric potential
 real*8  :: u0, sh_a_n, sh_c_sat, sh_vw, sh_rho, sh_zj, sh_Ti, sh_Te, sh_T, sh_cs, sh_jsat
@@ -349,6 +350,9 @@ do i=1, n_local_elms !=== do elements
 
           !------------ Decide when to replace the Dirichlet BC on u by the sheath j-V BC --------
           apply_sheath_u = bcs(bnd_type)%sheath_u
+          ! --- The forward/natural route imposes the same sheath condition as a surface term,
+          ! --- so it needs the same thin resistive wall. It does not use the nodal rows below.
+          apply_natural_u = bcs(bnd_type)%natural%u
           !---------------------------------------------------------------------------------------------------                      
 
           if (  ( (k == var_psi     ) .and. bcs(bnd_type)%dirichlet%psi     )  .or.  &
@@ -412,7 +416,8 @@ do i=1, n_local_elms !=== do elements
         if ((node_list%node(inode)%boundary .eq.  3) .and. (node_list%node(inode2)%boundary .eq.  2)) cycle
 
         ! --- Boundary conditions needing the local geometry (Mach1, sheath j-V BC for u)
-        if ( apply_cs .or. apply_sheath_u ) then
+        if ( apply_cs .or. apply_sheath_u .or.                                &
+             ( apply_natural_u .and. (sheath_wall_vel .gt. 0.d0) ) ) then
 
           call basisfunctions1(0.d0, H1, H1_s, H1_ss)
 
@@ -1041,60 +1046,6 @@ do i=1, n_local_elms !=== do elements
 
 
             !------------------------------------------------------------------------------------
-            ! --- Thin resistive wall for the poloidal flux.
-            !
-            ! --- Once u varies along the wall there is an ExB flow through it, v_E.n = R du/dl,
-            ! --- and that flow drags poloidal flux, through the R[u,psi] term of the induction
-            ! --- equation. Parallel flow is harmless (B.grad psi = 0); only the perpendicular flow
-            ! --- drags. Against a Dirichlet psi the dragged flux has nowhere to go and piles up in
-            ! --- a resistive layer of width eta/v_n - of order 10 microns at Spitzer resistivity
-            ! --- against a millimetre mesh. Unresolvable, and it appears as the grid-scale current
-            ! --- filament. This is the whole reason the boundary condition is hard here and free
-            ! --- in SOLPS, SOLEDGE or GBS, which hold B fixed: no flux to drag, no layer.
-            !
-            ! --- Let the wall pass flux at a finite speed instead of freezing it:
-            ! ---     dpsi/dt = - sheath_wall_vel * ( dpsi/dn - dpsi/dn at t_start )
-            ! --- The DEVIATION from the initial state is what drives it; using the raw gradient
-            ! --- would bleed flux even in a quiet plasma. The sign is a relaxation: one sided
-            ! --- diffusion, dpsi/dt = eta*grad^2(psi) ~ -(2*eta/h)*dpsi/dn, so an excess outward
-            ! --- gradient moves psi to reduce it. A useful magnitude is v_n itself - the wall has
-            ! --- to pass flux about as fast as the flow delivers it.
-            !------------------------------------------------------------------------------------
-            if ( (sheath_wall_vel .gt. 0.d0) .and. (.not. is_freebound(in,var_psi))            &
-                 .and. allocated(sheath_psi0) ) then
-              if ( inode .gt. size(sheath_psi0,2) ) then
-                if (my_id .eq. 0) write(*,*) 'WARNING: sheath_psi0 too small, wall relaxation off'
-              else
-
-              index_node_p = node_list%node(inode)%index(iv_perp_dir)
-
-              sh_wall_rhs = - tstep * sheath_wall_vel                                            &
-                            * ( node_list%node(inode)%values(1,iv_perp_dir,var_psi)              &
-                              - sheath_psi0(iv_perp_dir,inode) )
-              ! --- loop_voltage drives the same row and would otherwise be overwritten here
-              if ( loop_voltage .ne. 0.d0 ) sh_wall_rhs = sh_wall_rhs                            &
-                + loop_voltage * sqrt(MU_ZERO*central_density*central_mass*ATOMIC_MASS_UNIT*1.d20) * tstep
-
-              call boundary_conditions_add_one_entry(                         &
-                     index_node, var_psi, in, index_node, var_psi, in,        &
-                     zbig, index_min, index_max, a_mat)
-              call boundary_conditions_add_one_entry(                         &
-                     index_node, var_psi, in, index_node_p, var_psi, in,      &
-                     zbig * tstep * sheath_wall_vel, index_min, index_max, a_mat)
-              if (in .eq. 1) then
-                call boundary_conditions_add_RHS(                             &
-                       index_node, var_psi, in, index_min, index_max, RHS_loc,&
-                       zbig * sh_wall_rhs, a_mat%i_tor_min, a_mat%i_tor_max)
-              else
-                call boundary_conditions_add_RHS(                             &
-                       index_node, var_psi, in, index_min, index_max, RHS_loc,&
-                       0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
-              endif
-              endif
-
-            endif
-
-            !------------------------------------------------------------------------------------
             ! --- Make the ExB flow at the wall run along flux surfaces:  [u,psi] = 0.
             !
             ! --- v_E.n = R du/dl is non-zero as soon as the sheath potential varies along the
@@ -1159,7 +1110,68 @@ do i=1, n_local_elms !=== do elements
 
           endif   !=== apply_sheath_u
 
-        endif   !=== apply_cs .or. apply_sheath_u
+          !------------------------------------------------------------------------------------
+          ! --- Thin resistive wall for the poloidal flux.
+          ! --- Applies to BOTH sheath routes (bcs%sheath_u and bcs%natural%u): the flux dragging
+          ! --- below is caused by u varying along the wall, not by how that u was imposed.
+          !
+          ! --- Once u varies along the wall there is an ExB flow through it, v_E.n = R du/dl,
+          ! --- and that flow drags poloidal flux, through the R[u,psi] term of the induction
+          ! --- equation. Parallel flow is harmless (B.grad psi = 0); only the perpendicular flow
+          ! --- drags. Against a Dirichlet psi the dragged flux has nowhere to go and piles up in
+          ! --- a resistive layer of width eta/v_n - of order 10 microns at Spitzer resistivity
+          ! --- against a millimetre mesh. Unresolvable, and it appears as the grid-scale current
+          ! --- filament. This is the whole reason the boundary condition is hard here and free
+          ! --- in SOLPS, SOLEDGE or GBS, which hold B fixed: no flux to drag, no layer.
+          !
+          ! --- Let the wall pass flux at a finite speed instead of freezing it:
+          ! ---     dpsi/dt = - sheath_wall_vel * ( dpsi/dn - dpsi/dn at t_start )
+          ! --- The DEVIATION from the initial state is what drives it; using the raw gradient
+          ! --- would bleed flux even in a quiet plasma. The sign is a relaxation: one sided
+          ! --- diffusion, dpsi/dt = eta*grad^2(psi) ~ -(2*eta/h)*dpsi/dn, so an excess outward
+          ! --- gradient moves psi to reduce it. A useful magnitude is v_n itself - the wall has
+          ! --- to pass flux about as fast as the flow delivers it.
+          !------------------------------------------------------------------------------------
+          if ( (sheath_wall_vel .gt. 0.d0)                                                 &
+               .and. (apply_sheath_u .or. apply_natural_u)                                 &
+               .and. (.not. is_freebound(in,var_psi))                                      &
+               .and. allocated(sheath_psi0) ) then
+            if ( inode .gt. size(sheath_psi0,2) ) then
+              if (my_id .eq. 0) write(*,*) 'WARNING: sheath_psi0 too small, wall relaxation off'
+            else
+
+            ! --- Mach1 above may have left index_node pointing at a derivative DOF
+            index_node   = node_list%node(inode)%index(1)
+            index_node_p = node_list%node(inode)%index(iv_perp_dir)
+
+            sh_wall_rhs = - tstep * sheath_wall_vel                                            &
+                          * ( node_list%node(inode)%values(1,iv_perp_dir,var_psi)              &
+                            - sheath_psi0(iv_perp_dir,inode) )
+            ! --- loop_voltage drives the same row and would otherwise be overwritten here
+            if ( loop_voltage .ne. 0.d0 ) sh_wall_rhs = sh_wall_rhs                            &
+              + loop_voltage * sqrt(MU_ZERO*central_density*central_mass*ATOMIC_MASS_UNIT*1.d20) * tstep
+
+            call boundary_conditions_add_one_entry(                         &
+                   index_node, var_psi, in, index_node, var_psi, in,        &
+                   zbig, index_min, index_max, a_mat)
+            call boundary_conditions_add_one_entry(                         &
+                   index_node, var_psi, in, index_node_p, var_psi, in,      &
+                   zbig * tstep * sheath_wall_vel, index_min, index_max, a_mat)
+            if (in .eq. 1) then
+              call boundary_conditions_add_RHS(                             &
+                     index_node, var_psi, in, index_min, index_max, RHS_loc,&
+                     zbig * sh_wall_rhs, a_mat%i_tor_min, a_mat%i_tor_max)
+            else
+              call boundary_conditions_add_RHS(                             &
+                     index_node, var_psi, in, index_min, index_max, RHS_loc,&
+                     0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
+            endif
+            endif
+
+          endif
+
+
+        endif   !=== apply_cs .or. apply_sheath_u .or. natural_u+wall
         
       enddo     !=== enddo loop n_tor
     

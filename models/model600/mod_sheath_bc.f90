@@ -224,8 +224,9 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
   real*8 :: a_n, c_sat, vw
   real*8 :: rho_l, Ti_l, Te_l, T_l, cs, g_eff
   real*8 :: lam, dlam_dTi, dlam_dTe
-  real*8 :: x, x_lim, dxlim_dx, expmx, f, fp
-  real*8 :: dx_du, dx_dTi, dx_dTe
+  real*8  :: x, x_lim, dxlim_dx, expmx, f, fp
+  real*8  :: dx_du, dx_dTi, dx_dTe
+  logical :: x_frozen
 
   call sheath_norm(a_n, c_sat, vw)
 
@@ -253,17 +254,30 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
   call sheath_x_limited(x, x_lim, dxlim_dx)
   x_out = x_lim
 
+  x_frozen = .false.
   if ( x_lim .lt. -sheath_exp_max ) then
-    expmx = exp(sheath_exp_max)     ! electron branch, capped. Only reachable when the user has
+    expmx    = exp(sheath_exp_max)  ! electron branch, capped. Only reachable when the user has
                                     ! effectively disabled the limiter with a very negative X_min
+    x_frozen = .true.               ! the residual no longer depends on X here, so neither may the
+                                    ! Jacobian: fp must be 0, not expmx (which would be 1e13 off)
   elseif ( x_lim .gt. sheath_exp_max ) then
-    expmx = 0.d0
+    expmx = 0.d0                    ! ion saturation; the true derivative is exp(-X) ~ 0 too
   else
     expmx = exp(-x_lim)
   endif
 
-  f  = 1.d0 - expmx                 ! the characteristic
-  fp = expmx * dxlim_dx             ! d f / d X
+  ! --- 1 - exp(-X) cancels catastrophically near X = 0 - which is exactly the floating
+  ! --- condition a grounded wall sits at, so it is the regime of interest rather than a corner
+  ! --- case. At X = 1e-4 the naive form keeps only ~12 significant digits. Fortran has no expm1
+  ! --- intrinsic, so use the Taylor series of 1 - exp(-X) below the crossover; four terms give
+  ! --- a relative error of ~1e-18 there, well inside double precision.
+  if ( abs(x_lim) .lt. 1.d-4 ) then
+    f = x_lim * ( 1.d0 - x_lim * ( 0.5d0 - x_lim * ( 1.d0/6.d0 - x_lim/24.d0 ) ) )
+  else
+    f = 1.d0 - expmx                ! the characteristic
+  endif
+  fp = expmx * dxlim_dx             ! d f / d X (no cancellation: expmx -> 1 as X -> 0)
+  if ( x_frozen ) fp = 0.d0         ! stay consistent with the frozen residual above
 
   ! --- derivatives of X (Lambda contributes through Ti and Te when sheath_Lambda_local)
   dx_du  =   0.5d0 * a_n / Te_l
