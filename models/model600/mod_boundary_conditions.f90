@@ -41,7 +41,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                                    &
        sheath_Lambda, sheath_V_wall, sheath_u_exp_max, sheath_u_exp_min, sheath_u_relax, sheath_min_bn, &
-       sheath_u_relax_time, sheath_wall_diff, sheath_u_align_psi
+       sheath_u_relax_time, sheath_wall_diff, sheath_u_align_psi, sheath_u_value_only
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -963,6 +963,14 @@ do i=1, n_local_elms !=== do elements
                      0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
             endif
 
+            ! --- ... and on the first derivative of u along the boundary. Skipped when
+            ! --- sheath_u_value_only: that row slaves du/dl to the tangential-derivative DOF of
+            ! --- Te, and du/dl is v_E.n, the flux-dragging velocity, so the row hands grid-scale
+            ! --- Te noise straight to the induction equation. Without it, u = u_target still holds
+            ! --- at every node and the vorticity equation - which has dissipation - decides the
+            ! --- interpolation between them.
+            if ( .not. sheath_u_value_only ) then
+
             ! --- ... and on the first derivative of u along the boundary
             do k_sh = 1, n_var
               if ( sh_coef_d(k_sh) .eq. 0.d0 ) cycle
@@ -1106,6 +1114,8 @@ do i=1, n_local_elms !=== do elements
               endif
 
             endif
+
+            endif   !=== .not. sheath_u_value_only
 
             !------------------------------------------------------------------------------------
             ! --- Make the ExB flow at the wall run along flux surfaces:  [u,psi] = 0.
