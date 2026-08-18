@@ -435,6 +435,25 @@ if (my_id .eq. 0) then
       ! --- also the physics: a tangential field delivers no parallel flux, so there is no sheath.
       ! --- The floor exists for the NODAL path, where u is slaved to the characteristic and a
       ! --- vanishing j_sat makes the row singular.
+      ! --- The ramp is a trap on this route. For a normal term, ramping it in from zero is a
+      ! --- continuation. Here the surface term IS the boundary condition for u: with
+      ! --- dirichlet%u = .false. there is nothing else holding u at this boundary, so a ramp
+      ! --- factor near zero leaves u free to develop any along-wall gradient it likes - and
+      ! --- du/dl is v_E.n, the velocity that drags poloidal flux. Observed: a ramp over the
+      ! --- first ~100 steps grew a current filament on the divertor leg before the term ever
+      ! --- engaged. sheath_init_u serves the purpose the ramp was meant to serve, by starting u
+      ! --- at the floating potential, which is the fixed point of the characteristic at j = 0.
+      if ( sheath_ramp_time .gt. 0.d0 ) then
+        write(*,*) 'WARNING: sheath_ramp_time > 0 with bcs(', i, ')%natural%u. The surface term'
+        write(*,*) '         is the ONLY boundary condition on u here, so while the ramp is small'
+        write(*,*) '         u is unconstrained at the wall and drags flux freely. Use'
+        write(*,*) '         sheath_ramp_time = 0 and sheath_init_u = .true. instead.'
+      endif
+      if ( .not. sheath_init_u ) then
+        write(*,*) 'WARNING: bcs(', i, ')%natural%u without sheath_init_u. u then starts ~Lambda*Te'
+        write(*,*) '         away from its own fixed point, i.e. ~50 V at a 20 eV target.'
+      endif
+
       if ( sheath_min_bn .gt. 0.d0 ) then
         write(*,*) 'ERROR: sheath_min_bn > 0 with bcs(', i, ')%natural%u. The floor is'
         write(*,*) '       discontinuous at tangency and the forward form does not need it:'
