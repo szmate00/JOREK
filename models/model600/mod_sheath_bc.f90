@@ -237,12 +237,14 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
 
   cs = sqrt( GAMMA * T_l )
 
-  ! --- Grazing incidence: g(b_n) vanishes where the field is tangent to the wall, which would
-  ! --- switch the sheath off there, and with it the only term that ties u to the current. Floor
-  ! --- the magnitude while keeping the direction of B.n, in the spirit of the minimum particle
-  ! --- and heat fluxes already applied in mod_boundary_matrix_open.
+  ! --- No floor on g(b_n) here. Flooring the magnitude while keeping the sign of B.n is
+  ! --- discontinuous through tangency, and the real problem it was aimed at is SOLVABILITY, not
+  ! --- magnitude: as g -> 0 the saturation current zj_sat -> 0, so the characteristic is asked
+  ! --- for f = zj0/zj_sat -> infinity, which has no solution (f <= 1 on the ion side, and
+  ! --- >= -(exp(-X_min)-1) on the electron side) and drives u monotonically. That is handled in
+  ! --- mod_boundary_matrix_open by gating the whole term - residual and Jacobian together - with
+  ! --- the smooth obliqueness weight b_n^2/(b_n^2 + sheath_min_bn^2).
   g_eff = g_bn
-  if ( sheath_min_bn .gt. 0.d0 ) g_eff = sgn_bn * max( abs(g_bn), sheath_min_bn )
 
   zj_sat = c_sat * rho_l * g_eff * cs / Btot
 

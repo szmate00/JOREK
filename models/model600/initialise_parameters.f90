@@ -454,11 +454,12 @@ if (my_id .eq. 0) then
         write(*,*) '         away from its own fixed point, i.e. ~50 V at a 20 eV target.'
       endif
 
-      if ( sheath_min_bn .gt. 0.d0 ) then
-        write(*,*) 'ERROR: sheath_min_bn > 0 with bcs(', i, ')%natural%u. The floor is'
-        write(*,*) '       discontinuous at tangency and the forward form does not need it:'
-        write(*,*) '       the surface term vanishes with B.n on its own. Set sheath_min_bn = 0.'
-        stop
+      if ( sheath_min_bn .le. 0.d0 ) then
+        write(*,*) 'WARNING: sheath_min_bn = 0 with bcs(', i, ')%natural%u. Where the field grazes'
+        write(*,*) '         the wall, zj_sat -> 0 while the frozen zj0 does not, so the'
+        write(*,*) '         characteristic is asked for a current ratio outside its range and NO'
+        write(*,*) '         u satisfies it - the residual cannot vanish and u runs away. Use'
+        write(*,*) '         sheath_min_bn ~ 0.05 (the Chodura transition sits near |b_n| = 0.02).'
       endif
 
     enddo
@@ -467,6 +468,22 @@ if (my_id .eq. 0) then
     ! --- pinned by the sheath term alone, and that term loses its grip on u in ion saturation
     ! --- (dj/du -> 0). Keep at least one boundary type with a Dirichlet on u, as GBS does by
     ! --- using phi = Lambda*Te/e on the walls without strike points.
+    ! --- Mixing the sheath and a Dirichlet on u between NEIGHBOURING target boundary types puts
+    ! --- a step of Lambda*Te/e - some 50 V at a 20 eV target - across a single element wherever
+    ! --- they meet. du/dl is v_E.n, so that step is the flux-dragging velocity at the largest
+    ! --- value the mesh can represent, concentrated at a point. Observed: applying natural%u to
+    ! --- one target type only drove w to 8692, five times worse than applying no boundary
+    ! --- condition at all. mach1 marks the types that carry parallel outflow, i.e. the ones that
+    ! --- have a sheath; if some of those have natural%u and others do not, say so.
+    do i = 1, max_bnd_types
+      if ( bcs(i)%mach1 .and. (.not. bcs(i)%natural%u) .and. (.not. bcs(i)%sheath_u) ) then
+        write(*,*) 'WARNING: bcs(', i, ')%mach1 is set but it has no sheath BC, while another'
+        write(*,*) '         boundary type does. Where the two meet, u steps by ~Lambda*Te/e'
+        write(*,*) '         across one element and drags flux hard. Apply the sheath to every'
+        write(*,*) '         boundary type carrying strike points, or to none.'
+      endif
+    enddo
+
     if ( .not. any( bcs(:)%dirichlet%u .and. .not. bcs(:)%natural%u ) ) then
       write(*,*) 'ERROR: every boundary type has natural%u, so nothing pins the constant mode of'
       write(*,*) '       u any more. Keep dirichlet%u = .true. on at least one type (typically'

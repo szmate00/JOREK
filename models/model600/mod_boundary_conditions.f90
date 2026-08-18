@@ -96,6 +96,7 @@ real*8  :: sh_lam, sh_dlam_dTi, sh_dlam_dTe
 real*8  :: sh_g, sh_C, sh_dr_dzj
 real*8  :: sh_relax
 real*8  :: sh_wall_rhs
+real*8  :: sh_perp_sign
 real*8  :: sh_pl, sh_pn, sh_ul, sh_un, sh_nrm, sh_ca, sh_sa, sh_wgt
 real*8  :: sh_wgt_bn
 integer :: index_node_p
@@ -1144,7 +1145,17 @@ do i=1, n_local_elms !=== do elements
             index_node   = node_list%node(inode)%index(1)
             index_node_p = node_list%node(inode)%index(iv_perp_dir)
 
-            sh_wall_rhs = - tstep * sheath_wall_vel                                            &
+            ! --- Orientation. values(1,iv_perp_dir,...) is a derivative with respect to a LOGICAL
+            ! --- coordinate whose sense depends on which vertex the boundary edge hangs off; the
+            ! --- Mach1 block above applies exactly this correction to element_size_s/t. Without
+            ! --- it the relaxation dpsi/dt = -v_w*(dpsi/dn - dpsi/dn|_0) is dissipative on some
+            ! --- boundary elements and ANTI-dissipative on the rest, growing a mesh-scale
+            ! --- alternating structure in psi - visible first in zj = Delta*psi, only later in u.
+            sh_perp_sign = 1.d0
+            if ( (iv_perp_dir .eq. 2) .and. ((iv .eq. 2) .or. (iv .eq. 3)) ) sh_perp_sign = -1.d0
+            if ( (iv_perp_dir .eq. 3) .and. ((iv .eq. 3) .or. (iv .eq. 4)) ) sh_perp_sign = -1.d0
+
+            sh_wall_rhs = - tstep * sheath_wall_vel * sh_perp_sign                             &
                           * ( node_list%node(inode)%values(1,iv_perp_dir,var_psi)              &
                             - sheath_psi0(iv_perp_dir,inode) )
             ! --- loop_voltage drives the same row and would otherwise be overwritten here
@@ -1156,7 +1167,7 @@ do i=1, n_local_elms !=== do elements
                    zbig, index_min, index_max, a_mat)
             call boundary_conditions_add_one_entry(                         &
                    index_node, var_psi, in, index_node_p, var_psi, in,      &
-                   zbig * tstep * sheath_wall_vel, index_min, index_max, a_mat)
+                   zbig * tstep * sheath_wall_vel * sh_perp_sign, index_min, index_max, a_mat)
             if (in .eq. 1) then
               call boundary_conditions_add_RHS(                             &
                      index_node, var_psi, in, index_min, index_max, RHS_loc,&

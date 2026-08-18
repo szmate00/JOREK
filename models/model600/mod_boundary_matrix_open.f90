@@ -65,7 +65,7 @@ integer    :: n_tor_local
 logical    :: apply_natural_bc(0:n_var)
 
 ! --- Charge-conserving sheath boundary condition and the two supporting surface terms
-real*8     :: u0, u0_s, u0_t, u0_x, u0_y, zj0, sh_Bn, g_bn, sheath_ramp
+real*8     :: u0, u0_s, u0_t, u0_x, u0_y, zj0, sh_Bn, g_bn, sheath_ramp, sh_wgt_bn
 real*8     :: gradu0dotn, gradps0dotn, gradudotn, gradpsidotn
 real*8     :: zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, zj_sat_g, x_sheath
 real*8     :: sheath_alpha, sh_d_pol, sh_d_robin
@@ -398,7 +398,17 @@ do ms=1, n_gauss
         ! --- it vanishes there and the local convergence rate is preserved.
         sheath_alpha = 1.d0 / ( 1.d0 + sh_d_robin / max(sheath_stiff_max * sh_d_pol, 1.d-300) )
       endif
-      sheath_ramp = sheath_ramp * sheath_alpha * sheath_flux_sign   ! recomputed every Gauss point
+      ! --- Obliqueness gate. Where the field grazes the wall, zj_sat -> 0 while the frozen zj0
+      ! --- does not, so the characteristic is asked for f = zj0/zj_sat far outside its range
+      ! --- (-(exp(-X_min)-1), 1] and NO u satisfies it: the residual cannot vanish and u is driven
+      ! --- without bound. Observed: max|zj0/zj_sat| = 1.3e3 with the gate off, and ePhi/kTe
+      ! --- climbing linearly past 12 while the mean sat near Lambda. The weight is smooth, never
+      ! --- changes sign, and multiplies residual AND Jacobian, so it removes the term where it is
+      ! --- unsolvable instead of distorting it. sheath_min_bn = 0 recovers the ungated behaviour.
+      sh_wgt_bn = 1.d0
+      if ( sheath_min_bn .gt. 0.d0 ) &
+        sh_wgt_bn = bdotn**2 / ( bdotn**2 + sheath_min_bn**2 )
+      sheath_ramp = sheath_ramp * sheath_alpha * sheath_flux_sign * sh_wgt_bn  ! every Gauss point
 
       ! --- wall current / potential diagnostic; dS is the toroidally integrated surface element
       call sheath_diag_add(bnd_type1, zj_sh, zj0, zj_sat_g, x_sheath, u0, Te0_corr, sh_Bn, &
