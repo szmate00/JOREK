@@ -94,7 +94,7 @@ real*8  :: sh_lam, sh_dlam_dTi, sh_dlam_dTe
 real*8  :: sh_g, sh_C, sh_dr_dzj
 real*8  :: sh_relax
 real*8  :: sh_wall_rhs
-real*8  :: sh_pl, sh_pn, sh_ul, sh_un, sh_nrm, sh_c, sh_s, sh_wgt
+real*8  :: sh_pl, sh_pn, sh_ul, sh_un, sh_nrm, sh_ca, sh_sa, sh_wgt
 integer :: index_node_p
 real*8  :: sh_ratio, sh_ratio_raw, sh_f_min, sh_f_max, sh_x, sh_xi, sh_dr, sh_u_targ
 real*8  :: sh_R, sh_R_b, sh_R_bb
@@ -1126,29 +1126,29 @@ do i=1, n_local_elms !=== do elements
 
               sh_nrm = sqrt( sh_pl**2 + sh_pn**2 )
               if ( sh_nrm .gt. 0.d0 ) then
-                sh_c = sh_pl / sh_nrm
-                sh_s = - sh_pn / sh_nrm
+                sh_ca = sh_pl / sh_nrm
+                sh_sa = - sh_pn / sh_nrm
               else
-                sh_c = 1.d0
-                sh_s = 0.d0
+                sh_ca = 1.d0
+                sh_sa = 0.d0
               endif
 
-              ! --- blend to du/dn = 0 where the field is tangent to the wall (sh_c -> 0), so the
+              ! --- blend to du/dn = 0 where the field is tangent to the wall (sh_ca -> 0), so the
               ! --- row can never lose its diagonal
-              sh_wgt = sh_c**2 / ( sh_c**2 + 2.5d-3 )      ! 2.5e-3 = (0.05)^2
+              sh_wgt = sh_ca**2 / ( sh_ca**2 + 2.5d-3 )      ! 2.5e-3 = (0.05)^2
 
               call boundary_conditions_add_one_entry(                             &
                      index_node_p, var_u, in, index_node_p, var_u, in,            &
-                     zbig * ( sh_wgt * sh_c + (1.d0 - sh_wgt) ),                  &
+                     zbig * ( sh_wgt * sh_ca + (1.d0 - sh_wgt) ),                  &
                      index_min, index_max, a_mat)
               call boundary_conditions_add_one_entry(                             &
                      index_node_p, var_u, in, index_node2, var_u, in,             &
-                     zbig * sh_wgt * sh_s, index_min, index_max, a_mat)
+                     zbig * sh_wgt * sh_sa, index_min, index_max, a_mat)
 
               if (in .eq. 1) then
                 call boundary_conditions_add_RHS(                                 &
                        index_node_p, var_u, in, index_min, index_max, RHS_loc,    &
-                       - zbig * sh_wgt * ( sh_c * sh_un + sh_s * sh_ul ),         &
+                       - zbig * sh_wgt * ( sh_ca * sh_un + sh_sa * sh_ul ),         &
                        a_mat%i_tor_min, a_mat%i_tor_max)
               else
                 call boundary_conditions_add_RHS(                                 &
