@@ -66,7 +66,7 @@ end subroutine sheath_diag_reset
 !! @param Te0       electron temperature (JOREK units)
 !! @param Bdotn     B.n
 !! @param dS        surface element of this sample: ws*dl*R*(2*pi/n_plane) [m^2]
-subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, dS)
+subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, dS, gate)
 
   use constants,     only: MU_ZERO
   use phys_module,   only: F0, sheath_X_min, sheath_smooth_dX
@@ -75,6 +75,8 @@ subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, 
   implicit none
   integer, intent(in) :: bnd_type
   real*8,  intent(in) :: zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, dS
+  real*8,  intent(in), optional :: gate   !< obliqueness weight; the ratio below is only
+                                          !< meaningful where the term is actually active
 
   real*8 :: jn_sheath, jn_amp, phi_over_te, ratio, a_n, c_sat, vw
 
@@ -87,8 +89,15 @@ subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, 
   call sheath_norm(a_n, c_sat, vw)
   phi_over_te = ( 0.5d0*a_n*u0 - vw ) / max(Te0, 1.d-14)     ! e*Phi/(k*Te)
 
+  ! --- Solvability ratio. The characteristic can only deliver f in (-(exp(-X_min)-1), 1], so
+  ! --- abs(zj0/zj_sat) > 1 means NO u satisfies it at this point and u is driven without bound.
+  ! --- Only report it where the obliqueness gate leaves the term active: at a gated-off point
+  ! --- the ratio diverges harmlessly because the term is not there.
   ratio = 0.d0
   if ( abs(zj_sat) .gt. 0.d0 ) ratio = abs(zj0 / zj_sat)
+  if ( present(gate) ) then
+    if ( gate .lt. 0.5d0 ) ratio = 0.d0
+  endif
 
   !$omp critical (sheath_diag_accumulate)
   sd_I_sheath(bnd_type)  = sd_I_sheath(bnd_type) + jn_sheath * dS

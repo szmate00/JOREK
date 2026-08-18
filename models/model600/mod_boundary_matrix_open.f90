@@ -412,7 +412,7 @@ do ms=1, n_gauss
 
       ! --- wall current / potential diagnostic; dS is the toroidally integrated surface element
       call sheath_diag_add(bnd_type1, zj_sh, zj0, zj_sat_g, x_sheath, u0, Te0_corr, sh_Bn, &
-                           ws * dl * BigR * TWOPI / dble(n_plane))
+                           ws * dl * BigR * TWOPI / dble(n_plane), sh_wgt_bn)
     endif
 
     do i=1,2                ! loop over nodes
