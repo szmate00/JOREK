@@ -36,6 +36,12 @@ module mod_sheath_diag
   real*8,  save :: sd_phi_min                 =  1.d30
   real*8,  save :: sd_phi_max                 = -1.d30
   real*8,  save :: sd_phi_sum                 = 0.d0  !< area weighted, for the mean
+  !> Same, but only where the obliqueness gate leaves the sheath term ACTIVE. Where the gate has
+  !! removed it, u has no boundary condition at all (dirichlet%u is .false. on these types), so a
+  !! runaway there means an unconstrained null space rather than a sheath the plasma is overdriving.
+  !! Comparing the two maxima separates those two completely different failures.
+  real*8,  save :: sd_phi_max_act             = -1.d30
+  real*8,  save :: sd_gate_off_area           = 0.d0
   real*8,  save :: sd_ratio_max               = 0.d0  !< max |j/j_sat| demanded by the interior
   real*8,  save :: sd_lim_area                = 0.d0  !< area sitting on the electron side limiter
 
@@ -50,6 +56,8 @@ subroutine sheath_diag_reset()
   sd_phi_min  =  1.d30
   sd_phi_max  = -1.d30
   sd_phi_sum  = 0.d0
+  sd_phi_max_act = -1.d30
+  sd_gate_off_area = 0.d0
   sd_ratio_max= 0.d0
   sd_lim_area = 0.d0
 end subroutine sheath_diag_reset
@@ -106,6 +114,15 @@ subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, 
   sd_phi_sum             = sd_phi_sum            + phi_over_te * dS
   sd_phi_min             = min(sd_phi_min, phi_over_te)
   sd_phi_max             = max(sd_phi_max, phi_over_te)
+  if ( present(gate) ) then
+    if ( gate .ge. 0.5d0 ) then
+      sd_phi_max_act = max(sd_phi_max_act, phi_over_te)
+    else
+      sd_gate_off_area = sd_gate_off_area + dS
+    endif
+  else
+    sd_phi_max_act = max(sd_phi_max_act, phi_over_te)
+  endif
   sd_ratio_max           = max(sd_ratio_max, ratio)
   ! --- area where the electron side limiter is biting, i.e. where the wall is close to
   ! --- electron saturation and the characteristic is being held back
@@ -127,7 +144,7 @@ subroutine sheath_diag_report(my_id)
   integer, intent(in) :: my_id
 
   integer, parameter :: ns = 3*max_bnd_types + 2
-  real*8  :: loc_sum(ns), glo_sum(ns), loc_max(2), glo_max(2), loc_min(1), glo_min(1)
+  real*8  :: loc_sum(ns+1), glo_sum(ns+1), loc_max(3), glo_max(3), loc_min(1), glo_min(1)
   real*8  :: area_tot, I_sh_tot, I_am_tot, phi_mean, lim_frac
   integer :: ierr, i, i0, i1, i2
 
@@ -143,10 +160,12 @@ subroutine sheath_diag_report(my_id)
 
   loc_max(1) = sd_phi_max
   loc_max(2) = sd_ratio_max
+  loc_max(3) = sd_phi_max_act
+  loc_sum(ns+1) = sd_gate_off_area
   loc_min(1) = sd_phi_min
 
-  call MPI_Reduce(loc_sum, glo_sum, ns, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
-  call MPI_Reduce(loc_max, glo_max,  2, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(loc_sum, glo_sum, ns+1, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(loc_max, glo_max,  3, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
   call MPI_Reduce(loc_min, glo_min,  1, MPI_REAL8, MPI_MIN, 0, MPI_COMM_WORLD, ierr)
 
   if ( my_id .ne. 0 ) return
@@ -163,6 +182,12 @@ subroutine sheath_diag_report(my_id)
     ' SHEATH: I_wall=', I_sh_tot, ' A (Ampere ', I_am_tot,                         &
     ' A)  ePhi/kTe min/mean/max=', glo_min(1), ' /', phi_mean, ' /', glo_max(1),   &
     '  max|j/jsat|=', glo_max(2), '  e-limited ', lim_frac, ' %'
+
+  ! --- The two maxima separate the two failures: if the ACTIVE max settles while the global one
+  ! --- runs away, the runaway is at gated-off points where u has no boundary condition at all.
+  write(*,'(A,f8.2,A,f5.1,A)')                                                     &
+    '         ePhi/kTe max where the sheath is ACTIVE=', glo_max(3),               &
+    '   gated-off area ', 1.d2*glo_sum(ns+1)/max(area_tot,1.d-30), ' %'
 
   do i = 1, max_bnd_types
     if ( glo_sum(i2+i) .le. 0.d0 ) cycle
