@@ -95,6 +95,7 @@ real*8  :: sh_g, sh_C, sh_dr_dzj
 real*8  :: sh_relax
 real*8  :: sh_wall_rhs
 real*8  :: sh_pl, sh_pn, sh_ul, sh_un, sh_nrm, sh_ca, sh_sa, sh_wgt
+real*8  :: sh_wgt_bn
 integer :: index_node_p
 real*8  :: sh_ratio, sh_ratio_raw, sh_f_min, sh_f_max, sh_x, sh_xi, sh_dr, sh_u_targ
 real*8  :: sh_R, sh_R_b, sh_R_bb
@@ -873,6 +874,17 @@ do i=1, n_local_elms !=== do elements
             ! --- division by zero as well. sheath_min_bn = 0 reproduces the unweighted behaviour.
             sh_dr_dzj = sh_g / ( sh_C * ( sh_g**2 + sheath_min_bn**2 ) )
 
+            ! --- How obliquely does the field actually meet the wall here? With grid_to_wall the
+            ! --- same boundary type covers the divertor targets AND the main chamber, where the
+            ! --- field is nearly tangential: no parallel flux reaches such a surface, so there is
+            ! --- no sheath to impose, and worse, moving along that wall stays on roughly the same
+            ! --- flux surface, so a potential varying along it is maximally NOT a flux function
+            ! --- ([u,psi] = -psi_n*u_l with u_l imposed) and drags flux as hard as possible.
+            ! --- This weight folds into the relaxation, so the row degenerates smoothly to du = 0,
+            ! --- i.e. exactly the standard Dirichlet, where the field is tangential.
+            sh_wgt_bn = sh_g**2 / ( sh_g**2 + sheath_min_bn**2 )
+            sh_relax  = sh_relax * sh_wgt_bn
+
             ! --- Invert the characteristic, clipping the current ratio
             sh_f_min     = 1.d0 - exp(-sheath_u_exp_min)
             sh_f_max     = 1.d0 - exp(-sheath_u_exp_max)
@@ -1115,7 +1127,7 @@ do i=1, n_local_elms !=== do elements
             ! --- the wall. There the constraint is meaningless (no flux is dragged either way) and
             ! --- the row blends smoothly back to leaving du/dn alone.
             !------------------------------------------------------------------------------------
-            if ( sheath_u_align_psi ) then
+            if ( sheath_u_align_psi .and. (sh_wgt_bn .gt. 0.25d0) ) then
 
               index_node_p = node_list%node(inode)%index(iv_perp_dir)
 
