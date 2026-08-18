@@ -62,6 +62,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 gamma_stangeby,gamma_i_stangeby,gamma_e_stangeby,   &
                 gamma_sheath, gamma_sheath_i, gamma_sheath_e,       &
                 sheath_Lambda, sheath_V_wall, sheath_u_relax,       &
+                sheath_u_relax_time,                                &
                 sheath_u_exp_max, sheath_u_exp_min,                 &
                 sheath_Lambda_local, sheath_X_min, sheath_smooth_dX,&
                 sheath_min_bn, sheath_ramp_time,                    &
@@ -313,6 +314,13 @@ if (my_id .eq. 0) then
       write(*,*) '      saturation limit and it sits at Phi = 0 when it equals -Lambda, which is'
       write(*,*) '      where electron saturation physically is. Present setting caps |j| at'
       write(*,*) '      (exp(-sheath_u_exp_min)-1) =', exp(-sheath_u_exp_min)-1.d0, ' times j_sat.'
+    endif
+
+    if ( sheath_u_relax_time .gt. 0.d0 ) then
+      write(*,*) 'NOTE: sheath_u_relax_time > 0, so the boundary condition is under-relaxed by'
+      write(*,*) '      min(1, tstep/sheath_u_relax_time) and sheath_u_relax is ignored. This'
+      write(*,*) '      keeps the response time of the Te -> u -> ExB -> Te loop fixed as tstep'
+      write(*,*) '      is ramped up through tstep_n.'
     endif
 
     do i = 1, max_bnd_types

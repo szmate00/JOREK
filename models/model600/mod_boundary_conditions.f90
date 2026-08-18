@@ -40,7 +40,8 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        mach_one_bnd_integral, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,                            &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                                    &
-       sheath_Lambda, sheath_V_wall, sheath_u_exp_max, sheath_u_exp_min, sheath_u_relax, sheath_min_bn
+       sheath_Lambda, sheath_V_wall, sheath_u_exp_max, sheath_u_exp_min, sheath_u_relax, sheath_min_bn, &
+       sheath_u_relax_time
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -91,6 +92,7 @@ logical :: apply_sheath_u
 real*8  :: u0, sh_a_n, sh_c_sat, sh_vw, sh_rho, sh_zj, sh_Ti, sh_Te, sh_T, sh_cs, sh_jsat
 real*8  :: sh_lam, sh_dlam_dTi, sh_dlam_dTe
 real*8  :: sh_g, sh_C, sh_dr_dzj
+real*8  :: sh_relax
 real*8  :: sh_ratio, sh_ratio_raw, sh_f_min, sh_f_max, sh_x, sh_xi, sh_dr, sh_u_targ
 real*8  :: sh_R, sh_R_b, sh_R_bb
 real*8  :: sh_coef(0:n_var)     ! index 0 is a scratch slot: var_T / var_Ti / var_Te are 0 in
@@ -813,6 +815,17 @@ do i=1, n_local_elms !=== do elements
           !--------------------------------------------------------------------------------------
           if ( apply_sheath_u ) then
 
+            ! --- Effective under-relaxation of this boundary condition.
+            ! --- u at the wall is slaved algebraically to Te, with no inertia and no dissipation
+            ! --- anywhere in the Te -> u -> ExB flow -> Te loop, so that loop needs a response
+            ! --- time of its own. Given as a per-step fraction (sheath_u_relax) its meaning
+            ! --- changes every time tstep changes, which for a ramped tstep_n schedule means the
+            ! --- damping silently weakens or strengthens at every block boundary. Given as a time
+            ! --- (sheath_u_relax_time) the response is the same physical rate at any step size.
+            sh_relax = sheath_u_relax
+            if ( sheath_u_relax_time .gt. 0.d0 ) &
+              sh_relax = min( 1.d0, tstep / sheath_u_relax_time )
+
             ! --- Normalisation constants (Artola eqs. 5 and 8; c_sat = -a_n/2 identically).
             ! --- NOTE the leading minus: the electrostatic potential is Phi = -F0*u in the code's
             ! --- variables. The JOREK reference paper (Hoelzl et al 2021 eq. 26) defines u = Phi/F0
@@ -921,14 +934,14 @@ do i=1, n_local_elms !=== do elements
               else
                 call boundary_conditions_add_one_entry(                      &
                        index_node, var_u, in, index_node, k_sh, in,          &
-                       zbig * sheath_u_relax * sh_coef(k_sh), index_min, index_max, a_mat)
+                       zbig * sh_relax * sh_coef(k_sh), index_min, index_max, a_mat)
               endif
             enddo
 
             if (in .eq. 1) then
               call boundary_conditions_add_RHS(                              &
                      index_node, var_u, in, index_min, index_max, RHS_loc,   &
-                     zbig * sheath_u_relax * sh_R, a_mat%i_tor_min, a_mat%i_tor_max)
+                     zbig * sh_relax * sh_R, a_mat%i_tor_min, a_mat%i_tor_max)
             else
               call boundary_conditions_add_RHS(                              &
                      index_node, var_u, in, index_min, index_max, RHS_loc,   &
@@ -945,14 +958,14 @@ do i=1, n_local_elms !=== do elements
               else
                 call boundary_conditions_add_one_entry(                      &
                        index_node2, var_u, in, index_node2, k_sh, in,        &
-                       zbig * sheath_u_relax * sh_coef_d(k_sh), index_min, index_max, a_mat)
+                       zbig * sh_relax * sh_coef_d(k_sh), index_min, index_max, a_mat)
               endif
             enddo
 
             if (in .eq. 1) then
               call boundary_conditions_add_RHS(                              &
                      index_node2, var_u, in, index_min, index_max, RHS_loc,  &
-                     zbig * sheath_u_relax * sh_R_b, a_mat%i_tor_min, a_mat%i_tor_max)
+                     zbig * sh_relax * sh_R_b, a_mat%i_tor_min, a_mat%i_tor_max)
             else
               call boundary_conditions_add_RHS(                              &
                      index_node2, var_u, in, index_min, index_max, RHS_loc,  &
@@ -980,14 +993,14 @@ do i=1, n_local_elms !=== do elements
                 else
                   call boundary_conditions_add_one_entry(                    &
                          index_node3, var_u, in, index_node3, k_sh, in,      &
-                         zbig * sheath_u_relax * sh_coef_d(k_sh), index_min, index_max, a_mat)
+                         zbig * sh_relax * sh_coef_d(k_sh), index_min, index_max, a_mat)
                 endif
               enddo
 
               if (in .eq. 1) then
                 call boundary_conditions_add_RHS(                            &
                        index_node3, var_u, in, index_min, index_max, RHS_loc, &
-                       zbig * sheath_u_relax * sh_R_bb, a_mat%i_tor_min, a_mat%i_tor_max)
+                       zbig * sh_relax * sh_R_bb, a_mat%i_tor_min, a_mat%i_tor_max)
               else
                 call boundary_conditions_add_RHS(                            &
                        index_node3, var_u, in, index_min, index_max, RHS_loc, &

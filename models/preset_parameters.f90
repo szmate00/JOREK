@@ -97,6 +97,7 @@ subroutine preset_parameters
   sheath_u_exp_max   =  2.d0
   sheath_u_exp_min   = -3.d0
   sheath_u_relax     =  1.d0
+  sheath_u_relax_time= -1.d0  ! <= 0: use the per-step fraction sheath_u_relax instead
 
   ! --- Charge-conserving sheath BC (bcs(:)%natural%u, model600). The characteristic is evaluated
   ! --- in the forward direction (current as a function of the potential), so no clip is needed on
