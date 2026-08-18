@@ -63,7 +63,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 gamma_sheath, gamma_sheath_i, gamma_sheath_e,       &
                 sheath_Lambda, sheath_V_wall, sheath_u_relax,       &
                 sheath_u_relax_time,                                &
-                sheath_wall_diff,                                   &
+                sheath_wall_vel,                                    &
                 sheath_u_align_psi,                                 &
                 sheath_u_value_only,                                &
                 sheath_u_exp_max, sheath_u_exp_min,                 &
@@ -319,15 +319,14 @@ if (my_id .eq. 0) then
       write(*,*) '      (exp(-sheath_u_exp_min)-1) =', exp(-sheath_u_exp_min)-1.d0, ' times j_sat.'
     endif
 
-    if ( sheath_wall_diff .gt. 0.d0 ) then
-      write(*,*) 'NOTE: sheath_wall_diff > 0: psi is no longer frozen on the sheath boundary types,'
-      write(*,*) '      it diffuses through the wall as dpsi/dt = sheath_wall_diff*zj. This exists'
-      write(*,*) '      because a potential varying along the wall drives an ExB flow through it,'
-      write(*,*) '      which drags poloidal flux into a resistive layer of width eta/v_n - about'
-      write(*,*) '      10 microns at Spitzer resistivity, far below any divertor cell. Choose'
-      write(*,*) '      sheath_wall_diff >= v_n*h (v_n = R du/dl at the target, h = cell size) so'
-      write(*,*) '      that the layer is resolved; too large a value lets the equilibrium field'
-      write(*,*) '      diffuse away, so scan it.'
+    if ( sheath_wall_vel .gt. 0.d0 ) then
+      write(*,*) 'NOTE: sheath_wall_vel > 0: psi is no longer frozen on the sheath boundary types.'
+      write(*,*) '      It relaxes as dpsi/dt = -sheath_wall_vel*(dpsi/dn - its t_start value).'
+      write(*,*) '      This exists because a potential varying along the wall drives an ExB flow'
+      write(*,*) '      through it, which drags poloidal flux into a layer of width eta/v_n - some'
+      write(*,*) '      10 microns at Spitzer resistivity, far below any divertor cell. Useful'
+      write(*,*) '      values are around v_n = R du/dl at the target; too large lets the'
+      write(*,*) '      equilibrium field diffuse away, so scan it and watch psi_bnd.'
     endif
 
     if ( sheath_u_relax_time .gt. 0.d0 ) then

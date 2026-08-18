@@ -34,6 +34,7 @@ use data_structure
 use vacuum, ONLY: is_freebound
 use corr_neg, only: corr_neg_temp
 use mod_sheath_bc, only: sheath_get_lambda
+use mod_sheath_diag, only: sheath_psi0
 use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_cos_dR, dpsi_RMP_cos_dZ, &
        psi_RMP_sin, dpsi_RMP_sin_dR, dpsi_RMP_sin_dZ, t_now, RMP_growth_rate, RMP_ramp_up_time,            &
        RMP_start_time, tstep, RMP_har_cos, RMP_har_sin, T_min,                                             &
@@ -41,7 +42,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                                    &
        sheath_Lambda, sheath_V_wall, sheath_u_exp_max, sheath_u_exp_min, sheath_u_relax, sheath_min_bn, &
-       sheath_u_relax_time, sheath_wall_diff, sheath_u_align_psi, sheath_u_value_only
+       sheath_u_relax_time, sheath_wall_vel, sheath_u_align_psi, sheath_u_value_only
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -1030,29 +1031,36 @@ do i=1, n_local_elms !=== do elements
                        0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
               endif
             endif
+            endif   !=== .not. sheath_u_value_only
+
 
             !------------------------------------------------------------------------------------
             ! --- Thin resistive wall for the poloidal flux.
             !
             ! --- Once u varies along the wall there is an ExB flow through it, v_E.n = R du/dl,
-            ! --- and that flow drags poloidal flux: the induction equation contains R[u,psi].
-            ! --- Parallel flow is harmless (B.grad psi = 0), only the perpendicular flow drags.
-            ! --- Against a Dirichlet psi the dragged flux has nowhere to go, so it piles up in a
-            ! --- resistive boundary layer of width delta = eta/v_n. At Spitzer resistivity that is
-            ! --- of order 10 microns against a millimetre mesh: unresolvable, and it shows up as a
-            ! --- grid-scale current filament whose growth rate goes like v_n/h. That is the whole
-            ! --- reason this boundary condition is hard in an MHD code and easy in SOLPS, SOLEDGE
-            ! --- or GBS, which hold B fixed and so have no flux to drag and no layer to resolve.
+            ! --- and that flow drags poloidal flux, through the R[u,psi] term of the induction
+            ! --- equation. Parallel flow is harmless (B.grad psi = 0); only the perpendicular flow
+            ! --- drags. Against a Dirichlet psi the dragged flux has nowhere to go and piles up in
+            ! --- a resistive layer of width eta/v_n - of order 10 microns at Spitzer resistivity
+            ! --- against a millimetre mesh. Unresolvable, and it appears as the grid-scale current
+            ! --- filament. This is the whole reason the boundary condition is hard here and free
+            ! --- in SOLPS, SOLEDGE or GBS, which hold B fixed: no flux to drag, no layer.
             !
-            ! --- Letting the flux diffuse through the wall at a controlled rate,
-            ! ---     dpsi/dt = sheath_wall_diff * zj ,
-            ! --- sets that layer width directly (delta = sheath_wall_diff/v_n) without touching
-            ! --- eta in the plasma. It is also what a real, resistive vessel does. The row is
-            ! --- nodal and two-entry, the same shape loop_voltage already uses on these rows.
+            ! --- Let the wall pass flux at a finite speed instead of freezing it:
+            ! ---     dpsi/dt = - sheath_wall_vel * ( dpsi/dn - dpsi/dn at t_start )
+            ! --- The DEVIATION from the initial state is what drives it; using the raw gradient
+            ! --- would bleed flux even in a quiet plasma. The sign is a relaxation: one sided
+            ! --- diffusion, dpsi/dt = eta*grad^2(psi) ~ -(2*eta/h)*dpsi/dn, so an excess outward
+            ! --- gradient moves psi to reduce it. A useful magnitude is v_n itself - the wall has
+            ! --- to pass flux about as fast as the flow delivers it.
             !------------------------------------------------------------------------------------
-            if ( (sheath_wall_diff .gt. 0.d0) .and. (.not. is_freebound(in,var_psi)) ) then
+            if ( (sheath_wall_vel .gt. 0.d0) .and. (.not. is_freebound(in,var_psi)) ) then
 
-              sh_wall_rhs = tstep * sheath_wall_diff * node_list%node(inode)%values(1,1,var_zj)
+              index_node_p = node_list%node(inode)%index(iv_perp_dir)
+
+              sh_wall_rhs = - tstep * sheath_wall_vel                                            &
+                            * ( node_list%node(inode)%values(1,iv_perp_dir,var_psi)              &
+                              - sheath_psi0(iv_perp_dir,inode) )
               ! --- loop_voltage drives the same row and would otherwise be overwritten here
               if ( loop_voltage .ne. 0.d0 ) sh_wall_rhs = sh_wall_rhs                            &
                 + loop_voltage * sqrt(MU_ZERO*central_density*central_mass*ATOMIC_MASS_UNIT*1.d20) * tstep
@@ -1061,8 +1069,8 @@ do i=1, n_local_elms !=== do elements
                      index_node, var_psi, in, index_node, var_psi, in,        &
                      zbig, index_min, index_max, a_mat)
               call boundary_conditions_add_one_entry(                         &
-                     index_node, var_psi, in, index_node, var_zj , in,        &
-                     - zbig * tstep * sheath_wall_diff, index_min, index_max, a_mat)
+                     index_node, var_psi, in, index_node_p, var_psi, in,      &
+                     zbig * tstep * sheath_wall_vel, index_min, index_max, a_mat)
               if (in .eq. 1) then
                 call boundary_conditions_add_RHS(                             &
                        index_node, var_psi, in, index_min, index_max, RHS_loc,&
@@ -1073,49 +1081,7 @@ do i=1, n_local_elms !=== do elements
                        0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
               endif
 
-              ! --- same relation on the derivative along the boundary, so the flux profile stays
-              ! --- consistent with the values instead of being frozen in shape
-              call boundary_conditions_add_one_entry(                         &
-                     index_node2, var_psi, in, index_node2, var_psi, in,      &
-                     zbig, index_min, index_max, a_mat)
-              call boundary_conditions_add_one_entry(                         &
-                     index_node2, var_psi, in, index_node2, var_zj , in,      &
-                     - zbig * tstep * sheath_wall_diff, index_min, index_max, a_mat)
-              if (in .eq. 1) then
-                call boundary_conditions_add_RHS(                             &
-                       index_node2, var_psi, in, index_min, index_max, RHS_loc,&
-                       zbig * tstep * sheath_wall_diff                         &
-                       * node_list%node(inode)%values(1,iv_dir,var_zj),        &
-                       a_mat%i_tor_min, a_mat%i_tor_max)
-              else
-                call boundary_conditions_add_RHS(                             &
-                       index_node2, var_psi, in, index_min, index_max, RHS_loc,&
-                       0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
-              endif
-
-              if (n_order .ge. 5) then
-                call boundary_conditions_add_one_entry(                       &
-                       index_node3, var_psi, in, index_node3, var_psi, in,    &
-                       zbig, index_min, index_max, a_mat)
-                call boundary_conditions_add_one_entry(                       &
-                       index_node3, var_psi, in, index_node3, var_zj , in,    &
-                       - zbig * tstep * sheath_wall_diff, index_min, index_max, a_mat)
-                if (in .eq. 1) then
-                  call boundary_conditions_add_RHS(                           &
-                         index_node3, var_psi, in, index_min, index_max, RHS_loc, &
-                         zbig * tstep * sheath_wall_diff                       &
-                         * node_list%node(inode)%values(1,iv_dir+3,var_zj),    &
-                         a_mat%i_tor_min, a_mat%i_tor_max)
-                else
-                  call boundary_conditions_add_RHS(                           &
-                         index_node3, var_psi, in, index_min, index_max, RHS_loc, &
-                         0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
-                endif
-              endif
-
             endif
-
-            endif   !=== .not. sheath_u_value_only
 
             !------------------------------------------------------------------------------------
             ! --- Make the ExB flow at the wall run along flux surfaces:  [u,psi] = 0.

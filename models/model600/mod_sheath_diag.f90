@@ -23,6 +23,12 @@ module mod_sheath_diag
   private
 
   public :: sheath_diag_reset, sheath_diag_add, sheath_diag_report
+  public :: sheath_store_psi0, sheath_psi0
+
+  !> psi's degrees of freedom at t_start, per node. The wall relaxation needs the DEVIATION of
+  !! dpsi/dn from its equilibrium value; driving it with the raw value would make the flux drift
+  !! even in a quiet plasma. Indexed (dof, node).
+  real*8, allocatable, save :: sheath_psi0(:,:)
 
   real*8,  save :: sd_I_sheath(max_bnd_types) = 0.d0  !< current through the wall, sheath value [A]
   real*8,  save :: sd_I_amp(max_bnd_types)    = 0.d0  !< the same with the interior Ampere current [A]
@@ -230,5 +236,30 @@ subroutine sheath_init_potential(node_list, my_id)
     ' boundary nodes'
 
 end subroutine sheath_init_potential
+
+
+!> Record psi's degrees of freedom at the start of the run, for the resistive wall relaxation.
+!! Called once from jorek2_main after the restart is in place.
+subroutine sheath_store_psi0(node_list)
+
+  use mod_parameters
+  use data_structure
+
+  implicit none
+  type (type_node_list), intent(in) :: node_list
+
+  integer :: i, id
+
+  if ( allocated(sheath_psi0) ) deallocate(sheath_psi0)
+  allocate( sheath_psi0(n_degrees, node_list%n_nodes) )
+  sheath_psi0 = 0.d0
+
+  do i = 1, node_list%n_nodes
+    do id = 1, n_degrees
+      sheath_psi0(id,i) = node_list%node(i)%values(1,id,var_psi)
+    enddo
+  enddo
+
+end subroutine sheath_store_psi0
 
 end module mod_sheath_diag

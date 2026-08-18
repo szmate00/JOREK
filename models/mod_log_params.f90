@@ -840,7 +840,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,REAL_FMT) 'sheath_u_exp_min      ', sheath_u_exp_min
     write(*,REAL_FMT) 'sheath_u_relax        ', sheath_u_relax
     write(*,REAL_FMT) 'sheath_u_relax_time   ', sheath_u_relax_time
-    write(*,REAL_FMT) 'sheath_wall_diff      ', sheath_wall_diff
+    write(*,REAL_FMT) 'sheath_wall_vel       ', sheath_wall_vel
     write(*,LOGI_FMT) 'sheath_u_align_psi    ', sheath_u_align_psi
     write(*,LOGI_FMT) 'sheath_u_value_only   ', sheath_u_value_only
   end if
