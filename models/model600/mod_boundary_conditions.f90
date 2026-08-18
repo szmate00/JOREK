@@ -40,7 +40,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        mach_one_bnd_integral, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,                            &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                                    &
-       sheath_Lambda, sheath_V_wall, sheath_u_exp_max, sheath_u_exp_min, sheath_u_relax
+       sheath_Lambda, sheath_V_wall, sheath_u_exp_max, sheath_u_exp_min, sheath_u_relax, sheath_min_bn
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -90,6 +90,7 @@ logical :: apply_sheath_u
 ! --- Sheath j-V boundary condition for the electric potential
 real*8  :: u0, sh_a_n, sh_c_sat, sh_vw, sh_rho, sh_zj, sh_Ti, sh_Te, sh_T, sh_cs, sh_jsat
 real*8  :: sh_lam, sh_dlam_dTi, sh_dlam_dTe
+real*8  :: sh_g, sh_C, sh_dr_dzj
 real*8  :: sh_ratio, sh_ratio_raw, sh_f_min, sh_f_max, sh_x, sh_xi, sh_dr, sh_u_targ
 real*8  :: sh_R, sh_R_b, sh_R_bb
 real*8  :: sh_coef(0:n_var)     ! index 0 is a scratch slot: var_T / var_Ti / var_Te are 0 in
@@ -841,12 +842,25 @@ do i=1, n_local_elms !=== do elements
             ! --- direction*factor is Artola's g(b_n): with vpar_smoothing and
             ! --- vpar_smoothing_coef(2) <= 0, direction is forced to +1 above and the sign of the
             ! --- field projection is carried by factor alone, so both are needed here.
-            sh_jsat  = sh_c_sat * sh_rho * direction * factor * sh_cs / Btot
+            sh_g     = direction * factor
+            sh_C     = sh_c_sat * sh_rho * sh_cs / Btot
+            sh_jsat  = sh_C * sh_g
+
+            ! --- Grazing incidence. Through a point where the field goes tangent to the wall g(b_n)
+            ! --- passes through zero and changes sign, so the ratio r = zj/j_sat runs to +infinity
+            ! --- on one side and -infinity on the other. Both ends clip, and the imposed potential
+            ! --- jumps by (exp_max - exp_min)*Te between two neighbouring nodes - a + blob next to
+            ! --- a - blob, anchored at the tangency point. Physically nothing is wrong there: no
+            ! --- parallel flux reaches the wall, so the sheath carries no current and the surface
+            ! --- simply floats. Weighting the ratio by g^2/(g^2 + g_min^2) says exactly that, and
+            ! --- doing it as g/(g^2 + g_min^2) rather than as a separate factor removes the
+            ! --- division by zero as well. sheath_min_bn = 0 reproduces the unweighted behaviour.
+            sh_dr_dzj = sh_g / ( sh_C * ( sh_g**2 + sheath_min_bn**2 ) )
 
             ! --- Invert the characteristic, clipping the current ratio
             sh_f_min     = 1.d0 - exp(-sheath_u_exp_min)
             sh_f_max     = 1.d0 - exp(-sheath_u_exp_max)
-            sh_ratio_raw = sh_zj / sh_jsat
+            sh_ratio_raw = sh_zj * sh_dr_dzj
             sh_ratio     = min( max( sh_ratio_raw, sh_f_min ), sh_f_max )
 
             sh_x      = - log( 1.d0 - sh_ratio )              ! inside the clip range by construction
@@ -860,7 +874,7 @@ do i=1, n_local_elms !=== do elements
             sh_coef             = 0.d0
             sh_coef(var_u  )    =   1.d0
             sh_coef(var_rho)    =   sh_dr * sh_xi * sh_ratio / sh_rho
-            sh_coef(var_zj )    = - sh_dr * sh_xi / sh_jsat
+            sh_coef(var_zj )    = - sh_dr * sh_xi * sh_dr_dzj
             if ( with_TiTe ) then
               sh_coef(var_Ti)   =   sh_dr * sh_xi * sh_ratio / (2.d0 * sh_T)
               sh_coef(var_Te)   =   sh_dr * sh_xi * sh_ratio / (2.d0 * sh_T) &
