@@ -68,6 +68,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 sheath_u_value_only,                                &
                 sheath_u_exp_max, sheath_u_exp_min,                 &
                 sheath_Lambda_local, sheath_X_min, sheath_smooth_dX,&
+                sheath_sat_slope,                                   &
                 sheath_min_bn, sheath_ramp_time,                    &
                 sheath_stiff_max, sheath_init_u, sheath_flux_sign,  &
                 deuterium_adas, deuterium_adas_1e20,                &

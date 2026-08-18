@@ -65,6 +65,7 @@ module phys_module
   ! --- see models/model600/mod_sheath_bc.f90. Used by bcs(:)%natural%u.
   logical :: sheath_Lambda_local  !< Make Lambda a function of the local Ti/Te: Lambda = Lambda_0 - ln sqrt(gamma*(1+Ti/Te))
   real*8  :: sheath_X_min         !< Smooth lower limit of the sheath exponent X (electron saturation side); -Lambda_0 puts it at Phi = 0
+  real*8  :: sheath_sat_slope     !< Finite sheath conductance at ion saturation: f = 1 - exp(-X) + s*ln(1+exp(X)). The forward characteristic saturates EXACTLY at j_sat, so if the plasma delivers even slightly more current than the sheath can pass - which a restart equilibrium built without the sheath BC has no reason to respect - no u satisfies it and the residual settles at a small constant that drives u linearly for ever. A small slope makes the characteristic solvable for any demanded current. Physically it stands for the residual Phi dependence of the presheath; numerically it is a regularisation with a convergence knob, so report results at the smallest s that runs and check the answer is insensitive to it. 0 = exact saturation (previous behaviour)
   real*8  :: sheath_smooth_dX     !< Width of that smooth limit, in units of X
   real*8  :: sheath_min_bn        !< Floor on |g(b_n)| at grazing incidence, so the sheath does not switch off at tangency points. 0 disables
   real*8  :: sheath_ramp_time     !< The sheath surface term is ramped in linearly over this time (JOREK units), measured from t_start. 0 = no ramp

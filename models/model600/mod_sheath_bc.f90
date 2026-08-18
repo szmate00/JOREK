@@ -213,7 +213,7 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
                           zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, &
                           zj_sat, x_out)
 
-  use phys_module, only: GAMMA, sheath_min_bn
+  use phys_module, only: GAMMA, sheath_min_bn, sheath_sat_slope
 
   implicit none
 
@@ -224,7 +224,7 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
   real*8 :: a_n, c_sat, vw
   real*8 :: rho_l, Ti_l, Te_l, T_l, cs, g_eff
   real*8 :: lam, dlam_dTi, dlam_dTe
-  real*8  :: x, x_lim, dxlim_dx, expmx, f, fp
+  real*8  :: x, x_lim, dxlim_dx, expmx, f, fp, sp, dsp
   real*8  :: dx_du, dx_dTi, dx_dTe
   logical :: x_frozen
 
@@ -280,6 +280,26 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
   endif
   fp = expmx * dxlim_dx             ! d f / d X (no cancellation: expmx -> 1 as X -> 0)
   if ( x_frozen ) fp = 0.d0         ! stay consistent with the frozen residual above
+
+  ! --- Finite conductance at ion saturation. The forward characteristic saturates EXACTLY at
+  ! --- j_sat, so a plasma delivering even 3% more current than the sheath can pass - which a
+  ! --- restart equilibrium built without this boundary condition has no reason to respect - has
+  ! --- NO solution: as X -> infinity the residual settles at a small constant and drives u
+  ! --- linearly for ever. Adding s*ln(1+exp(X)) makes f unbounded above, so every demanded
+  ! --- current is reachable at a finite X, while leaving the electron branch and the floating
+  ! --- potential essentially untouched (the softplus is exponentially small for X << 0).
+  ! --- C-infinity, and applied to f and its derivative together.
+  if ( sheath_sat_slope .ne. 0.d0 ) then
+    if ( x_lim .gt. sheath_exp_max ) then
+      sp = x_lim; dsp = 1.d0
+    elseif ( x_lim .lt. -sheath_exp_max ) then
+      sp = 0.d0;  dsp = 0.d0
+    else
+      sp = log( 1.d0 + exp(x_lim) ); dsp = 1.d0 / ( 1.d0 + exp(-x_lim) )
+    endif
+    f = f + sheath_sat_slope * sp
+    if ( .not. x_frozen ) fp = fp + sheath_sat_slope * dsp * dxlim_dx
+  endif
 
   ! --- derivatives of X (Lambda contributes through Ti and Te when sheath_Lambda_local)
   dx_du  =   0.5d0 * a_n / Te_l

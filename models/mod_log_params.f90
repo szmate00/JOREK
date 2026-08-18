@@ -853,6 +853,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,LOGI_FMT) 'sheath_Lambda_local   ', sheath_Lambda_local
     write(*,REAL_FMT) 'sheath_V_wall [V]     ', sheath_V_wall
     write(*,REAL_FMT) 'sheath_X_min          ', sheath_X_min
+    write(*,REAL_FMT) 'sheath_sat_slope      ', sheath_sat_slope
     write(*,REAL_FMT) 'sheath_smooth_dX      ', sheath_smooth_dX
     write(*,REAL_FMT) 'sheath_min_bn         ', sheath_min_bn
     write(*,REAL_FMT) 'sheath_ramp_time      ', sheath_ramp_time

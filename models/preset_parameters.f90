@@ -107,6 +107,7 @@ subroutine preset_parameters
   ! --- the ion side; only the electron branch is limited, by default at Phi = 0.
   sheath_Lambda_local= .true. ! Lambda = Lambda_0 - ln sqrt(gamma*(1+Ti/Te)), consistent with c_s
   sheath_X_min       = -3.d0  ! electron saturation limit; ~ -Lambda_0, i.e. Phi >= 0
+  sheath_sat_slope   =  0.d0  ! 0 = exact saturation at j_sat (see phys_module)
   sheath_smooth_dX   =  0.5d0
   sheath_min_bn      =  0.d0  ! set e.g. to sin(1 deg) to keep the sheath alive at tangency points
   sheath_ramp_time   =  0.d0
