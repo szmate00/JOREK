@@ -840,6 +840,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,REAL_FMT) 'sheath_u_exp_min      ', sheath_u_exp_min
     write(*,REAL_FMT) 'sheath_u_relax        ', sheath_u_relax
     write(*,REAL_FMT) 'sheath_u_relax_time   ', sheath_u_relax_time
+    write(*,REAL_FMT) 'sheath_wall_diff      ', sheath_wall_diff
   end if
 
   if ( any(bcs(:)%natural%u) .or. any(bcs(:)%natural%w) .or. any(bcs(:)%natural%zj) ) then

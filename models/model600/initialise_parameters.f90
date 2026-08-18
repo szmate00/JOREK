@@ -63,6 +63,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 gamma_sheath, gamma_sheath_i, gamma_sheath_e,       &
                 sheath_Lambda, sheath_V_wall, sheath_u_relax,       &
                 sheath_u_relax_time,                                &
+                sheath_wall_diff,                                   &
                 sheath_u_exp_max, sheath_u_exp_min,                 &
                 sheath_Lambda_local, sheath_X_min, sheath_smooth_dX,&
                 sheath_min_bn, sheath_ramp_time,                    &
@@ -314,6 +315,17 @@ if (my_id .eq. 0) then
       write(*,*) '      saturation limit and it sits at Phi = 0 when it equals -Lambda, which is'
       write(*,*) '      where electron saturation physically is. Present setting caps |j| at'
       write(*,*) '      (exp(-sheath_u_exp_min)-1) =', exp(-sheath_u_exp_min)-1.d0, ' times j_sat.'
+    endif
+
+    if ( sheath_wall_diff .gt. 0.d0 ) then
+      write(*,*) 'NOTE: sheath_wall_diff > 0: psi is no longer frozen on the sheath boundary types,'
+      write(*,*) '      it diffuses through the wall as dpsi/dt = sheath_wall_diff*zj. This exists'
+      write(*,*) '      because a potential varying along the wall drives an ExB flow through it,'
+      write(*,*) '      which drags poloidal flux into a resistive layer of width eta/v_n - about'
+      write(*,*) '      10 microns at Spitzer resistivity, far below any divertor cell. Choose'
+      write(*,*) '      sheath_wall_diff >= v_n*h (v_n = R du/dl at the target, h = cell size) so'
+      write(*,*) '      that the layer is resolved; too large a value lets the equilibrium field'
+      write(*,*) '      diffuse away, so scan it.'
     endif
 
     if ( sheath_u_relax_time .gt. 0.d0 ) then

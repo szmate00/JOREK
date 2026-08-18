@@ -58,6 +58,7 @@ module phys_module
   real*8  :: sheath_u_exp_min     !< Lower clip of X. Effective electron saturation limit; -Lambda puts it at Phi = 0, where |j| = (exp(Lambda)-1)*j_sat
   real*8  :: sheath_u_relax       !< Under-relaxation: u moves this fraction of the way to the characteristic per step. Fixed point unchanged. 1 = none
   real*8  :: sheath_u_relax_time  !< Relaxation TIME of the sheath boundary condition (JOREK units). When > 0 it replaces sheath_u_relax by min(1, tstep/sheath_u_relax_time), so the damping of the Te -> u -> ExB -> Te loop is the same physical response time at every step size. <= 0 keeps the per-step fraction sheath_u_relax
+  real*8  :: sheath_wall_diff     !< Thin resistive wall: flux diffusivity of the wall (same units as eta). Replaces the psi Dirichlet on sheath boundary types by dpsi = tstep*sheath_wall_diff*zj, so that the ExB flow can drag poloidal flux through the boundary instead of piling it up against a frozen psi. Sets the width of the resistive boundary layer, delta = sheath_wall_diff/v_n; it must exceed the cell size. 0 = frozen psi, i.e. the previous behaviour
   ! --- Parameters of the charge-conserving (natural boundary condition) form of the sheath BC,
   ! --- see models/model600/mod_sheath_bc.f90. Used by bcs(:)%natural%u.
   logical :: sheath_Lambda_local  !< Make Lambda a function of the local Ti/Te: Lambda = Lambda_0 - ln sqrt(gamma*(1+Ti/Te))
