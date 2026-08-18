@@ -99,6 +99,7 @@ subroutine preset_parameters
   sheath_u_relax     =  1.d0
   sheath_u_relax_time= -1.d0  ! <= 0: use the per-step fraction sheath_u_relax instead
   sheath_wall_diff   =  0.d0  ! 0 = psi frozen at the wall (previous behaviour)
+  sheath_u_align_psi = .false.
 
   ! --- Charge-conserving sheath BC (bcs(:)%natural%u, model600). The characteristic is evaluated
   ! --- in the forward direction (current as a function of the potential), so no clip is needed on

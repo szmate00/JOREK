@@ -64,6 +64,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 sheath_Lambda, sheath_V_wall, sheath_u_relax,       &
                 sheath_u_relax_time,                                &
                 sheath_wall_diff,                                   &
+                sheath_u_align_psi,                                 &
                 sheath_u_exp_max, sheath_u_exp_min,                 &
                 sheath_Lambda_local, sheath_X_min, sheath_smooth_dX,&
                 sheath_min_bn, sheath_ramp_time,                    &

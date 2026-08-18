@@ -41,7 +41,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                                    &
        sheath_Lambda, sheath_V_wall, sheath_u_exp_max, sheath_u_exp_min, sheath_u_relax, sheath_min_bn, &
-       sheath_u_relax_time, sheath_wall_diff
+       sheath_u_relax_time, sheath_wall_diff, sheath_u_align_psi
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -94,6 +94,8 @@ real*8  :: sh_lam, sh_dlam_dTi, sh_dlam_dTe
 real*8  :: sh_g, sh_C, sh_dr_dzj
 real*8  :: sh_relax
 real*8  :: sh_wall_rhs
+real*8  :: sh_pl, sh_pn, sh_ul, sh_un, sh_nrm, sh_c, sh_s, sh_wgt
+integer :: index_node_p
 real*8  :: sh_ratio, sh_ratio_raw, sh_f_min, sh_f_max, sh_x, sh_xi, sh_dr, sh_u_targ
 real*8  :: sh_R, sh_R_b, sh_R_bb
 real*8  :: sh_coef(0:n_var)     ! index 0 is a scratch slot: var_T / var_Ti / var_Te are 0 in
@@ -1089,6 +1091,69 @@ do i=1, n_local_elms !=== do elements
                          index_node3, var_psi, in, index_min, index_max, RHS_loc, &
                          0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
                 endif
+              endif
+
+            endif
+
+            !------------------------------------------------------------------------------------
+            ! --- Make the ExB flow at the wall run along flux surfaces:  [u,psi] = 0.
+            !
+            ! --- v_E.n = R du/dl is non-zero as soon as the sheath potential varies along the
+            ! --- wall, and that is fine by itself: a flow along flux surfaces drags no poloidal
+            ! --- flux. What drags flux is grad(u) not being parallel to grad(psi), and the piece
+            ! --- that decides this - du/dn - is otherwise free, governed by the vorticity equation
+            ! --- with nothing in it that knows about psi. The dragged flux then has to be balanced
+            ! --- by a resistive current of order [u,psi]/eta, which at Spitzer resistivity forms a
+            ! --- boundary layer of width eta/v_n, some 10 microns against a millimetre mesh. That
+            ! --- is the field-aligned current filament, and it is why this boundary condition is
+            ! --- hard in an MHD code and free in SOLPS or GBS, which hold B fixed.
+            ! --- The small parallel resistivity of the SOL demands Phi ~ Phi(psi) anyway, so
+            ! --- imposing it is physics rather than a numerical patch.
+            !
+            ! --- Written on raw degrees of freedom, so the element size scalings cancel exactly
+            ! --- and no division by psi_l is needed - it vanishes where the field is tangent to
+            ! --- the wall. There the constraint is meaningless (no flux is dragged either way) and
+            ! --- the row blends smoothly back to leaving du/dn alone.
+            !------------------------------------------------------------------------------------
+            if ( sheath_u_align_psi ) then
+
+              index_node_p = node_list%node(inode)%index(iv_perp_dir)
+
+              sh_pl = node_list%node(inode)%values(1,iv_dir     ,var_psi)
+              sh_pn = node_list%node(inode)%values(1,iv_perp_dir,var_psi)
+              sh_ul = node_list%node(inode)%values(1,iv_dir     ,var_u  )
+              sh_un = node_list%node(inode)%values(1,iv_perp_dir,var_u  )
+
+              sh_nrm = sqrt( sh_pl**2 + sh_pn**2 )
+              if ( sh_nrm .gt. 0.d0 ) then
+                sh_c = sh_pl / sh_nrm
+                sh_s = - sh_pn / sh_nrm
+              else
+                sh_c = 1.d0
+                sh_s = 0.d0
+              endif
+
+              ! --- blend to du/dn = 0 where the field is tangent to the wall (sh_c -> 0), so the
+              ! --- row can never lose its diagonal
+              sh_wgt = sh_c**2 / ( sh_c**2 + 2.5d-3 )      ! 2.5e-3 = (0.05)^2
+
+              call boundary_conditions_add_one_entry(                             &
+                     index_node_p, var_u, in, index_node_p, var_u, in,            &
+                     zbig * ( sh_wgt * sh_c + (1.d0 - sh_wgt) ),                  &
+                     index_min, index_max, a_mat)
+              call boundary_conditions_add_one_entry(                             &
+                     index_node_p, var_u, in, index_node2, var_u, in,             &
+                     zbig * sh_wgt * sh_s, index_min, index_max, a_mat)
+
+              if (in .eq. 1) then
+                call boundary_conditions_add_RHS(                                 &
+                       index_node_p, var_u, in, index_min, index_max, RHS_loc,    &
+                       - zbig * sh_wgt * ( sh_c * sh_un + sh_s * sh_ul ),         &
+                       a_mat%i_tor_min, a_mat%i_tor_max)
+              else
+                call boundary_conditions_add_RHS(                                 &
+                       index_node_p, var_u, in, index_min, index_max, RHS_loc,    &
+                       0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
               endif
 
             endif
