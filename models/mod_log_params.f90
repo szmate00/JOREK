@@ -862,6 +862,10 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,REAL_FMT) 'sheath_smooth_dX      ', sheath_smooth_dX
     write(*,REAL_FMT) 'sheath_min_bn         ', sheath_min_bn
     write(*,REAL_FMT) 'sheath_ramp_time      ', sheath_ramp_time
+    write(*,LOGI_FMT) 'sheath_init_u         ', sheath_init_u
+    write(*,REAL_FMT) 'sheath_wall_vel       ', sheath_wall_vel
+    write(*,REAL_FMT) 'sheath_stiff_max      ', sheath_stiff_max
+    write(*,REAL_FMT) 'sheath_flux_sign      ', sheath_flux_sign
   end if     
 
   write(*,LOGI_FMT) 'bc_natural_open       ', bc_natural_open
