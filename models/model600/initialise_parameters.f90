@@ -452,12 +452,24 @@ if (my_id .eq. 0) then
           write(*,*) 'WARNING: bcs(', i, ')%sheath_zj without mach1; the saturation current uses'
           write(*,*) '         v_par = g(b_n)*c_s/|B|, which assumes the Mach 1 condition here.'
         endif
+        if ( bcs(i)%dirichlet%u .and. (.not. sheath_init_u) ) then
+          write(*,*) 'ERROR: bcs(', i, ')%sheath_zj with dirichlet%u = .true. but sheath_init_u ='
+          write(*,*) '       .false. u is then FROZEN at whatever the restart left it at, which is'
+          write(*,*) '       normally ~0 - and Phi = 0 is X = -Lambda, DEEP ELECTRON SATURATION.'
+          write(*,*) '       The constraint would drive the wall current hard toward'
+          write(*,*) '       (1-exp(Lambda))*j_sat, of order -19*j_sat, which is not a state you'
+          write(*,*) '       want to relax towards. Observed: I_Ampere ran 868 -> -24560 A in 13'
+          write(*,*) '       steps with max|j/jsat| reaching 200.'
+          write(*,*) '       Set sheath_init_u = .true. so u starts at the local floating'
+          write(*,*) '       potential, where the sheath carries no net current.'
+          stop
+        endif
         if ( bcs(i)%dirichlet%u ) then
           write(*,*) 'NOTE: bcs(', i, ')%sheath_zj with dirichlet%u = .true. The sheath current is'
-          write(*,*) '      then evaluated at a FROZEN potential, so there is no j-V feedback -'
-          write(*,*) '      useful as a first stability test, not as physics. Set'
-          write(*,*) '      dirichlet%u = .false. to let the potential respond, keeping a Dirichlet'
-          write(*,*) '      on u on at least one other boundary type as the gauge.'
+          write(*,*) '      evaluated at a FROZEN potential, so there is no j-V feedback - useful'
+          write(*,*) '      for relaxing the wall current toward a sheath-consistent state, not as'
+          write(*,*) '      physics. Set dirichlet%u = .false. to let the potential respond,'
+          write(*,*) '      keeping a Dirichlet on u on at least one other type as the gauge.'
         endif
         if ( .not. bc_natural_open ) then
           write(*,*) 'NOTE: bcs(', i, ')%sheath_zj without bc_natural_open. The boundary condition'
