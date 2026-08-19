@@ -462,11 +462,13 @@ if (my_id .eq. 0) then
       ! --- first ~100 steps grew a current filament on the divertor leg before the term ever
       ! --- engaged. sheath_init_u serves the purpose the ramp was meant to serve, by starting u
       ! --- at the floating potential, which is the fixed point of the characteristic at j = 0.
-      if ( sheath_ramp_time .gt. 0.d0 ) then
-        write(*,*) 'WARNING: sheath_ramp_time > 0 with bcs(', i, ')%natural%u. The surface term'
-        write(*,*) '         is the ONLY boundary condition on u here, so while the ramp is small'
-        write(*,*) '         u is unconstrained at the wall and drags flux freely. Use'
-        write(*,*) '         sheath_ramp_time = 0 and sheath_init_u = .true. instead.'
+      if ( (sheath_ramp_time .gt. 0.d0) .and. (sheath_wall_pen .le. 0.d0) ) then
+        write(*,*) 'ERROR: sheath_ramp_time > 0 needs sheath_wall_pen > 0. The surface term is the'
+        write(*,*) '       ONLY condition on u here, so ramping it from zero without the fallback'
+        write(*,*) '       leaves u unconstrained at the wall and it drags flux freely. With the'
+        write(*,*) '       fallback the two are complements - floating-potential relaxation at'
+        write(*,*) '       ramp = 0, sheath at ramp = 1 - so u is always well posed.'
+        stop
       endif
       if ( .not. sheath_init_u ) then
         write(*,*) 'WARNING: bcs(', i, ')%natural%u without sheath_init_u. u then starts ~Lambda*Te'

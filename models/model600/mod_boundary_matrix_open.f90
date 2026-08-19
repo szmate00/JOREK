@@ -72,6 +72,7 @@ logical    :: apply_natural_bc(0:n_var)
 ! --- Charge-conserving sheath boundary condition and the two supporting surface terms
 real*8     :: u0, u0_s, u0_t, u0_x, u0_y, zj0, sh_Bn, g_bn, sheath_ramp, sh_wgt_bn
 real*8     :: sh_pen_c, sh_u_float, sh_an, sh_csat, sh_vw, sh_lam, sh_dlTi, sh_dlTe
+real*8     :: sh_ramp_t, sh_act
 real*8     :: sh_duf_dTi, sh_duf_dTe
 real*8     :: gradu0dotn, gradps0dotn, gradudotn, gradpsidotn
 real*8     :: zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, zj_sat_g, x_sheath
@@ -382,9 +383,12 @@ do ms=1, n_gauss
                                                                   ! computed above for the fluxes
     g_bn  = normal_sign * factor                                  ! Chodura-Riemann g(b_n), signed
 
-    sheath_ramp = 1.d0
+    ! --- Continuation factor, kept separately from the rest of sheath_ramp because the
+    ! --- tangential-wall fallback below has to be its complement.
+    sh_ramp_t = 1.d0
     if ( sheath_ramp_time .gt. 0.d0 ) &
-      sheath_ramp = max(0.d0, min(1.d0, (t_now - t_start) / sheath_ramp_time))
+      sh_ramp_t = max(0.d0, min(1.d0, (t_now - t_start) / sheath_ramp_time))
+    sheath_ramp = sh_ramp_t
 
     zj_sh = 0.d0; dzj_du = 0.d0; dzj_drho = 0.d0; dzj_dTi = 0.d0; dzj_dTe = 0.d0
     if ( apply_natural_bc(var_u) ) then
@@ -427,15 +431,15 @@ do ms=1, n_gauss
       sh_wgt_bn = 1.d0
       if ( sheath_min_bn .gt. 0.d0 ) &
         sh_wgt_bn = bdotn**2 / ( bdotn**2 + sheath_min_bn**2 )
+      sh_act = sh_wgt_bn * sh_ramp_t          ! how much of the sheath is actually switched on here
       sheath_ramp = sheath_ramp * sheath_alpha * sheath_flux_sign * sh_wgt_bn  ! every Gauss point
 
-      ! --- wall current / potential diagnostic; dS is the toroidally integrated surface element
       ! --- Tangential-wall fallback. The gate above removes the sheath term where the field
       ! --- grazes the wall - but with dirichlet%u = .false. that leaves u with NO boundary
       ! --- condition there at all, and du/dl is v_E.n, the flux-dragging velocity. With
       ! --- grid_to_wall the great majority of a sheath-enabled boundary IS near-tangential wall,
       ! --- so this is most of the boundary, not an edge case (measured: 98.7% gated off).
-      ! --- Relax u toward the local FLOATING potential instead, with weight (1 - gate) and the
+      ! --- Relax u toward the local FLOATING potential instead, with weight (1 - sh_act) and the
       ! --- stiffness the sheath itself would have at |b_n| = sheath_wall_pen. That is continuous
       ! --- with the sheath solution - a surface carrying no net current floats - so there is no
       ! --- step between the two regimes, and it is the physically right statement for a
@@ -449,12 +453,20 @@ do ms=1, n_gauss
         ! --- dzj_du*B.n with g(b_n)*b_n replaced by the reference sheath_wall_pen^2 and f' = 1
         sh_pen_c   = sh_csat * r0_corr * sqrt(GAMMA*(Ti0_corr+Te0_corr))                     &
                    * 0.5d0 * sh_an / Te0_corr * sheath_wall_pen**2
-        sh_pen_c   = sh_pen_c * ( 1.d0 - sh_wgt_bn )
+        ! --- Complement of the ACTIVE sheath strength, not just of the gate. u then has a
+        ! --- boundary condition at every point and at every stage of the continuation: pure
+        ! --- floating-potential relaxation at ramp = 0, the sheath where it is switched on at
+        ! --- ramp = 1, a smooth blend in between. The two agree when the sheath carries no net
+        ! --- current, so handing over between them introduces no step. This is what makes
+        ! --- sheath_ramp_time usable at all: ramping the sheath term alone would remove the only
+        ! --- condition on u (dirichlet%u is .false. here) and let it drift freely.
+        sh_pen_c   = sh_pen_c * ( 1.d0 - sh_act )
         sh_u_float = 2.d0 * ( Te0_corr * sh_lam + sh_vw ) / sh_an
         sh_duf_dTi = 2.d0 *   Te0_corr * sh_dlTi / sh_an
         sh_duf_dTe = 2.d0 * ( sh_lam + Te0_corr * sh_dlTe ) / sh_an
       endif
 
+      ! --- wall current / potential diagnostic; dS is the toroidally integrated surface element
       call sheath_diag_add(bnd_type1, zj_sh, zj0, zj_sat_g, x_sheath, u0, Te0_corr, sh_Bn, &
                            ws * dl * BigR * TWOPI / dble(n_plane), sh_wgt_bn)
     endif
