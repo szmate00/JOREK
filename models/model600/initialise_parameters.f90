@@ -459,6 +459,13 @@ if (my_id .eq. 0) then
           write(*,*) '      dirichlet%u = .false. to let the potential respond, keeping a Dirichlet'
           write(*,*) '      on u on at least one other boundary type as the gauge.'
         endif
+        if ( .not. bc_natural_open ) then
+          write(*,*) 'NOTE: bcs(', i, ')%sheath_zj without bc_natural_open. The boundary condition'
+          write(*,*) '      itself is unaffected - it is a nodal row in mod_boundary_conditions -'
+          write(*,*) '      but the SHEATH: wall-current diagnostic is evaluated in'
+          write(*,*) '      boundary_matrix_open, which is only called in that branch, so it will'
+          write(*,*) '      not be printed. Set bc_natural_open = .true. to get it.'
+        endif
         if ( sheath_min_bn .le. 0.d0 ) then
           write(*,*) 'WARNING: bcs(', i, ')%sheath_zj with sheath_min_bn = 0. Where the field grazes'
           write(*,*) '         the wall the saturation current vanishes and the constraint would'

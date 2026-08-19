@@ -73,6 +73,12 @@ logical    :: apply_natural_bc(0:n_var)
 real*8     :: u0, u0_s, u0_t, u0_x, u0_y, zj0, sh_Bn, g_bn, sheath_ramp, sh_wgt_bn
 real*8     :: sh_pen_c, sh_u_float, sh_an, sh_csat, sh_vw, sh_lam, sh_dlTi, sh_dlTe
 real*8     :: sh_ramp_t, sh_act
+! --- diagnostic-only evaluation for the nodal bcs%sheath_zj route. That route writes its rows in
+! --- mod_boundary_conditions, which has no surface quadrature, so the wall-current diagnostic is
+! --- evaluated here instead where dS is available and correctly weighted. Contributes nothing to
+! --- rhs_ij or amat.
+logical    :: diag_sheath_zj
+real*8     :: dzj_sh, dzj_sat, dzj_x, dzj_d1, dzj_d2, dzj_d3, dzj_d4, dzj_wgt
 real*8     :: sh_duf_dTi, sh_duf_dTe
 real*8     :: gradu0dotn, gradps0dotn, gradudotn, gradpsidotn
 real*8     :: zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, zj_sat_g, x_sheath
@@ -147,11 +153,14 @@ Z_cnt = sum(nodes(1:4)%x(1,1,2)) / 4.d0
 normal_direction = (/R_mid - R_cnt, Z_mid - Z_cnt /) / norm2((/R_mid - R_cnt, Z_mid - Z_cnt /))
 
 apply_natural_bc(:) = .false.
+diag_sheath_zj      = .false.
 
 bnd_type1 = nodes(1)%boundary 
 bnd_type2 = nodes(2)%boundary 
 
 ! --- If one of the nodes has a boundary type where natural BCs are applied, apply boundary integral for the full bnd element
+diag_sheath_zj = bcs(bnd_type1)%sheath_zj .or. bcs(bnd_type2)%sheath_zj
+
 do i_var=1, n_var
   if ( (i_var==var_rho ) .and. (bcs(bnd_type1)%natural%rho  .or. bcs(bnd_type2)%natural%rho ))  apply_natural_bc(i_var)=.true.
   if ( (i_var==var_T   ) .and. (bcs(bnd_type1)%natural%T    .or. bcs(bnd_type2)%natural%T   ))  apply_natural_bc(i_var)=.true.
@@ -469,6 +478,21 @@ do ms=1, n_gauss
       ! --- wall current / potential diagnostic; dS is the toroidally integrated surface element
       call sheath_diag_add(bnd_type1, zj_sh, zj0, zj_sat_g, x_sheath, u0, Te0_corr, sh_Bn, &
                            ws * dl * BigR * TWOPI / dble(n_plane), sh_wgt_bn)
+    endif
+
+    ! --- Same diagnostic for the nodal sheath_zj route. Evaluated at the Gauss point purely to be
+    ! --- reported: the constraint itself is imposed nodally in mod_boundary_conditions, and the
+    ! --- state used here (u0, r0_corr, Ti0_corr, Te0_corr, g_bn, Btot) is the same, so the numbers
+    ! --- describe the same characteristic. The obliqueness weight matches the one the nodal block
+    ! --- applies, so max|j/jsat| is reported only where the constraint is actually active.
+    if ( diag_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
+      call sheath_current(u0, r0_corr, Ti0_corr, Te0_corr, g_bn, normal_sign, Btot, &
+                          dzj_sh, dzj_d1, dzj_d2, dzj_d3, dzj_d4, dzj_sat, dzj_x)
+      dzj_wgt = 1.d0
+      if ( sheath_min_bn .gt. 0.d0 ) &
+        dzj_wgt = bdotn**2 / ( bdotn**2 + sheath_min_bn**2 )
+      call sheath_diag_add(bnd_type1, dzj_sh, zj0, dzj_sat, dzj_x, u0, Te0_corr, sh_Bn, &
+                           ws * dl * BigR * TWOPI / dble(n_plane), dzj_wgt)
     endif
 
     do i=1,2                ! loop over nodes

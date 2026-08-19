@@ -469,7 +469,7 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   ! --- reset the sheath wall-current diagnostic; it is accumulated in mod_boundary_matrix_open
   ! --- and reported after the element loop below (only for the real matrix, not the harmonic
   ! --- preconditioner matrix, which would otherwise double count)
-  if ( (.not. harmonic_matrix) .and. any(bcs(:)%natural%u) ) call sheath_diag_reset()
+  if ( (.not. harmonic_matrix) .and. ( any(bcs(:)%natural%u) .or. any(bcs(:)%sheath_zj) ) ) call sheath_diag_reset()
 #endif
 
   ! --- Declare shared and private variables for omp
@@ -759,7 +759,7 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   ! --- reduce and print the sheath wall current / potential diagnostic
   ! --- the guard is evaluated identically on every rank (bcs is broadcast), so the
   ! --- collective inside the report is either entered by all ranks or by none
-  if ( (.not. harmonic_matrix) .and. any(bcs(:)%natural%u) ) call sheath_diag_report(my_id)
+  if ( (.not. harmonic_matrix) .and. ( any(bcs(:)%natural%u) .or. any(bcs(:)%sheath_zj) ) ) call sheath_diag_report(my_id)
 #endif
  
   ! --- Memory tracking
