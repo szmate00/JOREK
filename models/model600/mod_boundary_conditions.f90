@@ -43,7 +43,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        bcs, loop_voltage, central_density, central_mass,                                                    &
        sheath_Lambda, sheath_V_wall, sheath_u_exp_max, sheath_u_exp_min, sheath_u_relax, sheath_min_bn, &
        sheath_u_relax_time, sheath_wall_vel, sheath_u_align_psi, sheath_u_value_only, &
-       sheath_zj_relax, sheath_ramp_time, t_start
+       sheath_zj_relax, sheath_ramp_time, t_start, sheath_zj_ratio_max
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -102,7 +102,7 @@ real*8  :: sh_pl, sh_pn, sh_ul, sh_un, sh_nrm, sh_ca, sh_sa, sh_wgt
 ! --- nodal sheath current constraint on the zj row (bcs%sheath_zj)
 logical :: apply_sheath_zj
 real*8  :: szj_sh, szj_du, szj_drho, szj_dTi, szj_dTe, szj_sat, szj_x
-real*8  :: szj_rel, szj_g, szj_coef(n_var), szj_R, szj_Rb
+real*8  :: szj_rel, szj_g, szj_coef(n_var), szj_R, szj_Rb, szj_ratio
 integer :: k_szj
 real*8  :: sh_wgt_bn
 integer :: index_node_p
@@ -1169,6 +1169,21 @@ do i=1, n_local_elms !=== do elements
             ! --- is smooth, never negative, and hands those nodes back to the frozen value.
             if ( sheath_min_bn .gt. 0.d0 ) &
               szj_rel = szj_rel * bn**2 / ( bn**2 + sheath_min_bn**2 )
+
+            ! --- Validity gate. Where the plasma demands |zj/zj_sat| far above 1 the sheath
+            ! --- cannot pass that current at ANY potential: on the ion side f -> 1, so the
+            ! --- residual settles at a constant and u is driven without bound. Worse, if j_sat
+            ! --- collapses locally (a cooling or rarefying spot on the target) the demand runs
+            ! --- away and u chases it - measured 5 -> 265 while u reached 500*Te. Outside that
+            ! --- range the characteristic carries no useful information, so fade the constraint
+            ! --- out and let the node keep its frozen zj, which is the baseline and is stable.
+            ! --- The weight is smooth, monotone, and 1 to within 6% for ratio < 0.5*max.
+            if ( sheath_zj_ratio_max .gt. 0.d0 ) then
+              szj_ratio = 0.d0
+              if ( abs(szj_sat) .gt. 1.d-30 ) &
+                szj_ratio = abs( node_list%node(inode)%values(1,1,var_zj) / szj_sat )
+              szj_rel = szj_rel / ( 1.d0 + (szj_ratio/sheath_zj_ratio_max)**4 )
+            endif
 
             ! --- Row:  d(zj) - sum_k (d zj_sh / d x_k) d x_k = zj_sh - zj0
             szj_coef            = 0.d0
