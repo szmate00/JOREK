@@ -1159,12 +1159,16 @@ do i=1, n_local_elms !=== do elements
             if ( sheath_ramp_time .gt. 0.d0 ) &
               szj_rel = szj_rel * max(0.d0, min(1.d0, (t_now - t_start) / sheath_ramp_time))
 
-            ! --- Obliqueness. Where the field grazes the wall no parallel flux reaches it, so
-            ! --- zj_sat -> 0 and the characteristic would demand zj -> 0 - which is wrong, since
-            ! --- zj = Delta*psi does not vanish there. Weighting the strength by g^2/(g^2+g_min^2)
-            ! --- hands those nodes back to the frozen value smoothly.
+            ! --- Obliqueness. Gate on bn = B.n/|B| itself, NOT on szj_g: the Chodura factor is
+            ! --- 1.0 everywhere except on the few edges that straddle a sign change in b_n (see
+            ! --- the vpar_smoothing branch above), so szj_g = direction*factor is +-1 over almost
+            ! --- the whole boundary and a gate built from it would be identically 1.
+            ! --- Two things need suppressing where the field grazes the wall: the sheath carries
+            ! --- no current there, and direction = sign(b_n) flips discontinuously through the
+            ! --- tangency point, which would flip the imposed zj with it. bn^2/(bn^2+min_bn^2)
+            ! --- is smooth, never negative, and hands those nodes back to the frozen value.
             if ( sheath_min_bn .gt. 0.d0 ) &
-              szj_rel = szj_rel * szj_g**2 / ( szj_g**2 + sheath_min_bn**2 )
+              szj_rel = szj_rel * bn**2 / ( bn**2 + sheath_min_bn**2 )
 
             ! --- Row:  d(zj) - sum_k (d zj_sh / d x_k) d x_k = zj_sh - zj0
             szj_coef            = 0.d0

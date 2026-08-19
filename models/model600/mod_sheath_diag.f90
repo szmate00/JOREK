@@ -233,7 +233,9 @@ subroutine sheath_init_potential(node_list, my_id)
 
     ib = node_list%node(i)%boundary
     if ( ib .lt. 1 .or. ib .gt. max_bnd_types ) cycle
-    if ( .not. bcs(ib)%natural%u ) cycle
+    ! --- both sheath routes want u to start at its own fixed point rather than at 0, which is
+    ! --- deep electron saturation (X = -Lambda) and demands ~19*j_sat of electron current
+    if ( .not. (bcs(ib)%natural%u .or. bcs(ib)%sheath_zj) ) cycle
 
     if ( with_TiTe ) then
       Ti0 = node_list%node(i)%values(1,1,var_Ti)
