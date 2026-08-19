@@ -47,7 +47,10 @@ use mod_neutral_density, only: get_neutral_density
 use mod_impurity,        only: init_imp_adas
 
 use phys_module, only: index_now
-use phys_module, only: tstep,tstep_n,restart_particles, restart, t_start, nout
+use phys_module, only: tstep,tstep_n,restart_particles, restart, t_start, nout, sheath_init_u
+#if JOREK_MODEL == 600
+use mod_sheath_diag, only : sheath_init_potential
+#endif
 use phys_module, only: CENTRAL_MASS, CENTRAL_DENSITY, xcase, xpoint
 use phys_module, only: n_part_groups, n_aux_var, n_valves_max
 use phys_module, only: nstep_particles, nsubstep_particles, tstep_particles, nout_particles
@@ -123,6 +126,14 @@ if (sim%my_id .eq. 0) call boundary_from_grid(sim%fields%node_list, sim%fields%e
 call broadcast_boundary(sim%my_id, bnd_elm_list, bnd_node_list)
 call update_equil_state(sim%my_id, sim%fields%node_list, sim%fields%element_list, bnd_elm_list, xpoint, xcase )
 call broadcast_equil_state(sim%my_id)
+
+#if JOREK_MODEL == 600
+! --- Put the sheath boundary condition at (or near) its own fixed point before the first step,
+! --- instead of starting from u = 0, which is X = -Lambda, i.e. deep electron saturation.
+! --- The same call exists in jorek2_main; it has to be here too, because this is the program
+! --- that is actually run for kinetic cases and the two do not share a startup path.
+if ( sheath_init_u ) call sheath_init_potential(sim%fields%node_list, sim%my_id)
+#endif
 
 ! setting up the particles
 if (restart_particles) then
