@@ -256,6 +256,28 @@ if (my_id .eq. 0) then
     freeboundary= .false.
   end if
 
+  ! --- Surface terms of the definition equations w = Delta_pol u and zj = Delta*psi. A surface
+  ! --- integral only reaches rows whose test function is non-zero on the boundary edge, i.e. the
+  ! --- value and tangential-derivative DOFs - exactly the rows a Dirichlet on the same variable
+  ! --- overwrites. So with the Dirichlet still on, the term would impose nothing at all.
+  do i = 1, max_bnd_types
+    if ( (bcs(i)%natural%w .or. bcs(i)%natural%zj) .and. (.not. bc_natural_open) ) then
+      write(*,*) 'ERROR: bcs(', i, ')%natural%w / %natural%zj need bc_natural_open = .true.;'
+      write(*,*) '       the boundary integrals are assembled in that branch of construct_matrix.'
+      stop
+    endif
+    if ( bcs(i)%natural%zj .and. bcs(i)%dirichlet%zj ) then
+      write(*,*) 'ERROR: bcs(', i, ')%natural%zj needs dirichlet%zj = .false. With the Dirichlet on,'
+      write(*,*) '       the surface term only reaches rows the Dirichlet overwrites, so it imposes'
+      write(*,*) '       nothing and zj at the wall stays frozen at its initial value.'
+      stop
+    endif
+    if ( bcs(i)%natural%w .and. bcs(i)%dirichlet%w ) then
+      write(*,*) 'ERROR: bcs(', i, ')%natural%w needs dirichlet%w = .false.'
+      stop
+    endif
+  enddo
+
   ! --- Calculate normalisation factor for MGI source (related to its toroidal shape)
   ns_tor_norm = ns_deltaphi * PI**0.5 * ERF(PI/ns_deltaphi)
 

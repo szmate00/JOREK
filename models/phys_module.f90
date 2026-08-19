@@ -191,6 +191,8 @@ module phys_module
     logical :: rhon 
     logical :: rho_imp 
     logical :: nre  
+    logical :: w    !< Surface term of the vorticity definition w = Delta_pol u (model600). Needs dirichlet%w = .false.
+    logical :: zj   !< Surface term of the current definition zj = Delta*psi (model600). Restores the boundary flux that integrating the definition by parts produces and the volume assembly then drops, so zj = Delta*psi holds correctly up to the wall. The integrand (grad(psi).n)/R is the poloidal field TANGENTIAL to the boundary, so with v -> 1 this is Ampere's law closed at the wall. Needs dirichlet%zj = .false., which lets the wall current respond to the plasma instead of staying frozen at its initial value
   end type type_natural_bc
 
   type type_bcs                           
