@@ -96,6 +96,13 @@ subroutine preset_parameters
   Vpar_smoothing_coef   = (/0.01d0, 0.d0, 0.d0 /) !(/ 0.01d0, 0.016d0, 0.00575446347d0/)
   min_sheath_angle      = 1.d0   ! 1 degree (not in radians)
 
+  ! --- Floating-potential BC for u (bcs(:)%floating_u, model600); all off by default
+  floating_Lambda       =  3.d0
+  floating_Lambda_local = .true.
+  floating_V_wall       =  0.d0
+  floating_u_relax      =  1.d0
+  floating_ramp_time    =  0.d0
+
   amix                 = 0.d0
   amix_freeb           = 0.85d0
   equil_accuracy       = 1.d-6
@@ -437,7 +444,8 @@ subroutine preset_parameters
   bcs( 19)%dirichlet%rho_imp  = .false.
 
   ! --- Mach 1
-  bcs(:)%mach1   = .false.
+  bcs(:)%mach1      = .false.
+  bcs(:)%floating_u = .false.
 
   bcs(  1)%mach1 = .true.
   bcs(3:5)%mach1 = .true.

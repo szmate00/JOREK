@@ -208,6 +208,8 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 fluid_configs, init_particles_only,                 &
                 find_RZ_nearby_iter, find_RZ_nearby_tol,            &
                 min_sheath_angle, bcs, part_kill_ratio,             &
+                floating_Lambda, floating_Lambda_local,             &
+                floating_V_wall, floating_u_relax, floating_ramp_time, &
                 use_sc, add_sources_in_sc, visco_sc_num,            &
                 D_perp_sc_num, D_par_sc_num, ZK_perp_sc_num,        &
                 ZK_par_sc_num, ZK_i_perp_sc_num, ZK_i_par_sc_num,   &
@@ -255,6 +257,23 @@ if (my_id .eq. 0) then
     write(*,*) 'WARNING: The parameter freeboundary is automatically changed to .false. since n_tor==1 and freeboundary_equil is .false.'
     freeboundary= .false.
   end if
+
+  ! --- Floating-potential boundary condition on u. The rows it writes REPLACE the Dirichlet rows
+  ! --- on u (value and tangential derivative), so the Dirichlet flag stays on as the marker for
+  ! --- which rows are taken over - the same convention the Mach 1 condition uses for vpar.
+  do i = 1, max_bnd_types
+    if ( .not. bcs(i)%floating_u ) cycle
+    if ( .not. bcs(i)%dirichlet%u ) then
+      write(*,*) 'ERROR: bcs(', i, ')%floating_u needs dirichlet%u = .true. The floating-potential'
+      write(*,*) '       rows replace the Dirichlet rows on u; the flag marks which rows are taken'
+      write(*,*) '       over. Without it nothing constrains u on this boundary type.'
+      stop
+    endif
+  enddo
+  if ( any(bcs(:)%floating_u) .and. (floating_u_relax .le. 0.d0) ) then
+    write(*,*) 'NOTE: floating_u_relax <= 0, so bcs(:)%floating_u reproduces the plain Dirichlet'
+    write(*,*) '      u = 0 exactly. That is the baseline, not the floating potential.'
+  endif
 
   ! --- Calculate normalisation factor for MGI source (related to its toroidal shape)
   ns_tor_norm = ns_deltaphi * PI**0.5 * ERF(PI/ns_deltaphi)

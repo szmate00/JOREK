@@ -832,6 +832,15 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   end if
   write(*,REAL_FMT) 'min_sheath_angle      ', min_sheath_angle     
 
+  if ( any(bcs(:)%floating_u) ) then
+    write(*,'(A,30(1x,i0))') ' floating_u bnd types  :', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%floating_u )
+    write(*,REAL_FMT) 'floating_Lambda       ', floating_Lambda
+    write(*,LOGI_FMT) 'floating_Lambda_local ', floating_Lambda_local
+    write(*,REAL_FMT) 'floating_V_wall [V]   ', floating_V_wall
+    write(*,REAL_FMT) 'floating_u_relax      ', floating_u_relax
+    write(*,REAL_FMT) 'floating_ramp_time    ', floating_ramp_time
+  end if
+
   write(*,LOGI_FMT) 'bc_natural_open       ', bc_natural_open
   write(*,LOGI_FMT) 'produce_live_data     ', produce_live_data
   write(*,LOGI_FMT) 'export_for_nemec      ', export_for_nemec

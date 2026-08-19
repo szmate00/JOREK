@@ -61,6 +61,12 @@ module phys_module
   logical :: mach_one_bnd_integral!< use a boundary integral (boundary_matrix_open) to implement Mach=one boundary condition
   logical :: vpar_smoothing       !< apply a smoothing function to smooth jumps in Vpar at B.n=0
   real*8  :: vpar_smoothing_coef(3) !< coefficients for the smoothing profile of the parallel velocity
+  ! --- Floating-potential boundary condition for the electric potential (bcs(:)%floating_u)
+  real*8  :: floating_Lambda       !< Sheath factor Lambda_0 in Phi_float = Lambda*Te/e. Lambda_0 = ln(sqrt(m_i/(2*pi*m_e))), about 3 for deuterium. Set <= 0 to compute it from central_mass
+  logical :: floating_Lambda_local !< Include the local Ti/Te correction, Lambda = Lambda_0 - ln sqrt(gamma*(1+Ti/Te)), which is consistent with the sound speed used by the Mach 1 condition. At Ti = Te this is -0.6, i.e. Lambda = 2.4 rather than 3.0 - about 12 V at Te = 20 eV, so it is not cosmetic
+  real*8  :: floating_V_wall       !< Wall potential in volts. Phi is referenced to the wall, so this offsets the imposed potential. 0 = grounded wall
+  real*8  :: floating_u_relax      !< Strength of the constraint, 0..1. The diagonal of the row is never relaxed, so 0 reproduces the plain Dirichlet on u EXACTLY (the baseline) and 1 imposes the floating potential fully. Combined with floating_ramp_time this gives a continuation that is well posed at every stage
+  real*8  :: floating_ramp_time    !< Ramp the constraint in linearly over this time (JOREK units) from t_start. 0 = full strength immediately. Useful because the restart normally has u = 0 at the wall, which is Lambda*Te/e away from the target
   real*8  :: min_sheath_angle     !< For sheath boundary conditions: Minimum incident angle for heat and particle fluxes (in degrees)
   integer :: mode(n_tor)          !< Toroidal mode number corresponding to the JOREK modes, e.g., for n_period=8 and n_tor=3, mode(:)=0,8,8
   integer :: mode_coord(n_coord_tor)  !< Toroidal mode number corresponding to the JOREK RZ grid modes
@@ -197,6 +203,7 @@ module phys_module
     type (type_dirichlet_bc) :: dirichlet
     type (type_natural_bc)   :: natural
     logical                  :: mach1 
+    logical                  :: floating_u !< Hold the electric potential at the local FLOATING potential on this boundary type (model600): Phi = Lambda*Te/e, i.e. the potential a surface takes up when it draws no net current. Replaces the Dirichlet on u, which pins Phi = 0 and therefore suppresses the SOL electric field entirely. Because Te varies along the target, so does Phi, giving E ~ Lambda*grad(Te)/e and the associated ExB drift - the leading-order driver of the in-out density asymmetry. Needs dirichlet%u = .true. as the marker for the rows it takes over
   end type type_bcs
 
   type (type_bcs), dimension(max_bnd_types) :: bcs   

@@ -28,7 +28,7 @@ subroutine boundary_conditions( my_id, node_list, element_list, bnd_node_list, l
                                 xcase2, R_axis, Z_axis, psi_axis, psi_bnd,                &
                                 R_xpoint, Z_xpoint, psi_xpoint, a_mat)
 
-use constants, only : PI, MU_ZERO, ATOMIC_MASS_UNIT
+use constants, only : PI, MU_ZERO, ATOMIC_MASS_UNIT, EL_CHG, MASS_ELECTRON
 use mod_assembly, only : boundary_conditions_add_one_entry, boundary_conditions_add_RHS
 use data_structure
 use vacuum, ONLY: is_freebound
@@ -37,7 +37,9 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        RMP_start_time, tstep, RMP_har_cos, RMP_har_sin, T_min,                                             &
        mach_one_bnd_integral, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,                            &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
-       bcs, loop_voltage, central_density, central_mass 
+       bcs, loop_voltage, central_density, central_mass,                                        &
+       floating_Lambda, floating_Lambda_local, floating_V_wall, floating_u_relax,              &
+       floating_ramp_time, t_start
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -58,6 +60,12 @@ integer,                            intent(in)    :: index_min
 integer,                            intent(in)    :: index_max
 logical,                            intent(in)    :: xpoint2
 integer,                            intent(in)    :: xcase2
+! --- floating-potential boundary condition on u (bcs%floating_u)
+logical :: apply_floating_u
+real*8  :: flt_Ti, flt_Te, flt_T, flt_lam, flt_dlam_dTi, flt_dlam_dTe
+real*8  :: flt_a_n, flt_vw, flt_u, flt_du_dTi, flt_du_dTe, flt_rel
+real*8  :: flt_coef(n_var), flt_R, flt_Rb, flt_lam0
+integer :: k_flt
 real*8,                             intent(in)    :: R_axis
 real*8,                             intent(in)    :: Z_axis
 real*8,                             intent(in)    :: psi_axis
@@ -306,6 +314,9 @@ do i=1, n_local_elms !=== do elements
           !---------------------------------------------------------------------------------------------------                      
 
           
+          !------------ Decide when to hold u at the floating potential --------------------------------------
+          apply_floating_u = bcs(bnd_type)%floating_u
+
           !------------ Decide when to apply vpar=cs ---------------------------------------------------------                      
           apply_cs = .false.          
           if ( (.not. mach_one_bnd_integral) .and. bcs(bnd_type)%mach1 .and. with_vpar) then
@@ -330,6 +341,7 @@ do i=1, n_local_elms !=== do elements
             ! --- If special conditions apply (e.g. freeboundary, mach1), do not apply Dirichlet even if specified in the namelist
             if ( (k==var_psi  ) .and. (.not. apply_psi_BC    ) )       cycle
             if ( (k==var_zj   ) .and. (.not. apply_current_BC) )       cycle
+            if ( (k==var_u    ) .and.  apply_floating_u             )  cycle  ! u is set to Phi_float below
             if ( (k==var_vpar ) .and.  apply_cs .and. (bnd_type/=3)  ) cycle  ! vpar=cs is a special case (this is done below)
                                                                               ! however bnd_type=3 needs both BCs for different directions
 
@@ -366,6 +378,147 @@ do i=1, n_local_elms !=== do elements
           endif
 
         enddo !=== variables
+
+        !--------------------------------------------------------------------------------------------
+        ! --- FLOATING-POTENTIAL BOUNDARY CONDITION ON u  (bcs%floating_u)
+        !
+        ! --- Hold the plasma potential at the wall at the value a surface takes up when it draws no
+        ! --- net current - the floating potential:
+        ! ---     Phi_float = Lambda*Te/e + V_wall ,   Lambda = Lambda_0 - ln sqrt(gamma*(1+Ti/Te))
+        ! --- The standard Dirichlet pins u = 0, i.e. Phi = 0, which is not a neutral choice: it is
+        ! --- the electron-saturation point, and it suppresses the SOL electric field entirely.
+        !
+        ! --- Because Te varies along the target, so does Phi, giving E ~ Lambda*grad(Te)/e along the
+        ! --- wall and the associated ExB drift. That drift - notably through the private flux region
+        ! --- - is the leading-order driver of the in-out density asymmetry, so this alone is enough
+        ! --- to let a SOL potential structure develop. What it does NOT capture is the deviation of
+        ! --- Phi from floating that a net current would produce (thermoelectric currents); that
+        ! --- needs the full j-V characteristic and a free potential.
+        !
+        ! --- NOTE the sign convention: the electrostatic potential is Phi = -F0*u in the code's
+        ! --- variables. model600 implements v_pol = +R grad(u) x e_phi, whereas the JOREK reference
+        ! --- paper (Hoelzl et al 2021 eq. 26) defines u = Phi/F0 with v_pol = -R grad(u) x e_phi, so
+        ! --- the code's u is minus the paper's. That is where the minus in a_n comes from, and every
+        ! --- coefficient below follows from it.
+        !
+        ! --- The row is the Dirichlet it replaces, with a state-dependent target instead of zero:
+        ! ---     du - (dPhi_float/dTi) dTi - (dPhi_float/dTe) dTe = u_float - u0
+        ! --- The diagonal is never relaxed, so floating_u_relax -> 0 reproduces the plain Dirichlet
+        ! --- exactly. Together with floating_ramp_time that gives a continuation whose two ends are
+        ! --- both well posed - the baseline at one end, the floating potential at the other.
+        !--------------------------------------------------------------------------------------------
+        if ( apply_floating_u ) then
+
+          if ( with_TiTe ) then
+            flt_Ti = max(node_list%node(inode)%values(1,1,var_Ti), T_min)
+            flt_Te = max(node_list%node(inode)%values(1,1,var_Te), T_min)
+          else
+            flt_T  = max(node_list%node(inode)%values(1,1,var_T ), T_min)
+            flt_Ti = 0.5d0 * flt_T
+            flt_Te = 0.5d0 * flt_T
+          endif
+          flt_T = flt_Ti + flt_Te
+
+          ! --- Lambda_0 = ln sqrt(m_i/(2*pi*m_e)), about 3 for deuterium
+          if ( floating_Lambda .gt. 0.d0 ) then
+            flt_lam0 = floating_Lambda
+          else
+            flt_lam0 = log( sqrt( central_mass * ATOMIC_MASS_UNIT / (2.d0*PI*MASS_ELECTRON) ) )
+          endif
+
+          if ( floating_Lambda_local ) then
+            flt_lam      = flt_lam0 - 0.5d0 * log( GAMMA * flt_T / flt_Te )
+            flt_dlam_dTi = - 0.5d0 / flt_T
+            flt_dlam_dTe =   0.5d0 * flt_Ti / (flt_Te * flt_T)
+          else
+            flt_lam      = flt_lam0
+            flt_dlam_dTi = 0.d0
+            flt_dlam_dTe = 0.d0
+          endif
+
+          ! --- e*Phi/(k*Te) = (a_n*u/2 - vw)/Te, so Phi = Phi_float means u = 2*(Te*Lambda + vw)/a_n
+          flt_a_n = - 2.d0 * EL_CHG * F0                                                          &
+                    * sqrt( MU_ZERO * central_density * 1.d20 * central_mass * ATOMIC_MASS_UNIT ) &
+                    / (central_mass * ATOMIC_MASS_UNIT)
+          flt_vw  = EL_CHG * floating_V_wall * MU_ZERO * central_density * 1.d20
+
+          flt_u      = 2.d0 * ( flt_Te * flt_lam + flt_vw ) / flt_a_n
+          flt_du_dTi = 2.d0 *   flt_Te * flt_dlam_dTi / flt_a_n
+          flt_du_dTe = 2.d0 * ( flt_lam + flt_Te * flt_dlam_dTe ) / flt_a_n
+
+          flt_rel = floating_u_relax
+          if ( floating_ramp_time .gt. 0.d0 ) &
+            flt_rel = flt_rel * max(0.d0, min(1.d0, (t_now - t_start) / floating_ramp_time))
+
+          flt_coef          = 0.d0
+          flt_coef(var_u )  =   1.d0
+          if ( with_TiTe ) then
+            flt_coef(var_Ti) = - flt_du_dTi
+            flt_coef(var_Te) = - flt_du_dTe
+          else
+            flt_coef(var_T ) = - 0.5d0 * ( flt_du_dTi + flt_du_dTe )
+          endif
+          flt_R = flt_u - node_list%node(inode)%values(1,1,var_u)
+
+          index_node  = node_list%node(inode)%index(1)
+          index_node2 = node_list%node(inode)%index(iv_dir)
+
+          do k_flt = 1, n_var
+            if ( flt_coef(k_flt) .eq. 0.d0 ) cycle
+            if ( k_flt .eq. var_u ) then
+              call boundary_conditions_add_one_entry(                      &
+                     index_node, var_u, in, index_node, k_flt, in,         &
+                     zbig * flt_coef(k_flt), index_min, index_max, a_mat)
+            else
+              call boundary_conditions_add_one_entry(                      &
+                     index_node, var_u, in, index_node, k_flt, in,         &
+                     zbig * flt_rel * flt_coef(k_flt), index_min, index_max, a_mat)
+            endif
+          enddo
+
+          if (in .eq. 1) then
+            call boundary_conditions_add_RHS(                              &
+                   index_node, var_u, in, index_min, index_max, RHS_loc,   &
+                   zbig * flt_rel * flt_R, a_mat%i_tor_min, a_mat%i_tor_max)
+          else
+            call boundary_conditions_add_RHS(                              &
+                   index_node, var_u, in, index_min, index_max, RHS_loc,   &
+                   0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
+          endif
+
+          ! --- the same constraint differentiated along the boundary, for the tangential
+          ! --- derivative degree of freedom. This is what carries grad(Phi) along the target, i.e.
+          ! --- the electric field the whole boundary condition exists to produce.
+          flt_Rb = 0.d0
+          do k_flt = 1, n_var
+            if ( flt_coef(k_flt) .ne. 0.d0 ) &
+              flt_Rb = flt_Rb - flt_coef(k_flt) * node_list%node(inode)%values(1,iv_dir,k_flt)
+          enddo
+
+          do k_flt = 1, n_var
+            if ( flt_coef(k_flt) .eq. 0.d0 ) cycle
+            if ( k_flt .eq. var_u ) then
+              call boundary_conditions_add_one_entry(                      &
+                     index_node2, var_u, in, index_node2, k_flt, in,       &
+                     zbig * flt_coef(k_flt), index_min, index_max, a_mat)
+            else
+              call boundary_conditions_add_one_entry(                      &
+                     index_node2, var_u, in, index_node2, k_flt, in,       &
+                     zbig * flt_rel * flt_coef(k_flt), index_min, index_max, a_mat)
+            endif
+          enddo
+
+          if (in .eq. 1) then
+            call boundary_conditions_add_RHS(                              &
+                   index_node2, var_u, in, index_min, index_max, RHS_loc,  &
+                   zbig * flt_rel * flt_Rb, a_mat%i_tor_min, a_mat%i_tor_max)
+          else
+            call boundary_conditions_add_RHS(                              &
+                   index_node2, var_u, in, index_min, index_max, RHS_loc,  &
+                   0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
+          endif
+
+        endif   !=== apply_floating_u
 
         if ((node_list%node(inode)%boundary .eq.  3) .and. (node_list%node(inode2)%boundary .eq.  2)) cycle
 
