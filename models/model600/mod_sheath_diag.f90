@@ -24,6 +24,7 @@ module mod_sheath_diag
 
   public :: sheath_diag_reset, sheath_diag_add, sheath_diag_report
   public :: sheath_store_psi0, sheath_psi0
+  public :: sheath_init_potential
 
   !> psi's degrees of freedom at t_start, per node. The wall relaxation needs the DEVIATION of
   !! dpsi/dn from its equilibrium value; driving it with the raw value would make the flux drift
