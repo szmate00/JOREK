@@ -109,6 +109,7 @@ subroutine preset_parameters
   sheath_X_min       = -3.d0  ! electron saturation limit; ~ -Lambda_0, i.e. Phi >= 0
   sheath_sat_slope   =  0.d0  ! 0 = exact saturation at j_sat (see phys_module)
   sheath_wall_pen    =  0.d0  ! 0 = no tangential-wall fallback (see phys_module)
+  sheath_zj_relax    =  1.d0  ! strength of bcs%sheath_zj; 0 reproduces the Dirichlet freeze
   sheath_smooth_dX   =  0.5d0
   sheath_min_bn      =  0.d0  ! set e.g. to sin(1 deg) to keep the sheath alive at tangency points
   sheath_ramp_time   =  0.d0
@@ -472,7 +473,8 @@ subroutine preset_parameters
   ! --- bounds the plasma, not just the targets: u is continuous along the boundary, so a type
   ! --- with the BC next to one without it puts a step in u across a single element, which is a
   ! --- large artificial ExB flow through the wall at the junction.
-  bcs(:)%sheath_u = .false.
+  bcs(:)%sheath_u  = .false.
+  bcs(:)%sheath_zj = .false.
 
   bcs(:)%mach1   = .false.
 

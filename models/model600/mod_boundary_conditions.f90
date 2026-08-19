@@ -33,7 +33,7 @@ use mod_assembly, only : boundary_conditions_add_one_entry, boundary_conditions_
 use data_structure
 use vacuum, ONLY: is_freebound
 use corr_neg, only: corr_neg_temp
-use mod_sheath_bc, only: sheath_get_lambda
+use mod_sheath_bc, only: sheath_get_lambda, sheath_current
 use mod_sheath_diag, only: sheath_psi0, sheath_store_psi0
 use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_cos_dR, dpsi_RMP_cos_dZ, &
        psi_RMP_sin, dpsi_RMP_sin_dR, dpsi_RMP_sin_dZ, t_now, RMP_growth_rate, RMP_ramp_up_time,            &
@@ -42,7 +42,8 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                                    &
        sheath_Lambda, sheath_V_wall, sheath_u_exp_max, sheath_u_exp_min, sheath_u_relax, sheath_min_bn, &
-       sheath_u_relax_time, sheath_wall_vel, sheath_u_align_psi, sheath_u_value_only
+       sheath_u_relax_time, sheath_wall_vel, sheath_u_align_psi, sheath_u_value_only, &
+       sheath_zj_relax, sheath_ramp_time, t_start
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -98,6 +99,11 @@ real*8  :: sh_relax
 real*8  :: sh_wall_rhs
 real*8  :: sh_perp_sign
 real*8  :: sh_pl, sh_pn, sh_ul, sh_un, sh_nrm, sh_ca, sh_sa, sh_wgt
+! --- nodal sheath current constraint on the zj row (bcs%sheath_zj)
+logical :: apply_sheath_zj
+real*8  :: szj_sh, szj_du, szj_drho, szj_dTi, szj_dTe, szj_sat, szj_x
+real*8  :: szj_rel, szj_g, szj_coef(n_var), szj_R, szj_Rb
+integer :: k_szj
 real*8  :: sh_wgt_bn
 integer :: index_node_p
 real*8  :: sh_ratio, sh_ratio_raw, sh_f_min, sh_f_max, sh_x, sh_xi, sh_dr, sh_u_targ
@@ -351,6 +357,7 @@ do i=1, n_local_elms !=== do elements
 
           !------------ Decide when to replace the Dirichlet BC on u by the sheath j-V BC --------
           apply_sheath_u = bcs(bnd_type)%sheath_u
+          apply_sheath_zj = bcs(bnd_type)%sheath_zj
           ! --- The forward/natural route imposes the same sheath condition as a surface term,
           ! --- so it needs the same thin resistive wall. It does not use the nodal rows below.
           apply_natural_u = bcs(bnd_type)%natural%u
@@ -374,6 +381,7 @@ do i=1, n_local_elms !=== do elements
             if ( (k==var_psi  ) .and. (.not. apply_psi_BC    ) )       cycle
             if ( (k==var_zj   ) .and. (.not. apply_current_BC) )       cycle
             if ( (k==var_u    ) .and.  apply_sheath_u                )  cycle  ! u is set by the sheath BC below
+            if ( (k==var_zj   ) .and.  apply_sheath_zj               )  cycle  ! zj is set by the sheath current
             if ( (k==var_u    ) .and.  bcs(bnd_type)%natural%u        )  cycle  ! u is free: the charge-continuity
             if ( (k==var_w    ) .and.  bcs(bnd_type)%natural%w        )  cycle  ! surface terms take over (see
                                                                                 ! mod_boundary_matrix_open)
@@ -417,7 +425,7 @@ do i=1, n_local_elms !=== do elements
         if ((node_list%node(inode)%boundary .eq.  3) .and. (node_list%node(inode2)%boundary .eq.  2)) cycle
 
         ! --- Boundary conditions needing the local geometry (Mach1, sheath j-V BC for u)
-        if ( apply_cs .or. apply_sheath_u .or.                                &
+        if ( apply_cs .or. apply_sheath_u .or. apply_sheath_zj .or.           &
              ( apply_natural_u .and. (sheath_wall_vel .gt. 0.d0) ) ) then
 
           call basisfunctions1(0.d0, H1, H1_s, H1_ss)
@@ -1111,6 +1119,126 @@ do i=1, n_local_elms !=== do elements
 
           endif   !=== apply_sheath_u
 
+          !--------------------------------------------------------------------------------------
+          ! --- SHEATH CURRENT ON THE zj ROW (bcs%sheath_zj)
+          !
+          ! --- The sheath sets the CURRENT that crosses the wall, so that is a statement about
+          ! --- zj, and this imposes it directly:
+          ! ---     zj = zj_sheath(u, rho, Ti, Te) = zj_sat * ( 1 - exp(-X) )
+          ! --- replacing the Dirichlet that otherwise freezes zj at its initial value. The
+          ! --- characteristic is used in the FORWARD direction, current as a function of
+          ! --- potential, which is single valued and whose derivative tends smoothly to zero at
+          ! --- ion saturation - unlike the inverted form used by the sheath_u path above, which
+          ! --- is singular exactly at divertor conditions.
+          !
+          ! --- Why not a surface term on the u equation: that equation is assembled in STRONG
+          ! --- form (mod_elt_matrix_fft, the +v*(ps0_s*zj0_t - ps0_t*zj0_s) term has its
+          ! --- derivatives on zj, not on the test function), so integration by parts was never
+          ! --- performed and there is no boundary flux for a natural BC to replace. Adding one
+          ! --- injects a spurious source at the wall instead of redirecting a flux.
+          !
+          ! --- u stays free here (dirichlet%u = .false.): charge continuity determines it, and it
+          ! --- settles where the current the plasma delivers matches what the sheath can pass.
+          ! --- Keep a Dirichlet on u on at least one other boundary type as a gauge.
+          !--------------------------------------------------------------------------------------
+          if ( apply_sheath_zj ) then
+
+            szj_g = direction * factor            ! Chodura-Riemann g(b_n), signed, as for Mach1
+
+            call sheath_current( u0,                                                  &
+                                 max(node_list%node(inode)%values(1,1,var_rho), 1.d-10), &
+                                 corr_neg_temp(Ti0), corr_neg_temp(Te0),              &
+                                 szj_g, sign(1.d0, bn), Btot,                         &
+                                 szj_sh, szj_du, szj_drho, szj_dTi, szj_dTe,          &
+                                 szj_sat, szj_x )
+
+            ! --- Effective strength. The diagonal below is never relaxed, so this factor going to
+            ! --- zero leaves the row as d(zj) = 0, i.e. exactly the Dirichlet freeze this
+            ! --- replaces. That makes both ends of the continuation well posed.
+            szj_rel = sheath_zj_relax
+            if ( sheath_ramp_time .gt. 0.d0 ) &
+              szj_rel = szj_rel * max(0.d0, min(1.d0, (t_now - t_start) / sheath_ramp_time))
+
+            ! --- Obliqueness. Where the field grazes the wall no parallel flux reaches it, so
+            ! --- zj_sat -> 0 and the characteristic would demand zj -> 0 - which is wrong, since
+            ! --- zj = Delta*psi does not vanish there. Weighting the strength by g^2/(g^2+g_min^2)
+            ! --- hands those nodes back to the frozen value smoothly.
+            if ( sheath_min_bn .gt. 0.d0 ) &
+              szj_rel = szj_rel * szj_g**2 / ( szj_g**2 + sheath_min_bn**2 )
+
+            ! --- Row:  d(zj) - sum_k (d zj_sh / d x_k) d x_k = zj_sh - zj0
+            szj_coef            = 0.d0
+            szj_coef(var_zj )   =   1.d0
+            szj_coef(var_u  )   = - szj_du
+            szj_coef(var_rho)   = - szj_drho
+            if ( with_TiTe ) then
+              szj_coef(var_Ti)  = - szj_dTi
+              szj_coef(var_Te)  = - szj_dTe
+            else
+              szj_coef(var_T )  = - 0.5d0 * ( szj_dTi + szj_dTe )
+            endif
+            szj_R = szj_sh - node_list%node(inode)%values(1,1,var_zj)
+
+            index_node  = node_list%node(inode)%index(1)
+            index_node2 = node_list%node(inode)%index(iv_dir)
+
+            do k_szj = 1, n_var
+              if ( szj_coef(k_szj) .eq. 0.d0 ) cycle
+              if ( k_szj .eq. var_zj ) then
+                call boundary_conditions_add_one_entry(                        &
+                       index_node, var_zj, in, index_node, k_szj, in,          &
+                       zbig * szj_coef(k_szj), index_min, index_max, a_mat)
+              else
+                call boundary_conditions_add_one_entry(                        &
+                       index_node, var_zj, in, index_node, k_szj, in,          &
+                       zbig * szj_rel * szj_coef(k_szj), index_min, index_max, a_mat)
+              endif
+            enddo
+
+            if (in .eq. 1) then
+              call boundary_conditions_add_RHS(                                &
+                     index_node, var_zj, in, index_min, index_max, RHS_loc,    &
+                     zbig * szj_rel * szj_R, a_mat%i_tor_min, a_mat%i_tor_max)
+            else
+              call boundary_conditions_add_RHS(                                &
+                     index_node, var_zj, in, index_min, index_max, RHS_loc,    &
+                     0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
+            endif
+
+            ! --- The same constraint differentiated along the boundary, for the tangential
+            ! --- derivative degree of freedom. |B| and R are treated as constant along the
+            ! --- boundary, as for Mach1 and for the sheath_u path.
+            szj_Rb = 0.d0
+            do k_szj = 1, n_var
+              if ( szj_coef(k_szj) .ne. 0.d0 ) &
+                szj_Rb = szj_Rb - szj_coef(k_szj) * node_list%node(inode)%values(1,iv_dir,k_szj)
+            enddo
+
+            do k_szj = 1, n_var
+              if ( szj_coef(k_szj) .eq. 0.d0 ) cycle
+              if ( k_szj .eq. var_zj ) then
+                call boundary_conditions_add_one_entry(                        &
+                       index_node2, var_zj, in, index_node2, k_szj, in,        &
+                       zbig * szj_coef(k_szj), index_min, index_max, a_mat)
+              else
+                call boundary_conditions_add_one_entry(                        &
+                       index_node2, var_zj, in, index_node2, k_szj, in,        &
+                       zbig * szj_rel * szj_coef(k_szj), index_min, index_max, a_mat)
+              endif
+            enddo
+
+            if (in .eq. 1) then
+              call boundary_conditions_add_RHS(                                &
+                     index_node2, var_zj, in, index_min, index_max, RHS_loc,   &
+                     zbig * szj_rel * szj_Rb, a_mat%i_tor_min, a_mat%i_tor_max)
+            else
+              call boundary_conditions_add_RHS(                                &
+                     index_node2, var_zj, in, index_min, index_max, RHS_loc,   &
+                     0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
+            endif
+
+          endif   !=== apply_sheath_zj
+
           !------------------------------------------------------------------------------------
           ! --- Thin resistive wall for the poloidal flux.
           ! --- Applies to BOTH sheath routes (bcs%sheath_u and bcs%natural%u): the flux dragging
@@ -1134,7 +1262,7 @@ do i=1, n_local_elms !=== do elements
           ! --- to pass flux about as fast as the flow delivers it.
           !------------------------------------------------------------------------------------
           if ( (sheath_wall_vel .gt. 0.d0)                                                 &
-               .and. (apply_sheath_u .or. apply_natural_u)                                 &
+               .and. (apply_sheath_u .or. apply_natural_u .or. apply_sheath_zj)            &
                .and. (.not. is_freebound(in,var_psi))                                      &
                .and. allocated(sheath_psi0) ) then
             if ( inode .gt. size(sheath_psi0,2) ) then
@@ -1182,7 +1310,7 @@ do i=1, n_local_elms !=== do elements
           endif
 
 
-        endif   !=== apply_cs .or. apply_sheath_u .or. natural_u+wall
+        endif   !=== apply_cs .or. sheath_u .or. sheath_zj .or. natural_u+wall
         
       enddo     !=== enddo loop n_tor
     

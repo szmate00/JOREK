@@ -65,6 +65,7 @@ module phys_module
   ! --- see models/model600/mod_sheath_bc.f90. Used by bcs(:)%natural%u.
   logical :: sheath_Lambda_local  !< Make Lambda a function of the local Ti/Te: Lambda = Lambda_0 - ln sqrt(gamma*(1+Ti/Te))
   real*8  :: sheath_X_min         !< Smooth lower limit of the sheath exponent X (electron saturation side); -Lambda_0 puts it at Phi = 0
+  real*8  :: sheath_zj_relax      !< Strength of the bcs%sheath_zj constraint, 0..1. The diagonal of the row is never relaxed, so 0 reproduces the Dirichlet freeze on zj EXACTLY (the baseline) and 1 imposes the sheath current fully. Combined with sheath_ramp_time this is a continuation that is well posed at every stage - unlike ramping a surface term, which removes the boundary condition instead of softening it
   real*8  :: sheath_wall_pen      !< Reference |b_n| for the tangential-wall fallback. Where the obliqueness gate removes the sheath term, u would otherwise have NO boundary condition at all (dirichlet%u is .false. on these types) and drifts freely - and du/dl is v_E.n, the flux-dragging velocity. This adds, with weight (1 - gate), a relaxation of u toward the LOCAL FLOATING POTENTIAL, with the stiffness the sheath itself would have at |b_n| = sheath_wall_pen. Continuous with the sheath solution, since a surface carrying no net current floats. 0.05 corresponds to a 3 degree incidence. 0 = no fallback (previous behaviour)
   real*8  :: sheath_sat_slope     !< Finite sheath conductance at ion saturation: f = 1 - exp(-X) + s*ln(1+exp(X)). The forward characteristic saturates EXACTLY at j_sat, so if the plasma delivers even slightly more current than the sheath can pass - which a restart equilibrium built without the sheath BC has no reason to respect - no u satisfies it and the residual settles at a small constant that drives u linearly for ever. A small slope makes the characteristic solvable for any demanded current. Physically it stands for the residual Phi dependence of the presheath; numerically it is a regularisation with a convergence knob, so report results at the smallest s that runs and check the answer is insensitive to it. 0 = exact saturation (previous behaviour)
   real*8  :: sheath_smooth_dX     !< Width of that smooth limit, in units of X
@@ -224,6 +225,7 @@ module phys_module
     type (type_natural_bc)   :: natural
     logical                  :: mach1 
     logical                  :: sheath_u !< Impose the sheath j-V characteristic on the u equation at this boundary type (model600)
+    logical                  :: sheath_zj !< Impose the sheath current on the zj row at this boundary type (model600): zj = zj_sheath(u,rho,Ti,Te), the FORWARD characteristic, as a nodal constraint replacing the Dirichlet freeze. This is where a current boundary condition belongs - the u equation is assembled in STRONG form, so it has no boundary flux a surface term could replace. u stays free (dirichlet%u = .false.) and charge continuity determines it, which is what lets the potential and any thermoelectric current develop self-consistently
   end type type_bcs
 
   type (type_bcs), dimension(max_bnd_types) :: bcs   

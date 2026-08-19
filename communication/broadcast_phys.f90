@@ -282,6 +282,7 @@ if (my_id .eq. 0) then
   call MPI_PACK(sheath_X_min,           1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(sheath_sat_slope,       1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(sheath_wall_pen,        1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(sheath_zj_relax,        1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(sheath_smooth_dX,       1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(sheath_min_bn,          1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(sheath_ramp_time,       1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
@@ -311,6 +312,7 @@ if (my_id .eq. 0) then
     
     call MPI_PACK(bcs(i)%mach1            , 1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
     call MPI_PACK(bcs(i)%sheath_u         , 1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+    call MPI_PACK(bcs(i)%sheath_zj        , 1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
 
     call MPI_PACK(bcs(i)%natural%u        , 1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
     call MPI_PACK(bcs(i)%natural%w        , 1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
@@ -1293,6 +1295,7 @@ if (my_id .ne. 0) then
   call MPI_UNPACK(buffer,bufsize,position,sheath_X_min,           1,MPI_REAL8,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,sheath_sat_slope,       1,MPI_REAL8,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,sheath_wall_pen,        1,MPI_REAL8,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,sheath_zj_relax,        1,MPI_REAL8,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,sheath_smooth_dX,       1,MPI_REAL8,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,sheath_min_bn,          1,MPI_REAL8,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,sheath_ramp_time,       1,MPI_REAL8,MPI_COMM_WORLD,ierr)
@@ -1322,6 +1325,7 @@ if (my_id .ne. 0) then
 
     call MPI_UNPACK(buffer,bufsize,position,bcs(i)%mach1            , 1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
     call MPI_UNPACK(buffer,bufsize,position,bcs(i)%sheath_u         , 1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
+    call MPI_UNPACK(buffer,bufsize,position,bcs(i)%sheath_zj        , 1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
 
     call MPI_UNPACK(buffer,bufsize,position,bcs(i)%natural%u        , 1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
     call MPI_UNPACK(buffer,bufsize,position,bcs(i)%natural%w        , 1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)

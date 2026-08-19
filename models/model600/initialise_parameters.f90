@@ -68,7 +68,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 sheath_u_value_only,                                &
                 sheath_u_exp_max, sheath_u_exp_min,                 &
                 sheath_Lambda_local, sheath_X_min, sheath_smooth_dX,&
-                sheath_sat_slope, sheath_wall_pen,                  &
+                sheath_sat_slope, sheath_wall_pen, sheath_zj_relax, &
                 sheath_min_bn, sheath_ramp_time,                    &
                 sheath_stiff_max, sheath_init_u, sheath_flux_sign,  &
                 deuterium_adas, deuterium_adas_1e20,                &
@@ -416,6 +416,53 @@ if (my_id .eq. 0) then
         write(*,*) '      free. That is the link that lets the wall current respond to the sheath.'
       endif
 
+      ! --- Nodal sheath current on the zj row. This is the route that puts the sheath where it
+      ! --- belongs: the u equation is assembled in STRONG form, so it has no boundary flux a
+      ! --- surface term could replace, and adding one injects a spurious source at the wall.
+      if ( bcs(i)%sheath_zj ) then
+        if ( bcs(i)%natural%u ) then
+          write(*,*) 'ERROR: bcs(', i, ')%sheath_zj and %natural%u are two different routes for the'
+          write(*,*) '       same boundary condition. Enable only one.'
+          stop
+        endif
+        if ( bcs(i)%sheath_u ) then
+          write(*,*) 'ERROR: bcs(', i, ')%sheath_zj and %sheath_u both write the sheath; sheath_u'
+          write(*,*) '       inverts the characteristic onto the u row and is singular at ion'
+          write(*,*) '       saturation. Enable only one.'
+          stop
+        endif
+        if ( bcs(i)%natural%zj ) then
+          write(*,*) 'ERROR: bcs(', i, ')%sheath_zj and %natural%zj both target the zj rows.'
+          write(*,*) '       Use natural%zj for a genuinely free wall current, sheath_zj to set it'
+          write(*,*) '       from the sheath. Not both.'
+          stop
+        endif
+        if ( .not. bcs(i)%dirichlet%zj ) then
+          write(*,*) 'ERROR: bcs(', i, ')%sheath_zj needs dirichlet%zj = .true. The sheath rows'
+          write(*,*) '       REPLACE the Dirichlet rows on zj (value and tangential derivative);'
+          write(*,*) '       the flag marks which rows are taken over.'
+          stop
+        endif
+        if ( .not. bcs(i)%mach1 ) then
+          write(*,*) 'WARNING: bcs(', i, ')%sheath_zj without mach1; the saturation current uses'
+          write(*,*) '         v_par = g(b_n)*c_s/|B|, which assumes the Mach 1 condition here.'
+        endif
+        if ( bcs(i)%dirichlet%u ) then
+          write(*,*) 'NOTE: bcs(', i, ')%sheath_zj with dirichlet%u = .true. The sheath current is'
+          write(*,*) '      then evaluated at a FROZEN potential, so there is no j-V feedback -'
+          write(*,*) '      useful as a first stability test, not as physics. Set'
+          write(*,*) '      dirichlet%u = .false. to let the potential respond, keeping a Dirichlet'
+          write(*,*) '      on u on at least one other boundary type as the gauge.'
+        endif
+        if ( sheath_min_bn .le. 0.d0 ) then
+          write(*,*) 'WARNING: bcs(', i, ')%sheath_zj with sheath_min_bn = 0. Where the field grazes'
+          write(*,*) '         the wall the saturation current vanishes and the constraint would'
+          write(*,*) '         drive zj to zero, which is wrong - zj = Delta*psi does not vanish'
+          write(*,*) '         there. Use sheath_min_bn ~ 0.005 to hand those nodes back to the'
+          write(*,*) '         frozen value.'
+        endif
+      endif
+
       if ( .not. bcs(i)%natural%u ) cycle
 
       if ( bcs(i)%dirichlet%u ) then
@@ -513,7 +560,7 @@ if (my_id .eq. 0) then
       endif
     enddo
 
-    if ( .not. any( bcs(:)%dirichlet%u .and. .not. bcs(:)%natural%u ) ) then
+    if ( .not. any( bcs(:)%dirichlet%u .and. .not. bcs(:)%natural%u .and. .not. bcs(:)%sheath_zj ) ) then
       write(*,*) 'ERROR: every boundary type has natural%u, so nothing pins the constant mode of'
       write(*,*) '       u any more. Keep dirichlet%u = .true. on at least one type (typically'
       write(*,*) '       the main chamber wall, where the sheath current is negligible anyway).'
