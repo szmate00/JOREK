@@ -377,11 +377,16 @@ if (my_id .eq. 0) then
 
   endif
 
-  ! --- Consistency checks for the charge-conserving sheath boundary condition, i.e. the surface
-  ! --- terms of the u, w and zj weak forms (see models/model600/mod_boundary_matrix_open.f90).
-  if ( any(bcs(:)%natural%u) .or. any(bcs(:)%natural%w) .or. any(bcs(:)%natural%zj) ) then
+  ! --- Consistency checks for the sheath boundary conditions: the surface terms of the u, w and
+  ! --- zj weak forms (mod_boundary_matrix_open) and the nodal sheath current on the zj row
+  ! --- (mod_boundary_conditions). sheath_zj MUST be in this guard - it is a nodal row, so it needs
+  ! --- none of the natural flags, and leaving it out meant none of its checks ever ran.
+  if ( any(bcs(:)%natural%u) .or. any(bcs(:)%natural%w) .or. any(bcs(:)%natural%zj) &
+       .or. any(bcs(:)%sheath_zj) ) then
 
-    if ( .not. bc_natural_open ) then
+    ! --- only the SURFACE terms live in that branch; the nodal sheath_zj rows do not
+    if ( ( any(bcs(:)%natural%u) .or. any(bcs(:)%natural%w) .or. any(bcs(:)%natural%zj) ) &
+         .and. (.not. bc_natural_open) ) then
       write(*,*) 'ERROR: bcs(:)%natural%u / %w / %zj require bc_natural_open = .true.,'
       write(*,*) '       because the boundary integrals are only assembled in that branch of'
       write(*,*) '       construct_matrix.'
@@ -561,8 +566,10 @@ if (my_id .eq. 0) then
     enddo
 
     if ( .not. any( bcs(:)%dirichlet%u .and. .not. bcs(:)%natural%u .and. .not. bcs(:)%sheath_zj ) ) then
-      write(*,*) 'ERROR: every boundary type has natural%u, so nothing pins the constant mode of'
-      write(*,*) '       u any more. Keep dirichlet%u = .true. on at least one type (typically'
+      write(*,*) 'ERROR: no boundary type pins u any more (every type has natural%u or sheath_zj,'
+      write(*,*) '       or no Dirichlet). Setting the wall CURRENT leaves u a Neumann problem,'
+      write(*,*) '       determined only up to a constant, so a reference is still required.'
+      write(*,*) '       Keep dirichlet%u = .true. on at least one type (typically'
       write(*,*) '       the main chamber wall, where the sheath current is negligible anyway).'
       stop
     endif
