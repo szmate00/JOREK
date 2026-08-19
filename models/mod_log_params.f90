@@ -845,7 +845,10 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,LOGI_FMT) 'sheath_u_value_only   ', sheath_u_value_only
   end if
 
-  if ( any(bcs(:)%natural%u) .or. any(bcs(:)%natural%w) .or. any(bcs(:)%natural%zj) ) then
+  if ( any(bcs(:)%natural%u) .or. any(bcs(:)%natural%w) .or. any(bcs(:)%natural%zj) &
+       .or. any(bcs(:)%sheath_zj) ) then
+    if ( any(bcs(:)%sheath_zj) ) &
+      write(*,'(A,30(1x,i0))') ' sheath_zj bnd types   :', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%sheath_zj )
     write(*,'(A,30(1x,i0))') ' natural%u  bnd types  :', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%natural%u  )
     write(*,'(A,30(1x,i0))') ' natural%w  bnd types  :', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%natural%w  )
     write(*,'(A,30(1x,i0))') ' natural%zj bnd types  :', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%natural%zj )
