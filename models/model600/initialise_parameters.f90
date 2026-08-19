@@ -68,7 +68,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 sheath_u_value_only,                                &
                 sheath_u_exp_max, sheath_u_exp_min,                 &
                 sheath_Lambda_local, sheath_X_min, sheath_smooth_dX,&
-                sheath_sat_slope,                                   &
+                sheath_sat_slope, sheath_wall_pen,                  &
                 sheath_min_bn, sheath_ramp_time,                    &
                 sheath_stiff_max, sheath_init_u, sheath_flux_sign,  &
                 deuterium_adas, deuterium_adas_1e20,                &
@@ -391,21 +391,29 @@ if (my_id .eq. 0) then
     do i = 1, max_bnd_types
 
 
-      if ( bcs(i)%natural%w .or. bcs(i)%natural%zj ) then
-        write(*,*) 'ERROR: bcs(', i, ')%natural%w / %natural%zj are mis-linearised and must stay'
-        write(*,*) '       .false. Their residuals depend on a normal derivative, but the trial'
-        write(*,*) '       function loop in mod_boundary_matrix_open only produces columns for the'
-        write(*,*) '       value and tangential-derivative DOFs (l2 = direction(l)), so the true'
-        write(*,*) '       Jacobian entry is missing and a spurious one is added through psi_t.'
-        write(*,*) '       The boundary term is then effectively explicit with an O(1/h)'
-        write(*,*) '       coefficient, which grows boundary structures over ~20 steps.'
-        write(*,*) '       They are also unnecessary: a surface integral only reaches rows at the'
-        write(*,*) '       value and tangential DOFs, which the Dirichlet on the same variable'
-        write(*,*) '       overwrites anyway, so keeping dirichlet%w / dirichlet%zj = .true.'
-        write(*,*) '       imposes no spurious natural condition. The sheath term itself needs'
-        write(*,*) '       neither: the frozen zj trace cancels exactly between the strong-form'
-        write(*,*) '       volume term and the added surface flux.'
+      ! --- natural%w / natural%zj were refused while their Jacobians were wrong: the residuals
+      ! --- depend on a normal derivative, and the trial loop produced columns only at the
+      ! --- value/tangential DOFs, so the true entry was missing and a spurious one was added
+      ! --- through psi_t. mod_boundary_matrix_open now splits grad(.).n into its tangential and
+      ! --- normal halves and assembles the second at direction_perp(l), so both are correct.
+      ! --- What they DO need is for the same variable's Dirichlet to be off: a surface integral
+      ! --- only reaches rows at the value and tangential DOFs, which a Dirichlet overwrites.
+      if ( bcs(i)%natural%zj .and. bcs(i)%dirichlet%zj ) then
+        write(*,*) 'ERROR: bcs(', i, ')%natural%zj needs dirichlet%zj = .false. With the Dirichlet'
+        write(*,*) '       on, the surface term only reaches rows the Dirichlet overwrites, so it'
+        write(*,*) '       imposes nothing and zj at the wall stays frozen - which is exactly what'
+        write(*,*) '       keeps the sheath j-V loop open.'
         stop
+      endif
+      if ( bcs(i)%natural%w .and. bcs(i)%dirichlet%w ) then
+        write(*,*) 'ERROR: bcs(', i, ')%natural%w needs dirichlet%w = .false.'
+        stop
+      endif
+      if ( bcs(i)%natural%zj .and. bcs(i)%dirichlet%psi ) then
+        write(*,*) 'NOTE: bcs(', i, ')%natural%zj with dirichlet%psi = .true. That is the intended'
+        write(*,*) '      combination: the Dirichlet pins psi''s value and tangential derivative,'
+        write(*,*) '      while the surface term couples zj to psi''s NORMAL derivative, which is'
+        write(*,*) '      free. That is the link that lets the wall current respond to the sheath.'
       endif
 
       if ( .not. bcs(i)%natural%u ) cycle
@@ -420,6 +428,16 @@ if (my_id .eq. 0) then
         write(*,*) '       of the same boundary condition. Enable only one of them.'
         stop
       endif
+      if ( .not. bcs(i)%natural%zj ) then
+        write(*,*) 'WARNING: bcs(', i, ')%natural%u without %natural%zj. zj at the wall is then'
+        write(*,*) '         frozen by its Dirichlet, so the current the plasma delivers cannot'
+        write(*,*) '         respond and the j-V loop is OPEN: the sheath can only adapt u, and'
+        write(*,*) '         if the delivered current exceeds j_sat no u satisfies the'
+        write(*,*) '         characteristic. Measured: I_Ampere constant to 4 digits while I_wall'
+        write(*,*) '         ran to zero and u diverged. Set natural%zj = .true. and'
+        write(*,*) '         dirichlet%zj = .false. on the same boundary types.'
+      endif
+
       if ( .not. bcs(i)%mach1 ) then
         write(*,*) 'WARNING: bcs(', i, ')%natural%u is active but mach1 is .false.; the sheath'
         write(*,*) '         current uses v_par = g(b_n)*c_s/|B|, which assumes the Mach 1'
@@ -453,6 +471,14 @@ if (my_id .eq. 0) then
       if ( .not. sheath_init_u ) then
         write(*,*) 'WARNING: bcs(', i, ')%natural%u without sheath_init_u. u then starts ~Lambda*Te'
         write(*,*) '         away from its own fixed point, i.e. ~50 V at a 20 eV target.'
+      endif
+
+      if ( sheath_wall_pen .le. 0.d0 ) then
+        write(*,*) 'WARNING: sheath_wall_pen = 0 with bcs(', i, ')%natural%u. Where the obliqueness'
+        write(*,*) '         gate removes the sheath term, u then has NO boundary condition at all'
+        write(*,*) '         and drifts freely - and du/dl is the flux-dragging velocity. With'
+        write(*,*) '         grid_to_wall most of a sheath boundary is near-tangential wall, so'
+        write(*,*) '         that is most of it. Use sheath_wall_pen ~ 0.05 (3 degree incidence).'
       endif
 
       if ( sheath_min_bn .le. 0.d0 ) then

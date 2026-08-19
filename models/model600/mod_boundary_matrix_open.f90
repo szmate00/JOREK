@@ -17,7 +17,7 @@ use phys_module
 use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
-use mod_sheath_bc, only: sheath_current
+use mod_sheath_bc, only: sheath_current, sheath_norm, sheath_get_lambda
 use mod_sheath_diag, only: sheath_diag_add
 
 implicit none
@@ -37,6 +37,11 @@ real*8     :: delta_g(n_plane,n_var,n_gauss), delta_s(n_plane,n_var,n_gauss)
 real*8     :: ELM(n_vertex_max*n_var*n_degrees*n_tor,n_vertex_max*n_var*n_degrees*n_tor)
 real*8     :: RHS(n_vertex_max*n_var*n_degrees*n_tor)
 real*8     :: rhs_ij(n_var), amat(n_var,n_var)
+! --- Jacobian columns at the NORMAL-derivative degrees of freedom, see the block that
+! --- assembles them below. Kept separate from amat because they land in different columns.
+real*8     :: amat_p(n_var,n_var)
+real*8     :: gpn_s, gpn_t, es_perp_sign
+integer    :: index_kl_p
 
 integer    :: vertex(2), direction(2), direction_perp(2), bnd_type1, bnd_type2
 integer    :: i, j, j2, j3, ms, mt, mp, k, l, l2, l3, index_ij, index_kl, index, xcase2, is
@@ -66,6 +71,8 @@ logical    :: apply_natural_bc(0:n_var)
 
 ! --- Charge-conserving sheath boundary condition and the two supporting surface terms
 real*8     :: u0, u0_s, u0_t, u0_x, u0_y, zj0, sh_Bn, g_bn, sheath_ramp, sh_wgt_bn
+real*8     :: sh_pen_c, sh_u_float, sh_an, sh_csat, sh_vw, sh_lam, sh_dlTi, sh_dlTe
+real*8     :: sh_duf_dTi, sh_duf_dTe
 real*8     :: gradu0dotn, gradps0dotn, gradudotn, gradpsidotn
 real*8     :: zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, zj_sat_g, x_sheath
 real*8     :: sheath_alpha, sh_d_pol, sh_d_robin
@@ -124,6 +131,12 @@ delta_g = 0.d0; delta_s = 0.d0;
 
 direction_perp(1) = 6 / direction(2)     ! =3 if direction(2)=2, =2 if direction(2)=3
 direction_perp(2) = 4
+
+! --- Orientation of the transverse logical coordinate, exactly as applied to the FIELDS when
+! --- eq_t is accumulated below. The trial-function block used to omit this flip, so on half the
+! --- boundary elements its normal-derivative Jacobian had the wrong sign.
+es_perp_sign = -1.d0
+if ((vertex(1)*vertex(2) .eq. 2)) es_perp_sign = +1.d0
 
 R_mid = sum(nodes(1:2)%x(1,1,1)) / 2.d0     ! mid point on boundary (approx.)
 Z_mid = sum(nodes(1:2)%x(1,1,2)) / 2.d0
@@ -218,6 +231,12 @@ do ms=1, n_gauss
 
   normal = dot_product(grad_t,normal_direction) * grad_t      ! outward pointing normal
   normal = normal / norm2(normal)
+
+  ! --- grad(f).n split into the part carried by the TANGENTIAL derivative of f and the part
+  ! --- carried by its NORMAL derivative:  grad(f).n = gpn_s * f_s + gpn_t * f_t . The two halves
+  ! --- belong to different degrees of freedom, so the Jacobian has to keep them apart.
+  gpn_s = (   y_t(ms) * normal(1) - x_t(ms) * normal(2) ) / xjac
+  gpn_t = ( - y_s(ms) * normal(1) + x_s(ms) * normal(2) ) / xjac
 
   neutral_source = 0.d0
 
@@ -411,6 +430,31 @@ do ms=1, n_gauss
       sheath_ramp = sheath_ramp * sheath_alpha * sheath_flux_sign * sh_wgt_bn  ! every Gauss point
 
       ! --- wall current / potential diagnostic; dS is the toroidally integrated surface element
+      ! --- Tangential-wall fallback. The gate above removes the sheath term where the field
+      ! --- grazes the wall - but with dirichlet%u = .false. that leaves u with NO boundary
+      ! --- condition there at all, and du/dl is v_E.n, the flux-dragging velocity. With
+      ! --- grid_to_wall the great majority of a sheath-enabled boundary IS near-tangential wall,
+      ! --- so this is most of the boundary, not an edge case (measured: 98.7% gated off).
+      ! --- Relax u toward the local FLOATING potential instead, with weight (1 - gate) and the
+      ! --- stiffness the sheath itself would have at |b_n| = sheath_wall_pen. That is continuous
+      ! --- with the sheath solution - a surface carrying no net current floats - so there is no
+      ! --- step between the two regimes, and it is the physically right statement for a
+      ! --- conducting surface that no parallel flux reaches.
+      ! --- Only the u_float sensitivity is carried into the Jacobian below: d(stiffness)/dstate
+      ! --- multiplies (u0 - u_float), which vanishes at this term's own fixed point.
+      sh_pen_c = 0.d0; sh_u_float = 0.d0; sh_duf_dTi = 0.d0; sh_duf_dTe = 0.d0
+      if ( sheath_wall_pen .gt. 0.d0 ) then
+        call sheath_norm(sh_an, sh_csat, sh_vw)
+        call sheath_get_lambda(Ti0_corr, Te0_corr, sh_lam, sh_dlTi, sh_dlTe)
+        ! --- dzj_du*B.n with g(b_n)*b_n replaced by the reference sheath_wall_pen^2 and f' = 1
+        sh_pen_c   = sh_csat * r0_corr * sqrt(GAMMA*(Ti0_corr+Te0_corr))                     &
+                   * 0.5d0 * sh_an / Te0_corr * sheath_wall_pen**2
+        sh_pen_c   = sh_pen_c * ( 1.d0 - sh_wgt_bn )
+        sh_u_float = 2.d0 * ( Te0_corr * sh_lam + sh_vw ) / sh_an
+        sh_duf_dTi = 2.d0 *   Te0_corr * sh_dlTi / sh_an
+        sh_duf_dTe = 2.d0 * ( sh_lam + Te0_corr * sh_dlTe ) / sh_an
+      endif
+
       call sheath_diag_add(bnd_type1, zj_sh, zj0, zj_sat_g, x_sheath, u0, Te0_corr, sh_Bn, &
                            ws * dl * BigR * TWOPI / dble(n_plane), sh_wgt_bn)
     endif
@@ -435,7 +479,9 @@ do ms=1, n_gauss
 
           ! --- Sheath current: charge continuity closed at the wall (see the derivation above)
           if ( apply_natural_bc(var_u) ) &
-            rhs_ij(var_u)  = - v * BigR * ( zj_sh - zj0 ) * sh_Bn * dl * tstep * sheath_ramp
+            rhs_ij(var_u)  = - v * BigR * ( ( zj_sh - zj0 ) * sh_Bn * sheath_ramp        &
+                                          + sh_pen_c * ( u0 - sh_u_float ) )              &
+                                        * dl * tstep
 
           ! --- Surface term of the vorticity definition (w = Delta_pol u). REFUSED by
           ! --- initialise_parameters: its Jacobian needs columns for the normal-derivative DOFs,
@@ -504,13 +550,17 @@ do ms=1, n_gauss
               l2 = direction(l)
               element_size_kl = element%size(vertex(k),l2)
 
-              l3 = direction_perp(j)
-              element_size_perp = - element%size(vertex(k),direction_perp(1)) * 3.d0
+              ! --- direction_perp(l), NOT (j): the normal-derivative DOF that pairs with this
+              ! --- trial basis function. l=1 (value) pairs with the normal first derivative,
+              ! --- l=2 (tangential derivative) pairs with the mixed second derivative - exactly
+              ! --- the pairing the field evaluation uses when it builds eq_t.
+              l3 = direction_perp(l)
+              element_size_perp = es_perp_sign * element%size(vertex(k),direction_perp(1)) * 3.d0
 
               do in = i_tor_min, i_tor_max                                              ! loop over toroidal harmonics
 
-                amat = 0.d0        ! see the note on rhs_ij above; amat is never accumulated onto
-                                   ! itself, so a per-iteration reset is always safe here
+                amat   = 0.d0      ! see the note on rhs_ij above; amat is never accumulated onto
+                amat_p = 0.d0      ! itself, so a per-iteration reset is always safe here
 
                 psi    = H1(k,l,ms)    * element_size_kl * HZ(in,mp)
                 psi_s  = H1_s(k,l,ms)  * element_size_kl * HZ(in,mp)
@@ -538,24 +588,42 @@ do ms=1, n_gauss
                 ! --- Jacobian of the sheath current term. amat = -d(rhs)/dx, and the diagonal
                 ! --- entry adds to the negative definite polarisation operator, i.e. it damps.
                 if ( apply_natural_bc(var_u) ) then
-                  amat(var_u,var_u  ) = + v * BigR * dzj_du   * psi * sh_Bn * dl * theta * tstep * sheath_ramp
+                  amat(var_u,var_u  ) = + v * BigR * ( dzj_du * sh_Bn * sheath_ramp + sh_pen_c ) &
+                                            * psi * dl * theta * tstep
                   amat(var_u,var_zj ) = - v * BigR             * psi * sh_Bn * dl * theta * tstep * sheath_ramp
                   amat(var_u,var_rho) = + v * BigR * dzj_drho * psi * sh_Bn * dl * theta * tstep * sheath_ramp
                   if ( with_TiTe ) then
-                    amat(var_u,var_Ti) = + v * BigR * dzj_dTi * psi * sh_Bn * dl * theta * tstep * sheath_ramp
-                    amat(var_u,var_Te) = + v * BigR * dzj_dTe * psi * sh_Bn * dl * theta * tstep * sheath_ramp
+                    amat(var_u,var_Ti) = + v * BigR * ( dzj_dTi * sh_Bn * sheath_ramp            &
+                                                      - sh_pen_c * sh_duf_dTi )                &
+                                             * psi * dl * theta * tstep
+                    amat(var_u,var_Te) = + v * BigR * ( dzj_dTe * sh_Bn * sheath_ramp            &
+                                                      - sh_pen_c * sh_duf_dTe )                &
+                                             * psi * dl * theta * tstep
                   else
-                    amat(var_u,var_T ) = + v * BigR * 0.5d0 * (dzj_dTi + dzj_dTe) * psi * sh_Bn * dl * theta * tstep * sheath_ramp
+                    amat(var_u,var_T ) = + v * BigR * ( 0.5d0*(dzj_dTi+dzj_dTe)*sh_Bn*sheath_ramp &
+                                                      - 0.5d0*sh_pen_c*(sh_duf_dTi+sh_duf_dTe) ) &
+                                             * psi * dl * theta * tstep
                   endif
                 endif
 
-                ! --- Vorticity definition surface term (algebraic equation: no theta, no tstep)
-                if ( apply_natural_bc(var_w) ) &
-                  amat(var_w,var_u)   = - v * BigR * gradudotn * dl
+                ! --- Vorticity and current definition surface terms (algebraic equations: no
+                ! --- theta, no tstep). Their residuals depend on grad(.).n, so their Jacobians
+                ! --- need columns at BOTH the value/tangential DOFs (through f_s) and the
+                ! --- normal-derivative DOFs (through f_t). The first go into amat as usual; the
+                ! --- second into amat_p, which is assembled at l3 = direction_perp(l) below.
+                ! --- Before this split, the whole grad(.).n was written into the value/tangential
+                ! --- column using psi_t as if the value DOF carried a normal derivative: the true
+                ! --- entry was missing and a spurious one was added in its place, leaving the
+                ! --- terms effectively explicit with an O(1/h) coefficient.
+                if ( apply_natural_bc(var_w) ) then
+                  amat  (var_w,var_u)   = - v * BigR * gpn_s * psi_s * dl
+                  amat_p(var_w,var_u)   = - v * BigR * gpn_t * psi_t * dl
+                endif
 
-                ! --- Current definition surface term (algebraic equation: no theta, no tstep)
-                if ( apply_natural_bc(var_zj) ) &
-                  amat(var_zj,var_psi) = - v * gradpsidotn / BigR * dl
+                if ( apply_natural_bc(var_zj) ) then
+                  amat  (var_zj,var_psi) = - v * gpn_s * psi_s / BigR * dl
+                  amat_p(var_zj,var_psi) = - v * gpn_t * psi_t / BigR * dl
+                endif
 
                 cs_T   = gamma * T  / (2.d0 * cs0)
                 cs_Ti  = gamma * Ti / (2.d0 * cs0)
@@ -641,6 +709,9 @@ do ms=1, n_gauss
                 endif   ! with_vpar
                 index_kl = n_tor_local*n_var*n_degrees*(vertex(k)-1) + n_tor_local * n_var * (l2-1) + in - i_tor_min +1  ! index in the ELM matrix
 
+                ! --- same, at the normal-derivative degree of freedom l3 = direction_perp(l)
+                index_kl_p = n_tor_local*n_var*n_degrees*(vertex(k)-1) + n_tor_local * n_var * (l3-1) + in - i_tor_min +1
+
                 ! --- Add contributions to ELM matrix                 
                 do k_var = 1, n_var
                   do i_var = 1, n_var
@@ -650,6 +721,11 @@ do ms=1, n_gauss
                     ELM(index_ij+(i_var-1)*(n_tor_local),index_kl+(k_var-1)*(n_tor_local)) = &
                     ELM(index_ij+(i_var-1)*(n_tor_local),index_kl+(k_var-1)*(n_tor_local))   &
                       + amat(i_var,k_var) * ws
+
+                    if ( amat_p(i_var,k_var) .ne. 0.d0 )                                       &
+                      ELM(index_ij+(i_var-1)*(n_tor_local),index_kl_p+(k_var-1)*(n_tor_local)) = &
+                      ELM(index_ij+(i_var-1)*(n_tor_local),index_kl_p+(k_var-1)*(n_tor_local))   &
+                        + amat_p(i_var,k_var) * ws
 
                   enddo
                 enddo

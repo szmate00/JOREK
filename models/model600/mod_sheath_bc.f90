@@ -45,8 +45,9 @@
 !!
 !!   bcs(1)%natural%u    = .true.    ! the sheath boundary condition
 !!   bcs(1)%dirichlet%u  = .false.   ! u is free and set by charge continuity at the wall
+!!   bcs(1)%natural%zj   = .true.    ! REQUIRED - see below; without it the j-V loop is open
+!!   bcs(1)%dirichlet%zj = .false.   ! ... and its Dirichlet has to come off
 !!   bcs(1)%dirichlet%w  = .true.    ! KEEP, and leave natural%w = .false.
-!!   bcs(1)%dirichlet%zj = .true.    ! KEEP, and leave natural%zj = .false.
 !!   bcs(1)%mach1        = .true.    ! j_sat assumes the Mach 1 condition at the same wall
 !!   bc_natural_open     = .true.    ! the boundary integrals live in that branch of construct_matrix
 !!
@@ -56,25 +57,32 @@
 !! sheath_Lambda (Lambda_0, <=0 computes it from central_mass), sheath_Lambda_local,
 !! sheath_V_wall, sheath_X_min, sheath_smooth_dX, sheath_min_bn, sheath_ramp_time.
 !!
-!! WHY dirichlet%w AND dirichlet%zj STAY ON. A surface integral only reaches rows whose test
-!! function is non-zero on the boundary edge, i.e. the value and tangential-derivative DOFs
-!! (mod_boundary_matrix_open writes rows at j2 = direction(j) only). Those are exactly the rows a
-!! Dirichlet on the same variable overwrites, so with dirichlet%w / dirichlet%zj = .true. the
-!! dropped surface terms of the w and zj weak forms impose nothing at all: there is no hidden
-!! grad(u).n = 0 and no spurious grad(psi).n/h current to repair. bcs%natural%w and %natural%zj
-!! exist in the code but are REFUSED by initialise_parameters, because their residuals depend on a
-!! normal derivative whose Jacobian columns that routine cannot produce (the trial function loop
-!! runs over l2 = direction(l) only, and psi_t synthesises a fictitious normal derivative for the
-!! value/tangential basis functions). The result is a missing Jacobian entry plus a spurious one,
-!! i.e. an effectively explicit O(1/h) boundary term: it grows boundary-localised structures over
-!! ~20 steps and then propagates them inward. Lifting that needs an extra trial index carrying
-!! direction_perp(1) with the correct Hermite basis (zero on the edge, unit normal derivative).
+!! WHY natural%zj IS REQUIRED (corrected 2026-08-19). This header used to say that dirichlet%zj
+!! could stay on because "the frozen zj trace cancels exactly between the strong-form volume term
+!! and the added surface flux". That is FALSE, and the diagnostic falsified it directly: with
+!! dirichlet%zj = .true., I_Ampere = oint zj (B.n) stayed constant to four digits for a whole run
+!! while I_wall ran from -15540 A to -23 A. The sheath adapted all the way to floating, the plasma
+!! current could not move at all, and u diverged trying to reconcile them. The j-V loop is OPEN
+!! whenever zj at the wall is pinned: the boundary condition can then only move the potential, and
+!! if the delivered current exceeds j_sat no potential satisfies the characteristic.
 !!
-!! The sheath term itself needs neither of them: it depends on u, rho, Ti, Te and zj VALUES, which
-!! are in the available column set, and the frozen zj trace cancels exactly between the strong-form
-!! volume term and the added surface flux, so the current leaving the domain is the sheath current
-!! whether or not that trace is pinned.
+!! So the current definition surface term must be restored: natural%zj = .true. with
+!! dirichlet%zj = .false. It couples zj at the boundary to grad(psi).n - the NORMAL derivative of
+!! psi, which dirichlet%psi does NOT pin (that fixes the value and the tangential derivative only).
+!! That is the degree of freedom through which the wall current can respond to the sheath.
 !!
+!! Its Jacobian was wrong until 2026-08-19: the trial loop produced columns only at
+!! l2 = direction(l), and psi_t synthesised a fictitious normal derivative on the value DOF, so the
+!! true entry was missing and a spurious one took its place - an effectively explicit O(1/h)
+!! boundary term that grew boundary structures over ~20 steps. mod_boundary_matrix_open now splits
+!!     grad(f).n = gpn_s * f_s + gpn_t * f_t
+!! and assembles the second half at direction_perp(l), the DOF that actually carries the normal
+!! derivative (l=1 value pairs with the normal first derivative, l=2 tangential with the mixed
+!! second derivative - the same pairing the field evaluation uses when it builds eq_t). The split
+!! is algebraically exact; only the column assignment and an orientation sign changed.
+!!
+!! dirichlet%w still stays on: the w surface term is not needed by the sheath, and with the
+!! Dirichlet present it reaches only rows that Dirichlet overwrites, so it imposes nothing.
 module mod_sheath_bc
 
   implicit none
