@@ -39,7 +39,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                        &
        floating_Lambda, floating_Lambda_local, floating_V_wall, floating_u_relax,              &
-       floating_ramp_time, t_start
+       floating_ramp_time, t_start, floating_u_value_only
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -66,6 +66,7 @@ real*8  :: flt_Ti, flt_Te, flt_T, flt_lam, flt_dlam_dTi, flt_dlam_dTe
 real*8  :: flt_a_n, flt_vw, flt_u, flt_du_dTi, flt_du_dTe, flt_rel
 real*8  :: flt_coef(n_var), flt_R, flt_Rb, flt_lam0
 integer :: k_flt, flt_row
+logical :: flt_clip
 real*8,                             intent(in)    :: R_axis
 real*8,                             intent(in)    :: Z_axis
 real*8,                             intent(in)    :: psi_axis
@@ -409,6 +410,18 @@ do i=1, n_local_elms !=== do elements
         !--------------------------------------------------------------------------------------------
         if ( apply_floating_u ) then
 
+          ! --- T_min is a HARD clip, so where it bites u_float no longer depends on the
+          ! --- temperature and neither may the Jacobian. Carrying the unclipped derivative there
+          ! --- would linearise a constant, which is exactly the sort of inconsistency that shows
+          ! --- up as a slow boundary instability rather than an obvious error.
+          flt_clip = .false.
+          if ( with_TiTe ) then
+            if ( (node_list%node(inode)%values(1,1,var_Ti) .lt. T_min) .or.                       &
+                 (node_list%node(inode)%values(1,1,var_Te) .lt. T_min) ) flt_clip = .true.
+          else
+            if (  node_list%node(inode)%values(1,1,var_T ) .lt. T_min  ) flt_clip = .true.
+          endif
+
           if ( with_TiTe ) then
             flt_Ti = max(node_list%node(inode)%values(1,1,var_Ti), T_min)
             flt_Te = max(node_list%node(inode)%values(1,1,var_Te), T_min)
@@ -449,6 +462,11 @@ do i=1, n_local_elms !=== do elements
           flt_rel = floating_u_relax
           if ( floating_ramp_time .gt. 0.d0 ) &
             flt_rel = flt_rel * max(0.d0, min(1.d0, (t_now - t_start) / floating_ramp_time))
+
+          if ( flt_clip ) then
+            flt_du_dTi = 0.d0
+            flt_du_dTe = 0.d0
+          endif
 
           flt_coef          = 0.d0
           flt_coef(var_u )  =   1.d0
@@ -495,9 +513,16 @@ do i=1, n_local_elms !=== do elements
                    0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
           endif
 
-          ! --- the same constraint differentiated along the boundary, for the tangential
-          ! --- derivative degree of freedom. This is what carries grad(Phi) along the target, i.e.
-          ! --- the electric field the whole boundary condition exists to produce.
+          ! --- The same constraint differentiated along the boundary, for the tangential
+          ! --- derivative degree of freedom. Skipped when floating_u_value_only: that row slaves
+          ! --- du/dl to dTe/dl, and du/dl IS the along-wall electric field, so grid-scale noise in
+          ! --- the boundary temperature is handed straight to E, to the ExB flow, and to
+          ! --- w = Delta*u, which differentiates it again. Without the row, u still equals the
+          ! --- floating potential at every node - so Phi still varies with Te along the target,
+          ! --- which is the physics - and only the interpolation between nodes is decided by the
+          ! --- vorticity equation, which has dissipation.
+          if ( .not. floating_u_value_only ) then
+
           flt_Rb = 0.d0
           do k_flt = 1, n_var
             if ( flt_coef(k_flt) .ne. 0.d0 ) &
@@ -526,6 +551,8 @@ do i=1, n_local_elms !=== do elements
                    index_node2, flt_row, in, index_min, index_max, RHS_loc,&
                    0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
           endif
+
+          endif   !=== .not. floating_u_value_only
 
         endif   !=== apply_floating_u
 

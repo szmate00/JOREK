@@ -210,6 +210,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 min_sheath_angle, bcs, part_kill_ratio,             &
                 floating_Lambda, floating_Lambda_local,             &
                 floating_V_wall, floating_u_relax, floating_ramp_time, &
+                floating_u_value_only,                              &
                 use_sc, add_sources_in_sc, visco_sc_num,            &
                 D_perp_sc_num, D_par_sc_num, ZK_perp_sc_num,        &
                 ZK_par_sc_num, ZK_i_perp_sc_num, ZK_i_par_sc_num,   &

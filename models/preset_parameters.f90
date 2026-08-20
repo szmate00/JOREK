@@ -102,6 +102,7 @@ subroutine preset_parameters
   floating_V_wall       =  0.d0
   floating_u_relax      =  1.d0
   floating_ramp_time    =  0.d0
+  floating_u_value_only = .false.
 
   amix                 = 0.d0
   amix_freeb           = 0.85d0
