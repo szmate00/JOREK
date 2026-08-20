@@ -65,7 +65,7 @@ logical :: apply_floating_u
 real*8  :: flt_Ti, flt_Te, flt_T, flt_lam, flt_dlam_dTi, flt_dlam_dTe
 real*8  :: flt_a_n, flt_vw, flt_u, flt_du_dTi, flt_du_dTe, flt_rel
 real*8  :: flt_coef(n_var), flt_R, flt_Rb, flt_lam0
-integer :: k_flt
+integer :: k_flt, flt_row
 real*8,                             intent(in)    :: R_axis
 real*8,                             intent(in)    :: Z_axis
 real*8,                             intent(in)    :: psi_axis
@@ -460,6 +460,15 @@ do i=1, n_local_elms !=== do elements
           endif
           flt_R = flt_u - node_list%node(inode)%values(1,1,var_u)
 
+          ! --- Which ROW carries the constraint. With a Dirichlet on w the natural place is the u
+          ! --- row. With w free, JOREK's idiom is to put the condition on u into the w EQUATION
+          ! --- instead and leave the u row to the vorticity equation - the same swap the code uses
+          ! --- for "fixed psi but free zj". The constraint count is preserved either way: one
+          ! --- condition, one row. That matters here because u is no longer constant along the
+          ! --- wall, so Delta*u is not the frozen w and pinning both would be inconsistent.
+          flt_row = var_u
+          if ( .not. bcs(bnd_type)%dirichlet%w ) flt_row = var_w
+
           index_node  = node_list%node(inode)%index(1)
           index_node2 = node_list%node(inode)%index(iv_dir)
 
@@ -467,22 +476,22 @@ do i=1, n_local_elms !=== do elements
             if ( flt_coef(k_flt) .eq. 0.d0 ) cycle
             if ( k_flt .eq. var_u ) then
               call boundary_conditions_add_one_entry(                      &
-                     index_node, var_u, in, index_node, k_flt, in,         &
+                     index_node, flt_row, in, index_node, k_flt, in,       &
                      zbig * flt_coef(k_flt), index_min, index_max, a_mat)
             else
               call boundary_conditions_add_one_entry(                      &
-                     index_node, var_u, in, index_node, k_flt, in,         &
+                     index_node, flt_row, in, index_node, k_flt, in,       &
                      zbig * flt_rel * flt_coef(k_flt), index_min, index_max, a_mat)
             endif
           enddo
 
           if (in .eq. 1) then
             call boundary_conditions_add_RHS(                              &
-                   index_node, var_u, in, index_min, index_max, RHS_loc,   &
+                   index_node, flt_row, in, index_min, index_max, RHS_loc, &
                    zbig * flt_rel * flt_R, a_mat%i_tor_min, a_mat%i_tor_max)
           else
             call boundary_conditions_add_RHS(                              &
-                   index_node, var_u, in, index_min, index_max, RHS_loc,   &
+                   index_node, flt_row, in, index_min, index_max, RHS_loc, &
                    0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
           endif
 
@@ -499,22 +508,22 @@ do i=1, n_local_elms !=== do elements
             if ( flt_coef(k_flt) .eq. 0.d0 ) cycle
             if ( k_flt .eq. var_u ) then
               call boundary_conditions_add_one_entry(                      &
-                     index_node2, var_u, in, index_node2, k_flt, in,       &
+                     index_node2, flt_row, in, index_node2, k_flt, in,     &
                      zbig * flt_coef(k_flt), index_min, index_max, a_mat)
             else
               call boundary_conditions_add_one_entry(                      &
-                     index_node2, var_u, in, index_node2, k_flt, in,       &
+                     index_node2, flt_row, in, index_node2, k_flt, in,     &
                      zbig * flt_rel * flt_coef(k_flt), index_min, index_max, a_mat)
             endif
           enddo
 
           if (in .eq. 1) then
             call boundary_conditions_add_RHS(                              &
-                   index_node2, var_u, in, index_min, index_max, RHS_loc,  &
+                   index_node2, flt_row, in, index_min, index_max, RHS_loc,&
                    zbig * flt_rel * flt_Rb, a_mat%i_tor_min, a_mat%i_tor_max)
           else
             call boundary_conditions_add_RHS(                              &
-                   index_node2, var_u, in, index_min, index_max, RHS_loc,  &
+                   index_node2, flt_row, in, index_min, index_max, RHS_loc,&
                    0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
           endif
 

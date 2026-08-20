@@ -275,6 +275,22 @@ if (my_id .eq. 0) then
     write(*,*) '      u = 0 exactly. That is the baseline, not the floating potential.'
   endif
 
+  ! --- w = Delta_pol u is a DEFINITION, not a boundary condition. Once u is held at the floating
+  ! --- potential it varies along the wall and in time with Te, so Delta*u does too - and a
+  ! --- Dirichlet on w would freeze w at its initial value, so the two drift apart. With
+  ! --- dirichlet%w = .false. the constraint on u is written into the w EQUATION instead and the u
+  ! --- row is left to the vorticity equation, which is the idiom the code already uses for "fixed
+  ! --- psi but free zj". One condition, one row, either way.
+  do i = 1, max_bnd_types
+    if ( .not. bcs(i)%floating_u ) cycle
+    if ( bcs(i)%dirichlet%w ) then
+      write(*,*) 'NOTE: bcs(', i, ')%floating_u with dirichlet%w = .true. u now varies along the'
+      write(*,*) '      wall and in time, so Delta*u does too, while w stays frozen at its initial'
+      write(*,*) '      value. Setting dirichlet%w = .false. moves the constraint on u into the w'
+      write(*,*) '      equation and lets w follow, which is the consistent choice.'
+    endif
+  enddo
+
   ! --- Calculate normalisation factor for MGI source (related to its toroidal shape)
   ns_tor_norm = ns_deltaphi * PI**0.5 * ERF(PI/ns_deltaphi)
 
