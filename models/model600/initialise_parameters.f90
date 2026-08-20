@@ -283,11 +283,14 @@ if (my_id .eq. 0) then
   ! --- psi but free zj". One condition, one row, either way.
   do i = 1, max_bnd_types
     if ( .not. bcs(i)%floating_u ) cycle
-    if ( bcs(i)%dirichlet%w ) then
-      write(*,*) 'NOTE: bcs(', i, ')%floating_u with dirichlet%w = .true. u now varies along the'
-      write(*,*) '      wall and in time, so Delta*u does too, while w stays frozen at its initial'
-      write(*,*) '      value. Setting dirichlet%w = .false. moves the constraint on u into the w'
-      write(*,*) '      equation and lets w follow, which is the consistent choice.'
+    if ( .not. bcs(i)%dirichlet%w ) then
+      write(*,*) 'WARNING: bcs(', i, ')%floating_u with dirichlet%w = .false. The constraint on u is'
+      write(*,*) '         then written into the w row, which leaves the w equation unenforced at'
+      write(*,*) '         the value and tangential DOFs - w is genuinely unconstrained there.'
+      write(*,*) '         Measured on an AUG single null: w reached +-6400 over the WHOLE boundary'
+      write(*,*) '         and the run died in 29 steps, against ~500 steps and w within +-50 with'
+      write(*,*) '         dirichlet%w = .true. Formally the frozen w is inconsistent with a'
+      write(*,*) '         varying Delta*u, but in practice keeping it is much better behaved.'
     endif
   enddo
 
