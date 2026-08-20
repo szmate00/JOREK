@@ -284,6 +284,13 @@ if (my_id .eq. 0) then
   ! --- psi but free zj". One condition, one row, either way.
   do i = 1, max_bnd_types
     if ( .not. bcs(i)%floating_u ) cycle
+    if ( floating_u_value_only ) then
+      write(*,*) 'WARNING: floating_u_value_only = .true. is MEASURED BAD. Leaving u''s tangential'
+      write(*,*) '         derivative free lets the C1 cubic develop large curvature between nodes,'
+      write(*,*) '         and w = Delta*u reads it directly: w reached +-5.6e4 at both strike'
+      write(*,*) '         points and the run died in 20 steps, against 718 steps and w within +-3'
+      write(*,*) '         with the derivative row kept. Use .false.'
+    endif
     if ( .not. bcs(i)%mach1 ) then
       write(*,*) 'ERROR: bcs(', i, ')%floating_u needs mach1 = .true. The constraint is written in'
       write(*,*) '       the block that computes the local boundary geometry, which only runs for'
