@@ -39,7 +39,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                        &
        floating_Lambda, floating_Lambda_local, floating_V_wall, floating_u_relax,              &
-       floating_ramp_time, t_start, floating_u_value_only
+       floating_ramp_time, t_start, floating_u_value_only, floating_min_bn
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -380,181 +380,6 @@ do i=1, n_local_elms !=== do elements
 
         enddo !=== variables
 
-        !--------------------------------------------------------------------------------------------
-        ! --- FLOATING-POTENTIAL BOUNDARY CONDITION ON u  (bcs%floating_u)
-        !
-        ! --- Hold the plasma potential at the wall at the value a surface takes up when it draws no
-        ! --- net current - the floating potential:
-        ! ---     Phi_float = Lambda*Te/e + V_wall ,   Lambda = Lambda_0 - ln sqrt(gamma*(1+Ti/Te))
-        ! --- The standard Dirichlet pins u = 0, i.e. Phi = 0, which is not a neutral choice: it is
-        ! --- the electron-saturation point, and it suppresses the SOL electric field entirely.
-        !
-        ! --- Because Te varies along the target, so does Phi, giving E ~ Lambda*grad(Te)/e along the
-        ! --- wall and the associated ExB drift. That drift - notably through the private flux region
-        ! --- - is the leading-order driver of the in-out density asymmetry, so this alone is enough
-        ! --- to let a SOL potential structure develop. What it does NOT capture is the deviation of
-        ! --- Phi from floating that a net current would produce (thermoelectric currents); that
-        ! --- needs the full j-V characteristic and a free potential.
-        !
-        ! --- NOTE the sign convention: the electrostatic potential is Phi = -F0*u in the code's
-        ! --- variables. model600 implements v_pol = +R grad(u) x e_phi, whereas the JOREK reference
-        ! --- paper (Hoelzl et al 2021 eq. 26) defines u = Phi/F0 with v_pol = -R grad(u) x e_phi, so
-        ! --- the code's u is minus the paper's. That is where the minus in a_n comes from, and every
-        ! --- coefficient below follows from it.
-        !
-        ! --- The row is the Dirichlet it replaces, with a state-dependent target instead of zero:
-        ! ---     du - (dPhi_float/dTi) dTi - (dPhi_float/dTe) dTe = u_float - u0
-        ! --- The diagonal is never relaxed, so floating_u_relax -> 0 reproduces the plain Dirichlet
-        ! --- exactly. Together with floating_ramp_time that gives a continuation whose two ends are
-        ! --- both well posed - the baseline at one end, the floating potential at the other.
-        !--------------------------------------------------------------------------------------------
-        if ( apply_floating_u ) then
-
-          ! --- T_min is a HARD clip, so where it bites u_float no longer depends on the
-          ! --- temperature and neither may the Jacobian. Carrying the unclipped derivative there
-          ! --- would linearise a constant, which is exactly the sort of inconsistency that shows
-          ! --- up as a slow boundary instability rather than an obvious error.
-          flt_clip = .false.
-          if ( with_TiTe ) then
-            if ( (node_list%node(inode)%values(1,1,var_Ti) .lt. T_min) .or.                       &
-                 (node_list%node(inode)%values(1,1,var_Te) .lt. T_min) ) flt_clip = .true.
-          else
-            if (  node_list%node(inode)%values(1,1,var_T ) .lt. T_min  ) flt_clip = .true.
-          endif
-
-          if ( with_TiTe ) then
-            flt_Ti = max(node_list%node(inode)%values(1,1,var_Ti), T_min)
-            flt_Te = max(node_list%node(inode)%values(1,1,var_Te), T_min)
-          else
-            flt_T  = max(node_list%node(inode)%values(1,1,var_T ), T_min)
-            flt_Ti = 0.5d0 * flt_T
-            flt_Te = 0.5d0 * flt_T
-          endif
-          flt_T = flt_Ti + flt_Te
-
-          ! --- Lambda_0 = ln sqrt(m_i/(2*pi*m_e)), about 3 for deuterium
-          if ( floating_Lambda .gt. 0.d0 ) then
-            flt_lam0 = floating_Lambda
-          else
-            flt_lam0 = log( sqrt( central_mass * ATOMIC_MASS_UNIT / (2.d0*PI*MASS_ELECTRON) ) )
-          endif
-
-          if ( floating_Lambda_local ) then
-            flt_lam      = flt_lam0 - 0.5d0 * log( GAMMA * flt_T / flt_Te )
-            flt_dlam_dTi = - 0.5d0 / flt_T
-            flt_dlam_dTe =   0.5d0 * flt_Ti / (flt_Te * flt_T)
-          else
-            flt_lam      = flt_lam0
-            flt_dlam_dTi = 0.d0
-            flt_dlam_dTe = 0.d0
-          endif
-
-          ! --- e*Phi/(k*Te) = (a_n*u/2 - vw)/Te, so Phi = Phi_float means u = 2*(Te*Lambda + vw)/a_n
-          flt_a_n = - 2.d0 * EL_CHG * F0                                                          &
-                    * sqrt( MU_ZERO * central_density * 1.d20 * central_mass * ATOMIC_MASS_UNIT ) &
-                    / (central_mass * ATOMIC_MASS_UNIT)
-          flt_vw  = EL_CHG * floating_V_wall * MU_ZERO * central_density * 1.d20
-
-          flt_u      = 2.d0 * ( flt_Te * flt_lam + flt_vw ) / flt_a_n
-          flt_du_dTi = 2.d0 *   flt_Te * flt_dlam_dTi / flt_a_n
-          flt_du_dTe = 2.d0 * ( flt_lam + flt_Te * flt_dlam_dTe ) / flt_a_n
-
-          flt_rel = floating_u_relax
-          if ( floating_ramp_time .gt. 0.d0 ) &
-            flt_rel = flt_rel * max(0.d0, min(1.d0, (t_now - t_start) / floating_ramp_time))
-
-          if ( flt_clip ) then
-            flt_du_dTi = 0.d0
-            flt_du_dTe = 0.d0
-          endif
-
-          flt_coef          = 0.d0
-          flt_coef(var_u )  =   1.d0
-          if ( with_TiTe ) then
-            flt_coef(var_Ti) = - flt_du_dTi
-            flt_coef(var_Te) = - flt_du_dTe
-          else
-            flt_coef(var_T ) = - 0.5d0 * ( flt_du_dTi + flt_du_dTe )
-          endif
-          flt_R = flt_u - node_list%node(inode)%values(1,1,var_u)
-
-          ! --- Which ROW carries the constraint. With a Dirichlet on w the natural place is the u
-          ! --- row. With w free, JOREK's idiom is to put the condition on u into the w EQUATION
-          ! --- instead and leave the u row to the vorticity equation - the same swap the code uses
-          ! --- for "fixed psi but free zj". The constraint count is preserved either way: one
-          ! --- condition, one row. That matters here because u is no longer constant along the
-          ! --- wall, so Delta*u is not the frozen w and pinning both would be inconsistent.
-          flt_row = var_u
-          if ( .not. bcs(bnd_type)%dirichlet%w ) flt_row = var_w
-
-          index_node  = node_list%node(inode)%index(1)
-          index_node2 = node_list%node(inode)%index(iv_dir)
-
-          do k_flt = 1, n_var
-            if ( flt_coef(k_flt) .eq. 0.d0 ) cycle
-            if ( k_flt .eq. var_u ) then
-              call boundary_conditions_add_one_entry(                      &
-                     index_node, flt_row, in, index_node, k_flt, in,       &
-                     zbig * flt_coef(k_flt), index_min, index_max, a_mat)
-            else
-              call boundary_conditions_add_one_entry(                      &
-                     index_node, flt_row, in, index_node, k_flt, in,       &
-                     zbig * flt_rel * flt_coef(k_flt), index_min, index_max, a_mat)
-            endif
-          enddo
-
-          if (in .eq. 1) then
-            call boundary_conditions_add_RHS(                              &
-                   index_node, flt_row, in, index_min, index_max, RHS_loc, &
-                   zbig * flt_rel * flt_R, a_mat%i_tor_min, a_mat%i_tor_max)
-          else
-            call boundary_conditions_add_RHS(                              &
-                   index_node, flt_row, in, index_min, index_max, RHS_loc, &
-                   0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
-          endif
-
-          ! --- The same constraint differentiated along the boundary, for the tangential
-          ! --- derivative degree of freedom. Skipped when floating_u_value_only: that row slaves
-          ! --- du/dl to dTe/dl, and du/dl IS the along-wall electric field, so grid-scale noise in
-          ! --- the boundary temperature is handed straight to E, to the ExB flow, and to
-          ! --- w = Delta*u, which differentiates it again. Without the row, u still equals the
-          ! --- floating potential at every node - so Phi still varies with Te along the target,
-          ! --- which is the physics - and only the interpolation between nodes is decided by the
-          ! --- vorticity equation, which has dissipation.
-          if ( .not. floating_u_value_only ) then
-
-          flt_Rb = 0.d0
-          do k_flt = 1, n_var
-            if ( flt_coef(k_flt) .ne. 0.d0 ) &
-              flt_Rb = flt_Rb - flt_coef(k_flt) * node_list%node(inode)%values(1,iv_dir,k_flt)
-          enddo
-
-          do k_flt = 1, n_var
-            if ( flt_coef(k_flt) .eq. 0.d0 ) cycle
-            if ( k_flt .eq. var_u ) then
-              call boundary_conditions_add_one_entry(                      &
-                     index_node2, flt_row, in, index_node2, k_flt, in,     &
-                     zbig * flt_coef(k_flt), index_min, index_max, a_mat)
-            else
-              call boundary_conditions_add_one_entry(                      &
-                     index_node2, flt_row, in, index_node2, k_flt, in,     &
-                     zbig * flt_rel * flt_coef(k_flt), index_min, index_max, a_mat)
-            endif
-          enddo
-
-          if (in .eq. 1) then
-            call boundary_conditions_add_RHS(                              &
-                   index_node2, flt_row, in, index_min, index_max, RHS_loc,&
-                   zbig * flt_rel * flt_Rb, a_mat%i_tor_min, a_mat%i_tor_max)
-          else
-            call boundary_conditions_add_RHS(                              &
-                   index_node2, flt_row, in, index_min, index_max, RHS_loc,&
-                   0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
-          endif
-
-          endif   !=== .not. floating_u_value_only
-
-        endif   !=== apply_floating_u
 
         if ((node_list%node(inode)%boundary .eq.  3) .and. (node_list%node(inode2)%boundary .eq.  2)) cycle
 
@@ -676,6 +501,196 @@ do i=1, n_local_elms !=== do elements
             factor_b  = 0.d0
             factor_bb = 0.d0
           endif
+          !--------------------------------------------------------------------------------------------
+          ! --- FLOATING-POTENTIAL BOUNDARY CONDITION ON u  (bcs%floating_u)
+          !
+          ! --- Hold the plasma potential at the wall at the value a surface takes up when it draws no
+          ! --- net current - the floating potential:
+          ! ---     Phi_float = Lambda*Te/e + V_wall ,   Lambda = Lambda_0 - ln sqrt(gamma*(1+Ti/Te))
+          ! --- The standard Dirichlet pins u = 0, i.e. Phi = 0, which is not a neutral choice: it is
+          ! --- the electron-saturation point, and it suppresses the SOL electric field entirely.
+          !
+          ! --- Because Te varies along the target, so does Phi, giving E ~ Lambda*grad(Te)/e along the
+          ! --- wall and the associated ExB drift. That drift - notably through the private flux region
+          ! --- - is the leading-order driver of the in-out density asymmetry, so this alone is enough
+          ! --- to let a SOL potential structure develop. What it does NOT capture is the deviation of
+          ! --- Phi from floating that a net current would produce (thermoelectric currents); that
+          ! --- needs the full j-V characteristic and a free potential.
+          !
+          ! --- NOTE the sign convention: the electrostatic potential is Phi = -F0*u in the code's
+          ! --- variables. model600 implements v_pol = +R grad(u) x e_phi, whereas the JOREK reference
+          ! --- paper (Hoelzl et al 2021 eq. 26) defines u = Phi/F0 with v_pol = -R grad(u) x e_phi, so
+          ! --- the code's u is minus the paper's. That is where the minus in a_n comes from, and every
+          ! --- coefficient below follows from it.
+          !
+          ! --- The row is the Dirichlet it replaces, with a state-dependent target instead of zero:
+          ! ---     du - (dPhi_float/dTi) dTi - (dPhi_float/dTe) dTe = u_float - u0
+          ! --- The diagonal is never relaxed, so floating_u_relax -> 0 reproduces the plain Dirichlet
+          ! --- exactly. Together with floating_ramp_time that gives a continuation whose two ends are
+          ! --- both well posed - the baseline at one end, the floating potential at the other.
+          !--------------------------------------------------------------------------------------------
+          if ( apply_floating_u ) then
+
+            ! --- T_min is a HARD clip, so where it bites u_float no longer depends on the
+            ! --- temperature and neither may the Jacobian. Carrying the unclipped derivative there
+            ! --- would linearise a constant, which is exactly the sort of inconsistency that shows
+            ! --- up as a slow boundary instability rather than an obvious error.
+            flt_clip = .false.
+            if ( with_TiTe ) then
+              if ( (node_list%node(inode)%values(1,1,var_Ti) .lt. T_min) .or.                       &
+                   (node_list%node(inode)%values(1,1,var_Te) .lt. T_min) ) flt_clip = .true.
+            else
+              if (  node_list%node(inode)%values(1,1,var_T ) .lt. T_min  ) flt_clip = .true.
+            endif
+
+            if ( with_TiTe ) then
+              flt_Ti = max(node_list%node(inode)%values(1,1,var_Ti), T_min)
+              flt_Te = max(node_list%node(inode)%values(1,1,var_Te), T_min)
+            else
+              flt_T  = max(node_list%node(inode)%values(1,1,var_T ), T_min)
+              flt_Ti = 0.5d0 * flt_T
+              flt_Te = 0.5d0 * flt_T
+            endif
+            flt_T = flt_Ti + flt_Te
+
+            ! --- Lambda_0 = ln sqrt(m_i/(2*pi*m_e)), about 3 for deuterium
+            if ( floating_Lambda .gt. 0.d0 ) then
+              flt_lam0 = floating_Lambda
+            else
+              flt_lam0 = log( sqrt( central_mass * ATOMIC_MASS_UNIT / (2.d0*PI*MASS_ELECTRON) ) )
+            endif
+
+            if ( floating_Lambda_local ) then
+              flt_lam      = flt_lam0 - 0.5d0 * log( GAMMA * flt_T / flt_Te )
+              flt_dlam_dTi = - 0.5d0 / flt_T
+              flt_dlam_dTe =   0.5d0 * flt_Ti / (flt_Te * flt_T)
+            else
+              flt_lam      = flt_lam0
+              flt_dlam_dTi = 0.d0
+              flt_dlam_dTe = 0.d0
+            endif
+
+            ! --- e*Phi/(k*Te) = (a_n*u/2 - vw)/Te, so Phi = Phi_float means u = 2*(Te*Lambda + vw)/a_n
+            flt_a_n = - 2.d0 * EL_CHG * F0                                                          &
+                      * sqrt( MU_ZERO * central_density * 1.d20 * central_mass * ATOMIC_MASS_UNIT ) &
+                      / (central_mass * ATOMIC_MASS_UNIT)
+            flt_vw  = EL_CHG * floating_V_wall * MU_ZERO * central_density * 1.d20
+
+            flt_u      = 2.d0 * ( flt_Te * flt_lam + flt_vw ) / flt_a_n
+            flt_du_dTi = 2.d0 *   flt_Te * flt_dlam_dTi / flt_a_n
+            flt_du_dTe = 2.d0 * ( flt_lam + flt_Te * flt_dlam_dTe ) / flt_a_n
+
+            flt_rel = floating_u_relax
+            if ( floating_ramp_time .gt. 0.d0 ) &
+              flt_rel = flt_rel * max(0.d0, min(1.d0, (t_now - t_start) / floating_ramp_time))
+
+            ! --- OPTIONAL obliqueness gate, off by default and NOT required by the physics.
+            ! --- Phi_float = Lambda*Te/e is a property of the sheath in front of a material
+            ! --- surface and does not project with the incidence angle: a surface at 2 degrees
+            ! --- floats at the same potential as one at 45. What projects is the current DENSITY
+            ! --- through the wall, which is why a j-V sheath condition needs a gate like this and
+            ! --- the floating potential does not. The Mach 1 condition just below follows the same
+            ! --- convention - vpar = +-c_s over the whole boundary type, with the Chodura factor
+            ! --- smoothing only the edges where b_n changes sign.
+            ! --- Kept as a numerical experiment: if boundary structures show up on near-tangential
+            ! --- stretches, gating them out isolates whether they originate there. The gated limit
+            ! --- is exactly du = 0, i.e. the plain Dirichlet, because the diagonal is never relaxed.
+            if ( floating_min_bn .gt. 0.d0 ) &
+              flt_rel = flt_rel * bn**2 / ( bn**2 + floating_min_bn**2 )
+
+            if ( flt_clip ) then
+              flt_du_dTi = 0.d0
+              flt_du_dTe = 0.d0
+            endif
+
+            flt_coef          = 0.d0
+            flt_coef(var_u )  =   1.d0
+            if ( with_TiTe ) then
+              flt_coef(var_Ti) = - flt_du_dTi
+              flt_coef(var_Te) = - flt_du_dTe
+            else
+              flt_coef(var_T ) = - 0.5d0 * ( flt_du_dTi + flt_du_dTe )
+            endif
+            flt_R = flt_u - node_list%node(inode)%values(1,1,var_u)
+
+            ! --- Which ROW carries the constraint. With a Dirichlet on w the natural place is the u
+            ! --- row. With w free, JOREK's idiom is to put the condition on u into the w EQUATION
+            ! --- instead and leave the u row to the vorticity equation - the same swap the code uses
+            ! --- for "fixed psi but free zj". The constraint count is preserved either way: one
+            ! --- condition, one row. That matters here because u is no longer constant along the
+            ! --- wall, so Delta*u is not the frozen w and pinning both would be inconsistent.
+            flt_row = var_u
+            if ( .not. bcs(bnd_type)%dirichlet%w ) flt_row = var_w
+
+            index_node  = node_list%node(inode)%index(1)
+            index_node2 = node_list%node(inode)%index(iv_dir)
+
+            do k_flt = 1, n_var
+              if ( flt_coef(k_flt) .eq. 0.d0 ) cycle
+              if ( k_flt .eq. var_u ) then
+                call boundary_conditions_add_one_entry(                      &
+                       index_node, flt_row, in, index_node, k_flt, in,       &
+                       zbig * flt_coef(k_flt), index_min, index_max, a_mat)
+              else
+                call boundary_conditions_add_one_entry(                      &
+                       index_node, flt_row, in, index_node, k_flt, in,       &
+                       zbig * flt_rel * flt_coef(k_flt), index_min, index_max, a_mat)
+              endif
+            enddo
+
+            if (in .eq. 1) then
+              call boundary_conditions_add_RHS(                              &
+                     index_node, flt_row, in, index_min, index_max, RHS_loc, &
+                     zbig * flt_rel * flt_R, a_mat%i_tor_min, a_mat%i_tor_max)
+            else
+              call boundary_conditions_add_RHS(                              &
+                     index_node, flt_row, in, index_min, index_max, RHS_loc, &
+                     0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
+            endif
+
+            ! --- The same constraint differentiated along the boundary, for the tangential
+            ! --- derivative degree of freedom. Skipped when floating_u_value_only: that row slaves
+            ! --- du/dl to dTe/dl, and du/dl IS the along-wall electric field, so grid-scale noise in
+            ! --- the boundary temperature is handed straight to E, to the ExB flow, and to
+            ! --- w = Delta*u, which differentiates it again. Without the row, u still equals the
+            ! --- floating potential at every node - so Phi still varies with Te along the target,
+            ! --- which is the physics - and only the interpolation between nodes is decided by the
+            ! --- vorticity equation, which has dissipation.
+            if ( .not. floating_u_value_only ) then
+
+            flt_Rb = 0.d0
+            do k_flt = 1, n_var
+              if ( flt_coef(k_flt) .ne. 0.d0 ) &
+                flt_Rb = flt_Rb - flt_coef(k_flt) * node_list%node(inode)%values(1,iv_dir,k_flt)
+            enddo
+
+            do k_flt = 1, n_var
+              if ( flt_coef(k_flt) .eq. 0.d0 ) cycle
+              if ( k_flt .eq. var_u ) then
+                call boundary_conditions_add_one_entry(                      &
+                       index_node2, flt_row, in, index_node2, k_flt, in,     &
+                       zbig * flt_coef(k_flt), index_min, index_max, a_mat)
+              else
+                call boundary_conditions_add_one_entry(                      &
+                       index_node2, flt_row, in, index_node2, k_flt, in,     &
+                       zbig * flt_rel * flt_coef(k_flt), index_min, index_max, a_mat)
+              endif
+            enddo
+
+            if (in .eq. 1) then
+              call boundary_conditions_add_RHS(                              &
+                     index_node2, flt_row, in, index_min, index_max, RHS_loc,&
+                     zbig * flt_rel * flt_Rb, a_mat%i_tor_min, a_mat%i_tor_max)
+            else
+              call boundary_conditions_add_RHS(                              &
+                     index_node2, flt_row, in, index_min, index_max, RHS_loc,&
+                     0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
+            endif
+
+            endif   !=== .not. floating_u_value_only
+
+          endif   !=== apply_floating_u
+
           Hfact_b   = factor * R_b / BigR  + factor_b
           Hfact_bb  = factor * R_bb/ BigR - factor * R_b**2 / BigR**2  + factor_bb
 

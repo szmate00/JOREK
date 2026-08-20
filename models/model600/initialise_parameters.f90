@@ -210,7 +210,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 min_sheath_angle, bcs, part_kill_ratio,             &
                 floating_Lambda, floating_Lambda_local,             &
                 floating_V_wall, floating_u_relax, floating_ramp_time, &
-                floating_u_value_only,                              &
+                floating_u_value_only, floating_min_bn,             &
                 use_sc, add_sources_in_sc, visco_sc_num,            &
                 D_perp_sc_num, D_par_sc_num, ZK_perp_sc_num,        &
                 ZK_par_sc_num, ZK_i_perp_sc_num, ZK_i_par_sc_num,   &
@@ -284,6 +284,13 @@ if (my_id .eq. 0) then
   ! --- psi but free zj". One condition, one row, either way.
   do i = 1, max_bnd_types
     if ( .not. bcs(i)%floating_u ) cycle
+    if ( .not. bcs(i)%mach1 ) then
+      write(*,*) 'ERROR: bcs(', i, ')%floating_u needs mach1 = .true. The constraint is written in'
+      write(*,*) '       the block that computes the local boundary geometry, which only runs for'
+      write(*,*) '       mach1 types. mach1 also marks the surfaces plasma actually flows to, i.e.'
+      write(*,*) '       the ones that form a sheath, so the two belong together.'
+      stop
+    endif
     if ( .not. bcs(i)%dirichlet%w ) then
       write(*,*) 'WARNING: bcs(', i, ')%floating_u with dirichlet%w = .false. The constraint on u is'
       write(*,*) '         then written into the w row, which leaves the w equation unenforced at'
