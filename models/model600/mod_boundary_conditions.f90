@@ -67,6 +67,8 @@ real*8  :: flt_a_n, flt_vw, flt_u, flt_du_dTi, flt_du_dTe, flt_rel
 real*8  :: flt_coef(n_var), flt_R, flt_Rb, flt_lam0
 integer :: k_flt, flt_row
 logical :: flt_clip
+integer :: flt_trt, flt_trt2, flt_bnd2, flt_njump
+logical, save :: flt_scanned = .false.
 real*8,                             intent(in)    :: R_axis
 real*8,                             intent(in)    :: Z_axis
 real*8,                             intent(in)    :: psi_axis
@@ -529,6 +531,53 @@ do i=1, n_local_elms !=== do elements
           ! --- exactly. Together with floating_ramp_time that gives a continuation whose two ends are
           ! --- both well posed - the baseline at one end, the floating potential at the other.
           !--------------------------------------------------------------------------------------------
+          ! --- CONSISTENCY OF THE u BC ACROSS BOUNDARY-TYPE JUNCTIONS
+          ! ---
+          ! --- bnd_type is a property of the NODE, so two nodes at opposite ends of the same
+          ! --- boundary edge may carry different types and therefore different conditions on u.
+          ! --- If one is held at the floating potential and its neighbour is pinned by the plain
+          ! --- Dirichlet, u jumps by the full Phi_float across a single element - tens of volts at
+          ! --- ordinary target temperatures. The resulting grad(u) is a spurious ExB velocity
+          ! --- localised at that junction, with no physical content whatsoever: it is an artefact
+          ! --- of the two types having been configured differently.
+          ! ---
+          ! --- This is silent otherwise, and it is worst exactly where the cells are smallest,
+          ! --- so it is reported once per run, with coordinates.
+          if ( .not. flt_scanned ) then
+            flt_bnd2 = node_list%node(inode2)%boundary
+            flt_trt  = 0
+            flt_trt2 = 0
+            if ( bnd_type .gt. 0 ) then
+              if ( bcs(bnd_type)%floating_u ) then
+                flt_trt = 2
+              elseif ( bcs(bnd_type)%dirichlet%u ) then
+                flt_trt = 1
+              endif
+            endif
+            if ( flt_bnd2 .gt. 0 ) then
+              if ( bcs(flt_bnd2)%floating_u ) then
+                flt_trt2 = 2
+              elseif ( bcs(flt_bnd2)%dirichlet%u ) then
+                flt_trt2 = 1
+              endif
+            endif
+            if ( (flt_trt .ne. flt_trt2) .and. (max(flt_trt,flt_trt2) .eq. 2) ) then
+              write(*,'(A,I3,A,I3,A,2f9.4)')                                                       &
+                ' WARNING [boundary_conditions]: u BC changes across a boundary edge, type ',      &
+                bnd_type, ' -> ', flt_bnd2, '  at R,Z = ',                                         &
+                node_list%node(inode)%x(1,1,1), node_list%node(inode)%x(1,1,2)
+              write(*,'(A)')                                                                       &
+                '          u jumps by the full floating potential over one element here. Set'//    &
+                ' floating_u on'
+              write(*,'(A)')                                                                       &
+                '          BOTH types (normally every type where field lines strike the wall,'//   &
+                ' i.e. every'
+              write(*,'(A)')                                                                       &
+                '          type carrying mach1) or the jump drives a spurious ExB flow at this'//  &
+                ' junction.'
+            endif
+          endif
+
           if ( apply_floating_u ) then
 
             ! --- T_min is a HARD clip, so where it bites u_float no longer depends on the
@@ -956,6 +1005,8 @@ if (RMP_on) then
   if (allocated(dpsi_RMP_sin_dR1))     call tr_deallocate(dpsi_RMP_sin_dR1,"dpsi_RMP_sin_dR1",CAT_UNKNOWN)
   if (allocated(dpsi_RMP_sin_dZ1))     call tr_deallocate(dpsi_RMP_sin_dZ1,"dpsi_RMP_sin_dZ1",CAT_UNKNOWN)
 endif
+
+flt_scanned = .true.   ! --- the u-BC junction scan above is a one-off report
 
 return
 end subroutine boundary_conditions 
