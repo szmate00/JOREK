@@ -595,13 +595,16 @@ do i=1, n_local_elms !=== do elements
               else
                 bcdiag_ok = .true.
                 write(bcdiag_unit,'(A)') '#            R               Z  bnd_type    iv_dir'//   &
-                                         '              bn       direction          factor'
+                                         '              bn       direction          factor'//   &
+                                         '          ps0_b'
               endif
             endif
             if ( bcdiag_ok ) then
-              write(bcdiag_unit,'(2f16.8,2i10,3es16.6)')                                          &
+              ! --- ps0_b is dumped so mach1_psib_floor can be chosen from the actual distribution
+              ! --- rather than guessed: it is the quantity the Mach-1 ExB term divides by.
+              write(bcdiag_unit,'(2f16.8,2i10,4es16.6)')                                          &
                 node_list%node(inode)%x(1,1,1), node_list%node(inode)%x(1,1,2),                   &
-                bnd_type, iv_dir, bn, direction, factor
+                bnd_type, iv_dir, bn, direction, factor, ps0_b
             endif
 
             if ( bcdiag_vis(inode) .eq. 0 ) then

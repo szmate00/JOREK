@@ -57,6 +57,7 @@ def main():
     d = load(paths)
     R, Z, bt, ivd, bn, dirn, fac = (d[:,0], d[:,1], d[:,2].astype(int),
                                     d[:,3].astype(int), d[:,4], d[:,5], d[:,6])
+    psb = d[:,7] if d.shape[1] > 7 else None
     print(f"read {len(paths)} file(s), {len(d)} visits")
 
     # --- group visits by node position (coordinates are written with fixed precision)
@@ -148,6 +149,21 @@ def main():
         print("     so a few entries near the sort seam may be spurious - check R,Z)")
     else:
         print("    none")
+
+    # --- ps0_b, the quantity the Mach-1 ExB term divides by. mach1_psib_floor should sit below
+    # --- the values on the targets (so the physical term is untouched there) and above the
+    # --- near-tangential tail (so the amplification is bounded).
+    if psb is not None:
+        a = np.abs(psb[psb != 0.0])
+        if a.size:
+            print("\n=== |ps0_b| DISTRIBUTION (for choosing mach1_psib_floor) ===")
+            for q in (0.1, 1, 5, 25, 50):
+                print(f"    {q:5.1f}th percentile: {np.percentile(a, q):.4e}")
+            print(f"    minimum          : {a.min():.4e}")
+            i = int(np.argmin(np.abs(psb)))
+            print(f"    smallest |ps0_b| at R={R[i]:.4f} Z={Z[i]:.4f}, type {bt[i]}, bn={bn[i]:.3e}")
+            print("    A floor near the 1st-5th percentile bounds the tail while leaving the")
+            print("    bulk of the boundary, including the targets, unchanged.")
 
     if region:
         Rmin, Rmax, Zmin, Zmax = region
