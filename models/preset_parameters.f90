@@ -464,6 +464,8 @@ subroutine preset_parameters
   bcs( 19)%mach1 = .true.
 
   ! --- Natural BCs
+  bcs(:)%natural%w       = .false.
+  bcs(:)%natural%zj      = .false.
   bcs(:)%natural%rho     = .false.
   bcs(:)%natural%T       = .false.
   bcs(:)%natural%Ti      = .false.

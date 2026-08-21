@@ -301,14 +301,43 @@ if (my_id .eq. 0) then
       write(*,*) '       the ones that form a sheath, so the two belong together.'
       stop
     endif
-    if ( .not. bcs(i)%dirichlet%w ) then
-      write(*,*) 'WARNING: bcs(', i, ')%floating_u with dirichlet%w = .false. The constraint on u is'
-      write(*,*) '         then written into the w row, which leaves the w equation unenforced at'
-      write(*,*) '         the value and tangential DOFs - w is genuinely unconstrained there.'
-      write(*,*) '         Measured on an AUG single null: w reached +-6400 over the WHOLE boundary'
-      write(*,*) '         and the run died in 29 steps, against ~500 steps and w within +-50 with'
-      write(*,*) '         dirichlet%w = .true. Formally the frozen w is inconsistent with a'
-      write(*,*) '         varying Delta*u, but in practice keeping it is much better behaved.'
+    if ( (.not. bcs(i)%dirichlet%w) .and. (.not. floating_keep_u_row) ) then
+      write(*,*) 'WARNING: bcs(', i, ')%floating_u with dirichlet%w = .false. and'
+      write(*,*) '         floating_keep_u_row = .false. The constraint on u is then written into'
+      write(*,*) '         the w row, leaving the w equation unenforced at the value and tangential'
+      write(*,*) '         DOFs - w is genuinely unconstrained there. Measured on an AUG single'
+      write(*,*) '         null: w reached +-6400 over the WHOLE boundary and the run died in 29'
+      write(*,*) '         steps, against ~500 steps with dirichlet%w = .true.'
+      write(*,*) '         To free w WITHOUT the swap, set floating_keep_u_row = .true., and add'
+      write(*,*) '         natural%w so the vorticity definition keeps its surface term.'
+    endif
+    if ( (.not. bcs(i)%dirichlet%w) .and. floating_keep_u_row .and. (.not. bcs(i)%natural%w) ) then
+      write(*,*) 'WARNING: bcs(', i, ')%floating_u with the constraint kept in the u row and w free,'
+      write(*,*) '         but natural%w = .false. The w row holds w = Delta*u in WEAK form, so'
+      write(*,*) '         dropping its surface term silently imposes grad(u).n = 0 at the wall -'
+      write(*,*) '         harmless while u is constant there, not harmless once it varies. Set'
+      write(*,*) '         natural%w = .true. (which also needs bc_natural_open = .true.).'
+    endif
+  enddo
+  ! --- Surface terms of the definition equations w = Delta_pol u and zj = Delta*psi. A surface
+  ! --- integral only reaches rows whose test function is non-zero on the boundary edge, i.e. the
+  ! --- value and tangential-derivative DOFs - exactly the rows a Dirichlet on the same variable
+  ! --- overwrites. So with the Dirichlet still on, the term would impose nothing at all.
+  do i = 1, max_bnd_types
+    if ( (bcs(i)%natural%w .or. bcs(i)%natural%zj) .and. (.not. bc_natural_open) ) then
+      write(*,*) 'ERROR: bcs(', i, ')%natural%w / %natural%zj need bc_natural_open = .true.;'
+      write(*,*) '       the boundary integrals are assembled in that branch of construct_matrix.'
+      stop
+    endif
+    if ( bcs(i)%natural%zj .and. bcs(i)%dirichlet%zj ) then
+      write(*,*) 'ERROR: bcs(', i, ')%natural%zj needs dirichlet%zj = .false. With the Dirichlet on,'
+      write(*,*) '       the surface term only reaches rows the Dirichlet overwrites, so it imposes'
+      write(*,*) '       nothing and zj at the wall stays frozen at its initial value.'
+      stop
+    endif
+    if ( bcs(i)%natural%w .and. bcs(i)%dirichlet%w ) then
+      write(*,*) 'ERROR: bcs(', i, ')%natural%w needs dirichlet%w = .false.'
+      stop
     endif
   enddo
 

@@ -35,6 +35,15 @@ real*8     :: delta_g(n_plane,n_var,n_gauss), delta_s(n_plane,n_var,n_gauss)
 real*8     :: ELM(n_vertex_max*n_var*n_degrees*n_tor,n_vertex_max*n_var*n_degrees*n_tor)
 real*8     :: RHS(n_vertex_max*n_var*n_degrees*n_tor)
 real*8     :: rhs_ij(n_var), amat(n_var,n_var)
+! --- Surface terms of the two DEFINITION equations, w = Delta_pol u and zj = Delta*psi.
+! --- Their residuals depend on a normal derivative, so their Jacobians need columns at the
+! --- normal-derivative degrees of freedom as well as the value/tangential ones. amat_p carries
+! --- the second set; it is assembled at direction_perp(l) rather than direction(l).
+real*8     :: amat_p(n_var,n_var)
+real*8     :: gpn_s, gpn_t, es_perp_sign
+real*8     :: u0, u0_s, u0_t, u0_x, u0_y
+real*8     :: gradu0dotn, gradps0dotn, gradudotn, gradpsidotn
+integer    :: index_kl_p
 
 integer    :: vertex(2), direction(2), direction_perp(2), bnd_type1, bnd_type2
 integer    :: i, j, j2, j3, ms, mt, mp, k, l, l2, l3, index_ij, index_kl, index, xcase2, is
@@ -73,6 +82,7 @@ Zbig = 1.d12
 
 rhs_ij = 0.d0
 amat   = 0.d0
+amat_p = 0.d0
 
 c_angle = min_sheath_angle     * PI / 180.d0 ! --- angle factor for minimum heat and particle fluxes (in radians here)
 
@@ -117,6 +127,12 @@ delta_g = 0.d0; delta_s = 0.d0;
 direction_perp(1) = 6 / direction(2)     ! =3 if direction(2)=2, =2 if direction(2)=3
 direction_perp(2) = 4
 
+! --- Orientation of the transverse logical coordinate, exactly as applied to the FIELDS when
+! --- eq_t is accumulated below. The trial-function block omitted this flip, so on half the
+! --- boundary elements a normal-derivative Jacobian would come out with the wrong sign.
+es_perp_sign = -1.d0
+if ((vertex(1)*vertex(2) .eq. 2)) es_perp_sign = +1.d0
+
 R_mid = sum(nodes(1:2)%x(1,1,1)) / 2.d0     ! mid point on boundary (approx.)
 Z_mid = sum(nodes(1:2)%x(1,1,2)) / 2.d0
 R_cnt = sum(nodes(1:4)%x(1,1,1)) / 4.d0     ! center point within element (approx.)
@@ -137,6 +153,8 @@ do i_var=1, n_var
   if ( (i_var==var_Te  ) .and. (bcs(bnd_type1)%natural%Te   .or. bcs(bnd_type2)%natural%Te  ))  apply_natural_bc(i_var)=.true.
   if ( (i_var==var_rhon) .and. (bcs(bnd_type1)%natural%rhon .or. bcs(bnd_type2)%natural%rhon))  apply_natural_bc(i_var)=.true.
   if ( (i_var==var_vpar) .and. (bcs(bnd_type1)%natural%vpar .or. bcs(bnd_type2)%natural%vpar))  apply_natural_bc(i_var)=.true.
+  if ( (i_var==var_w   ) .and. (bcs(bnd_type1)%natural%w    .or. bcs(bnd_type2)%natural%w   ))  apply_natural_bc(i_var)=.true.
+  if ( (i_var==var_zj  ) .and. (bcs(bnd_type1)%natural%zj   .or. bcs(bnd_type2)%natural%zj  ))  apply_natural_bc(i_var)=.true.
 enddo
 
 do i=1,2    ! sum over 2 verices
@@ -208,6 +226,12 @@ do ms=1, n_gauss
   normal = dot_product(grad_t,normal_direction) * grad_t      ! outward pointing normal
   normal = normal / norm2(normal)
 
+  ! --- grad(f).n split into the part carried by the TANGENTIAL derivative of f and the part
+  ! --- carried by its NORMAL derivative:  grad(f).n = gpn_s * f_s + gpn_t * f_t . The two halves
+  ! --- belong to different degrees of freedom, so the Jacobian has to keep them apart.
+  gpn_s = (   y_t(ms) * normal(1) - x_t(ms) * normal(2) ) / xjac
+  gpn_t = ( - y_s(ms) * normal(1) + x_s(ms) * normal(2) ) / xjac
+
   neutral_source = 0.d0
 
   ! --- Neutral sources at the boundary
@@ -225,6 +249,16 @@ do ms=1, n_gauss
     ps0_t = eq_t(mp,var_psi,ms)   
     ps0_x = (   y_t(ms) * ps0_s - y_s(ms) * ps0_t ) / xjac
     ps0_y = ( - x_t(ms) * ps0_s + x_s(ms) * ps0_t ) / xjac
+
+    ! --- state for the two definition surface terms
+    u0    = eq_g(mp,var_u ,ms)
+    u0_s  = eq_s(mp,var_u ,ms)
+    u0_t  = eq_t(mp,var_u ,ms)
+    u0_x  = (   y_t(ms) * u0_s - y_s(ms) * u0_t ) / xjac
+    u0_y  = ( - x_t(ms) * u0_s + x_s(ms) * u0_t ) / xjac
+
+    gradu0dotn  = u0_x  * normal(1) + u0_y  * normal(2)
+    gradps0dotn = ps0_x * normal(1) + ps0_y * normal(2)
 
     B0_R =   ps0_y / x_g(ms)
     B0_Z = - ps0_x / x_g(ms)
@@ -336,6 +370,18 @@ do ms=1, n_gauss
             rhs_ij(var_rhon) =  v * neutral_source * BigR * dl * tstep     
           endif
 
+          ! --- Surface term of the vorticity definition w = Delta_pol u.
+          if ( apply_natural_bc(var_w) ) &
+            rhs_ij(var_w)  = + v * BigR * gradu0dotn * dl
+
+          ! --- Surface term of the current definition zj = Delta*psi. Integrating the definition
+          ! --- by parts produces this boundary flux; the volume assembly keeps only the interior
+          ! --- part, which silently imposes grad(psi).n = 0 at the wall. Restoring it makes
+          ! --- zj = Delta*psi hold up to the boundary. Note (grad(psi).n)/R = B_pol . t, the
+          ! --- poloidal field TANGENTIAL to the wall, so with v -> 1 this is Ampere's law.
+          if ( apply_natural_bc(var_zj) ) &
+            rhs_ij(var_zj) = + v * gradps0dotn / BigR * dl
+
           ! --- Most B.C.s need vpar
           if (with_vpar) then
 
@@ -383,14 +429,26 @@ do ms=1, n_gauss
               l2 = direction(l)
               element_size_kl = element%size(vertex(k),l2)
 
-              l3 = direction_perp(j)
-              element_size_perp = - element%size(vertex(k),direction_perp(1)) * 3.d0
+              ! --- direction_perp(l), NOT (j): the normal-derivative DOF that pairs with this
+              ! --- trial basis function. l=1 (value) pairs with the normal first derivative,
+              ! --- l=2 (tangential derivative) with the mixed second derivative - the same
+              ! --- pairing the field evaluation uses when it builds eq_t above.
+              l3 = direction_perp(l)
+              element_size_perp = es_perp_sign * element%size(vertex(k),direction_perp(1)) * 3.d0
 
               do in = i_tor_min, i_tor_max                                              ! loop over toroidal harmonics
+
+                ! --- amat_p is written only under apply_natural_bc, so it has to be cleared every
+                ! --- iteration or a stale entry would leak into the next trial function.
+                amat_p = 0.d0
 
                 psi    = H1(k,l,ms)    * element_size_kl * HZ(in,mp)
                 psi_s  = H1_s(k,l,ms)  * element_size_kl * HZ(in,mp)
                 psi_ss = H1_ss(k,l,ms) * element_size_kl * HZ(in,mp)
+                ! --- psi_t is the coefficient with which the NORMAL-derivative DOF
+                ! --- (vertex(k), direction_perp(l)) enters d/dn - the same combination the field
+                ! --- evaluation uses when it builds eq_t. It therefore belongs in the l3 column,
+                ! --- not the l2 one; see the split of grad(.).n below.
                 psi_t  = H1(k,l,ms)    * element_size_kl * HZ(in,mp) * element_size_perp
 
                 rho   = psi
@@ -407,6 +465,25 @@ do ms=1, n_gauss
                 vpar_y = ( - x_t(ms) * vpar_s + x_s(ms) * vpar_t ) / xjac
 
                 gradvpardotn  = (+ vpar_x * normal(1) + vpar_y * normal(2)) 
+
+                ! --- Jacobians of the two definition surface terms. grad(.).n of a trial function
+                ! --- splits exactly into gpn_s * (its tangential derivative), which belongs at the
+                ! --- value/tangential DOF l2, and gpn_t * (its normal derivative psi_t), which
+                ! --- belongs at the normal-derivative DOF l3. Writing the whole thing at l2 - as
+                ! --- a single amat entry using psi_t would - leaves the true entry missing and a
+                ! --- spurious one in its place, i.e. an effectively explicit O(1/h) boundary term.
+                gradudotn   = gpn_s * psi_s + gpn_t * psi_t   ! (identical to the unsplit form)
+                gradpsidotn = gradudotn                       ! all trial functions are equal
+
+                if ( apply_natural_bc(var_w) ) then
+                  amat  (var_w,var_u)    = - v * BigR * gpn_s * psi_s * dl
+                  amat_p(var_w,var_u)    = - v * BigR * gpn_t * psi_t * dl
+                endif
+
+                if ( apply_natural_bc(var_zj) ) then
+                  amat  (var_zj,var_psi) = - v * gpn_s * psi_s / BigR * dl
+                  amat_p(var_zj,var_psi) = - v * gpn_t * psi_t / BigR * dl
+                endif
 
                 cs_T   = gamma * T  / (2.d0 * cs0)
                 cs_Ti  = gamma * Ti / (2.d0 * cs0)
@@ -492,6 +569,9 @@ do ms=1, n_gauss
                 endif   ! with_vpar
                 index_kl = n_tor_local*n_var*n_degrees*(vertex(k)-1) + n_tor_local * n_var * (l2-1) + in - i_tor_min +1  ! index in the ELM matrix
 
+                ! --- same, at the normal-derivative degree of freedom l3 = direction_perp(l)
+                index_kl_p = n_tor_local*n_var*n_degrees*(vertex(k)-1) + n_tor_local * n_var * (l3-1) + in - i_tor_min +1
+
                 ! --- Add contributions to ELM matrix                 
                 do k_var = 1, n_var
                   do i_var = 1, n_var
@@ -501,6 +581,11 @@ do ms=1, n_gauss
                     ELM(index_ij+(i_var-1)*(n_tor_local),index_kl+(k_var-1)*(n_tor_local)) = &
                     ELM(index_ij+(i_var-1)*(n_tor_local),index_kl+(k_var-1)*(n_tor_local))   &
                       + amat(i_var,k_var) * ws
+
+                    if ( amat_p(i_var,k_var) .ne. 0.d0 )                                        &
+                      ELM(index_ij+(i_var-1)*(n_tor_local),index_kl_p+(k_var-1)*(n_tor_local)) = &
+                      ELM(index_ij+(i_var-1)*(n_tor_local),index_kl_p+(k_var-1)*(n_tor_local))   &
+                        + amat_p(i_var,k_var) * ws
 
                   enddo
                 enddo
