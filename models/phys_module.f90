@@ -83,6 +83,11 @@ module phys_module
   real*8  :: mach1_psib_floor     !< Floor in the Mach-1 ExB term: 1/ps0_b -> ps0_b/(ps0_b^2+f^2).
                                   !< ps0_b = bn*BigR*Btot*dl, so the raw form amplifies by ~1/bn.
                                   !< Zero or negative keeps the unregularised form.
+  logical :: mach1_exb_term       !< Include the ExB term factor/Btot*R^2*u_b/ps0_b in the Mach-1
+                                  !< condition. Physically it belongs there; .false. is a
+                                  !< diagnostic that isolates it, since the term is identically
+                                  !< zero under a Dirichlet u and only becomes active when u varies
+                                  !< along the wall.
   logical :: floating_u_value_only !< MEASURED BAD - keep .false. Imposes the floating potential on the NODE VALUE of u only, leaving u's tangential-derivative degree of freedom to the vorticity equation. The intent was to avoid slaving du/dl to dTe/dl. In practice it is catastrophic: with C1 cubic elements, pinning only the value while leaving the tangential derivative free lets the interpolation between nodes develop large curvature, and w = Delta*u reads that curvature directly. On an AUG single null it gave w = +-5.6e4 at both strike points and a crash in 20 steps, against 718 steps and w within +-3 when the derivative row is kept. The same was seen for the j-V sheath condition (34 steps against 174). The standard Dirichlet degree-of-freedom set - value plus one tangential derivative - is the right one; deviating from it in either direction is worse
   real*8  :: floating_ramp_time    !< Ramp the constraint in linearly over this time (JOREK units) from t_start. 0 = full strength immediately. Useful because the restart normally has u = 0 at the wall, which is Lambda*Te/e away from the target
   real*8  :: min_sheath_angle     !< For sheath boundary conditions: Minimum incident angle for heat and particle fluxes (in degrees)

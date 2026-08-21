@@ -40,7 +40,8 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        bcs, loop_voltage, central_density, central_mass,                                        &
        floating_Lambda, floating_Lambda_local, floating_V_wall, floating_u_relax,              &
        floating_ramp_time, t_start, floating_u_value_only, floating_min_bn,            &
-       floating_start_time, floating_gauge_removal, floating_amp_ramp, mach1_psib_floor
+       floating_start_time, floating_gauge_removal, floating_amp_ramp, mach1_psib_floor, &
+       mach1_exb_term
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -959,6 +960,14 @@ do i=1, n_local_elms !=== do elements
           else
             psib_inv = 1.d0 / ps0_b
           endif
+          ! --- mach1_exb_term = .false. removes this coupling outright rather than bounding it.
+          ! --- That is a diagnostic, not a physical option: the term is the ExB contribution to the
+          ! --- flow crossing the boundary and belongs in the Bohm condition. But it is identically
+          ! --- zero under a Dirichlet u and becomes active only once u varies along the wall, so
+          ! --- switching it off is the one clean way to attribute boundary structure to it rather
+          ! --- than to the floating value itself. If structures persist with it off, the coupling
+          ! --- is exonerated and the cause is in the imposed trace.
+          if ( .not. mach1_exb_term ) psib_inv = 0.d0
           Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0               + factor / Btot * BigR**2 * U0_b*psib_inv 
           Mach1BC_v   = - 1.0
           Mach1BC_T   =           + direction / Btot * factor  * cs0_T 

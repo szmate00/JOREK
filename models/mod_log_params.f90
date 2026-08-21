@@ -846,6 +846,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,LOGI_FMT) 'floating_gauge_removal', floating_gauge_removal
     write(*,LOGI_FMT) 'floating_amp_ramp     ', floating_amp_ramp
     write(*,REAL_FMT) 'mach1_psib_floor      ', mach1_psib_floor
+    write(*,LOGI_FMT) 'mach1_exb_term        ', mach1_exb_term
   end if
 
   write(*,LOGI_FMT) 'bc_natural_open       ', bc_natural_open
