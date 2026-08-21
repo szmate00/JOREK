@@ -1172,6 +1172,26 @@ if (RMP_on) then
   if (allocated(dpsi_RMP_sin_dZ1))     call tr_deallocate(dpsi_RMP_sin_dZ1,"dpsi_RMP_sin_dZ1",CAT_UNKNOWN)
 endif
 
+! --- Report the floating amplitude actually in force. Two separate no-ops have already shipped
+! --- in this boundary condition - a ramp that scaled the relaxation instead of the target, and a
+! --- ramp measured from the original t_start so that it saturated instantly after a restart - and
+! --- neither was visible from the output. The amplitude is what decides whether the condition is
+! --- doing anything at all, so print it rather than leaving it to be inferred.
+if ( any(bcs(:)%floating_u) .and. (my_id .eq. 0) ) then
+  flt_amp = 1.d0
+  if ( floating_amp_ramp .and. (floating_ramp_time .gt. 0.d0) ) then
+    flt_t0 = floating_start_time
+    if ( flt_t0 .lt. 0.d0 ) flt_t0 = t_start
+    flt_x   = max(0.d0, min(1.d0, (t_now - flt_t0) / floating_ramp_time))
+    flt_amp = flt_x**3 * ( 10.d0 - 15.d0*flt_x + 6.d0*flt_x*flt_x )
+  endif
+  write(*,'(A,es12.5,A,f8.5,A,es12.5)') ' FLOATING: t = ', t_now,                                 &
+        '   amplitude = ', flt_amp, '   gauge ref = ', flt_gauge
+  if ( flt_amp .lt. 1.d-3 ) write(*,'(A)')                                                        &
+        '          NOTE amplitude is essentially zero - the floating BC is not acting. Check'//   &
+        ' floating_start_time against the current time.'
+endif
+
 ! --- Reduce the floating-target gauge reference over all ranks for use in the next sweep. Any
 ! --- uniform constant is a valid gauge, so the only thing that matters is that every rank ends up
 ! --- with the SAME value - hence the global reduction rather than a per-rank mean.
