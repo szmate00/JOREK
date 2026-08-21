@@ -222,6 +222,48 @@ blow-up seen in the earlier free-`u` sheath campaign. Hermes-3 names it and work
 Dirichlet for well-posedness, relaxing toward zero-gradient for physics. 1 us is about 1.5 tau_A
 for the AUG case here.
 
+### The actual formulas - Loizu et al. PoP 19, 122307 (2012), Eqs. (33)-(38)
+
+Read from the paper. `s` = along B toward the wall, `x` = perpendicular (radial), `alpha` =
+field-wall angle, `h_n = (c_s/2 tan a) d_x n / n`, likewise `h_Te`, `h_phi`.
+
+```
+(33)  v_pari = c_s ( +-1 + h_n -+ h_Te/2 - (2 phi/Te) h_phi )
+(34)  v_pare = c_s ( +-exp(Lambda - eta_m) - (2 phi/Te) h_phi + 2(h_n + h_Te) )
+(35)  d_s phi = - c_s ( +-1 + h_n +- h_Te/2 ) d_s v_pari            <- POTENTIAL: NEUMANN
+(36)  d_s n   = - (n/c_s)( +-1 + h_n +- h_Te/2 ) d_s v_pari
+(37)  d_s Te  = 0
+(38)  omega = - cos^2(a) [ (1+h_Te)(d_s v_pari)^2
+                           + c_s(+-1 + h_n +- h_Te/2) d^2_s v_pari ]  <- VORTICITY
+```
+
+Three points settle the question:
+
+1. **The potential condition is NEUMANN.** Eq. (35) prescribes `d_s phi`, not `phi`. There is no
+   `phi = Lambda Te/e` in the material-surface set. The paper states the consequence: "the plasma
+   potential can fluctuate at the limiter and thus allows for finite parallel currents."
+
+2. **The vorticity condition is NOT omega = 0** - earlier secondary sources had that wrong. It is
+   an explicit expression in `d_s v_pari` and `d^2_s v_pari`, expected to be negative, "setting the
+   direction of rotation of the ExB flow at the edge."
+
+3. **How the pair is made consistent:** since `omega = grad_perp^2 phi ~ cos^2(a) d^2_s phi`,
+   equation (38) is literally the `s`-DERIVATIVE of equation (35). The vorticity condition is not
+   independent data - it is the potential condition differentiated along the boundary. You impose
+   ONE condition and differentiate it to get the other.
+
+**Where `phi = Lambda Te` does appear:** "Neumann boundary conditions are imposed at r_min and
+r_max for all fields, except for phi, which is set to phi = Lambda Te." Those are the ARTIFICIAL
+RADIAL EDGES of the domain. The MATERIAL SURFACE (limiter plates) gets the derived set (33)-(38).
+So the Dirichlet is a far-field convenience closure, and we have been applying it at the material
+surface - exactly where the derivation puts a gradient condition.
+
+Note also that (33) carries a `-(2 phi/Te) h_phi` term: a potential-gradient correction to the Bohm
+condition which the paper says has "never been implemented in plasma turbulence codes" and which
+typically dominates the density correction by 6x and the temperature one by 12x. That is the
+physically-derived analogue of the `u_b/ps0_b` term in JOREK's Mach-1 condition - the one that was
+deleted as a test and found not to be the cause.
+
 ### Consequence for `floating_u_relax`
 
 JOREK already has a relaxed Dirichlet on `u`. The difference is the TARGET:
