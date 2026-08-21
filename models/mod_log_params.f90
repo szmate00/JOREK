@@ -842,10 +842,10 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,REAL_FMT) 'floating_ramp_time    ', floating_ramp_time
     write(*,REAL_FMT) 'floating_min_bn       ', floating_min_bn
     write(*,LOGI_FMT) 'floating_u_value_only ', floating_u_value_only
-  write(*,LOGE_FMT) 'floating_start_time   ', floating_start_time
-  write(*,LOGI_FMT) 'floating_gauge_removal', floating_gauge_removal
-  write(*,LOGI_FMT) 'floating_amp_ramp     ', floating_amp_ramp
-  write(*,LOGE_FMT) 'mach1_psib_floor      ', mach1_psib_floor
+    write(*,REAL_FMT) 'floating_start_time   ', floating_start_time
+    write(*,LOGI_FMT) 'floating_gauge_removal', floating_gauge_removal
+    write(*,LOGI_FMT) 'floating_amp_ramp     ', floating_amp_ramp
+    write(*,REAL_FMT) 'mach1_psib_floor      ', mach1_psib_floor
   end if
 
   write(*,LOGI_FMT) 'bc_natural_open       ', bc_natural_open
