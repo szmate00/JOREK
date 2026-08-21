@@ -69,6 +69,9 @@ integer :: k_flt, flt_row
 logical :: flt_clip
 integer :: flt_trt, flt_trt2, flt_bnd2, flt_njump
 logical, save :: flt_scanned = .false.
+! --- corner-consistency diagnostic for the mach1 direction/factor (see below)
+real*8,  allocatable, save :: bcdiag_dir(:), bcdiag_fac(:)
+integer, allocatable, save :: bcdiag_vis(:)
 real*8,                             intent(in)    :: R_axis
 real*8,                             intent(in)    :: Z_axis
 real*8,                             intent(in)    :: psi_axis
@@ -531,6 +534,44 @@ do i=1, n_local_elms !=== do elements
           ! --- exactly. Together with floating_ramp_time that gives a continuation whose two ends are
           ! --- both well posed - the baseline at one end, the floating potential at the other.
           !--------------------------------------------------------------------------------------------
+          ! --- CONSISTENCY OF direction/factor AT CORNER NODES
+          ! ---
+          ! --- A boundary node at a corner is visited once from each adjacent boundary element,
+          ! --- and each visit computes its own outward normal. direction = sign(B.n) and the
+          ! --- Chodura factor follow from that normal, so the two visits can disagree - most
+          ! --- easily where B.n passes through zero, which is precisely what happens at a corner
+          ! --- between a target (B near-normal) and a side wall (B grazing).
+          ! ---
+          ! --- boundary_conditions_add_one_entry OVERWRITES rather than accumulates, so when they
+          ! --- disagree the value imposed is whichever element the loop reaches last: v_par = +c_s
+          ! --- or -c_s decided by element ordering, which is not physics. vpar_smoothing only
+          ! --- covers this when the edge straddles a sign change (bn_1*bn_2 < 0); if bn is small
+          ! --- but keeps its sign across the corner, factor = 1 and the full +-c_s is imposed at
+          ! --- grazing incidence.
+          ! ---
+          ! --- Report it once per run, with coordinates, so a corner artefact is distinguishable
+          ! --- from a physical structure at the same place.
+          if ( (.not. flt_scanned) .and. bcs(bnd_type)%mach1 ) then
+            if ( .not. allocated(bcdiag_vis) ) then
+              allocate( bcdiag_vis(node_list%n_nodes) ) ; bcdiag_vis = 0
+              allocate( bcdiag_dir(node_list%n_nodes) ) ; bcdiag_dir = 0.d0
+              allocate( bcdiag_fac(node_list%n_nodes) ) ; bcdiag_fac = 0.d0
+            endif
+            if ( bcdiag_vis(inode) .eq. 0 ) then
+              bcdiag_vis(inode) = 1
+              bcdiag_dir(inode) = direction
+              bcdiag_fac(inode) = factor
+            else
+              if ( (bcdiag_dir(inode)*direction .lt. 0.d0) .or.                                    &
+                   (abs(bcdiag_fac(inode)-factor) .gt. 1.d-3) ) then
+                write(*,'(A,2f9.4,A,2f7.2,A,2es11.3)')                                             &
+                  ' WARNING [boundary_conditions]: mach1 corner disagreement at R,Z = ',           &
+                  node_list%node(inode)%x(1,1,1), node_list%node(inode)%x(1,1,2),                  &
+                  '  direction ', bcdiag_dir(inode), direction, '  factor ', bcdiag_fac(inode), factor
+              endif
+            endif
+          endif
+
           ! --- CONSISTENCY OF THE u BC ACROSS BOUNDARY-TYPE JUNCTIONS
           ! ---
           ! --- bnd_type is a property of the NODE, so two nodes at opposite ends of the same
@@ -1006,7 +1047,10 @@ if (RMP_on) then
   if (allocated(dpsi_RMP_sin_dZ1))     call tr_deallocate(dpsi_RMP_sin_dZ1,"dpsi_RMP_sin_dZ1",CAT_UNKNOWN)
 endif
 
-flt_scanned = .true.   ! --- the u-BC junction scan above is a one-off report
+flt_scanned = .true.   ! --- the scans above are one-off reports
+if ( allocated(bcdiag_vis) ) deallocate(bcdiag_vis)
+if ( allocated(bcdiag_dir) ) deallocate(bcdiag_dir)
+if ( allocated(bcdiag_fac) ) deallocate(bcdiag_fac)
 
 return
 end subroutine boundary_conditions 
