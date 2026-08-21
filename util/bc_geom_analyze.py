@@ -123,6 +123,32 @@ def main():
     else:
         print("    none")
 
+    # --- node spacing along the boundary. A constant spacing comes from a uniform
+    # --- float(j-1)/float(n-1) distribution; a smoothly varying one comes from meshac2 with
+    # --- SIG_*. Where a constant run butts against a varying one, two different constructions
+    # --- have been joined, and the cell size steps abruptly at the seam.
+    print("\n=== ABRUPT SPACING CHANGES ALONG THE BOUNDARY (ratio > 2) ===")
+    order = np.argsort(np.arctan2(uniq[:,1] - uniq[:,1].mean(),
+                                  uniq[:,0] - uniq[:,0].mean()))
+    ou = uniq[order]
+    gap = np.hypot(np.diff(ou[:,0]), np.diff(ou[:,1]))
+    steps = []
+    for i in range(1, len(gap)):
+        if gap[i] <= 0 or gap[i-1] <= 0:
+            continue
+        r = max(gap[i]/gap[i-1], gap[i-1]/gap[i])
+        # skip the seam of the angular sort itself and any wrap-around artefact
+        if r > 2.0 and max(gap[i], gap[i-1]) < 0.5:
+            steps.append((ou[i,0], ou[i,1], gap[i-1], gap[i], r))
+    if steps:
+        print(f"    {'R':>12} {'Z':>12} {'before':>12} {'after':>12} {'ratio':>8}")
+        for st in sorted(steps, key=lambda s: -s[4])[:25]:
+            print(f"    {st[0]:12.6f} {st[1]:12.6f} {st[2]:12.6f} {st[3]:12.6f} {st[4]:8.1f}")
+        print(f"    ({len(steps)} in total; ordering is by polar angle about the mesh centre,")
+        print("     so a few entries near the sort seam may be spurious - check R,Z)")
+    else:
+        print("    none")
+
     if region:
         Rmin, Rmax, Zmin, Zmax = region
         m = (R >= Rmin) & (R <= Rmax) & (Z >= Zmin) & (Z <= Zmax)
@@ -131,6 +157,22 @@ def main():
         for i in np.argsort(-Z[m]):
             print(f"    {R[m][i]:12.6f} {Z[m][i]:12.6f} {bt[m][i]:5d} {ivd[m][i]:7d} "
                   f"{bn[m][i]:13.4e} {dirn[m][i]:6.1f} {fac[m][i]:12.4f}")
+
+        # distinct nodes in the box, ordered along the boundary, with the spacing to the next
+        ru = np.unique(np.round(np.stack([R[m], Z[m]], axis=1), 8), axis=0)
+        ru = ru[np.argsort(-ru[:,1])]
+        print(f"\n    --- {len(ru)} distinct nodes, spacing to the next one ---")
+        print(f"    {'R':>12} {'Z':>12} {'spacing':>12}   note")
+        prev = None
+        for i in range(len(ru)-1):
+            sp = float(np.hypot(ru[i+1,0]-ru[i,0], ru[i+1,1]-ru[i,1]))
+            note = ""
+            if prev and prev > 0:
+                r = max(sp/prev, prev/sp)
+                if r > 2.0:
+                    note = f"<-- spacing steps {r:.1f}x"
+            print(f"    {ru[i,0]:12.6f} {ru[i,1]:12.6f} {sp:12.6f}   {note}")
+            prev = sp
 
 if __name__ == '__main__':
     main()
