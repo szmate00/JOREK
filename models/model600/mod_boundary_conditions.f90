@@ -39,7 +39,8 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                        &
        floating_Lambda, floating_Lambda_local, floating_V_wall, floating_u_relax,              &
-       floating_ramp_time, t_start, floating_u_value_only, floating_min_bn
+       floating_ramp_time, t_start, floating_u_value_only, floating_min_bn,            &
+       floating_start_time, floating_gauge_removal, floating_amp_ramp, mach1_psib_floor
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -66,7 +67,18 @@ real*8  :: flt_Ti, flt_Te, flt_T, flt_lam, flt_dlam_dTi, flt_dlam_dTe
 real*8  :: flt_a_n, flt_vw, flt_u, flt_du_dTi, flt_du_dTe, flt_rel
 real*8  :: flt_coef(n_var), flt_R, flt_Rb, flt_lam0
 integer :: k_flt, flt_row
-logical :: flt_clip
+logical :: flt_clip_Ti, flt_clip_Te
+real*8  :: flt_amp, flt_x, flt_t0
+real*8  :: psib_inv
+! --- Gauge reference: one constant subtracted from the floating target over the whole connected
+! --- wall. Accumulated during a sweep and used in the NEXT one, so no extra pass over the mesh is
+! --- needed. The lag is harmless - the wall temperature moves slowly, and more fundamentally ANY
+! --- spatially uniform value is a valid gauge, so this constant does not need to be accurate. It
+! --- only has to be the same everywhere on the wall and roughly centred, which is also why an
+! --- unweighted nodal mean is enough and arclength weighting buys nothing here.
+real*8, save :: flt_gauge = 0.d0
+real*8, save :: flt_gsum  = 0.d0, flt_gcnt = 0.d0
+real*8       :: flt_gs_glob, flt_gc_glob
 integer :: flt_trt, flt_trt2, flt_bnd2, flt_njump
 logical, save :: flt_scanned = .false.
 ! --- corner-consistency diagnostic for the mach1 direction/factor (see below)
@@ -660,12 +672,19 @@ do i=1, n_local_elms !=== do elements
             ! --- temperature and neither may the Jacobian. Carrying the unclipped derivative there
             ! --- would linearise a constant, which is exactly the sort of inconsistency that shows
             ! --- up as a slow boundary instability rather than an obvious error.
-            flt_clip = .false.
+            ! --- The clip is applied to Ti and Te SEPARATELY. A single flag covering both zeroed
+            ! --- du/dTe whenever Ti clipped, which discards a derivative that is perfectly valid:
+            ! --- Te is what sets Phi_float, and Ti only enters through Lambda.
+            flt_clip_Ti = .false.
+            flt_clip_Te = .false.
             if ( with_TiTe ) then
-              if ( (node_list%node(inode)%values(1,1,var_Ti) .lt. T_min) .or.                       &
-                   (node_list%node(inode)%values(1,1,var_Te) .lt. T_min) ) flt_clip = .true.
+              if ( node_list%node(inode)%values(1,1,var_Ti) .lt. T_min ) flt_clip_Ti = .true.
+              if ( node_list%node(inode)%values(1,1,var_Te) .lt. T_min ) flt_clip_Te = .true.
             else
-              if (  node_list%node(inode)%values(1,1,var_T ) .lt. T_min  ) flt_clip = .true.
+              if ( node_list%node(inode)%values(1,1,var_T ) .lt. T_min ) then
+                flt_clip_Ti = .true.
+                flt_clip_Te = .true.
+              endif
             endif
 
             if ( with_TiTe ) then
@@ -705,9 +724,31 @@ do i=1, n_local_elms !=== do elements
             flt_du_dTi = 2.d0 *   flt_Te * flt_dlam_dTi / flt_a_n
             flt_du_dTe = 2.d0 * ( flt_lam + flt_Te * flt_dlam_dTe ) / flt_a_n
 
+            ! --- AMPLITUDE RAMP (floating_amp_ramp) versus the old relaxation ramp.
+            ! ---
+            ! --- The old form multiplied flt_rel, the under-relaxation factor. Because the row's
+            ! --- diagonal is never relaxed, the fixed point of that row is u = flt_u whatever
+            ! --- flt_rel is - so scaling flt_rel never reduced the target, it only approached the
+            ! --- FULL target more slowly. It was never a ramp on the boundary condition.
+            ! ---
+            ! --- It also measured time as t_now - t_start, i.e. from the original start of the
+            ! --- simulation rather than from when the BC was switched on. After a restart at
+            ! --- t >> floating_ramp_time that expression saturates at 1 on the very first step,
+            ! --- so the ramp did nothing whatsoever.
+            ! ---
+            ! --- floating_start_time is the time at which the condition begins, and the amplitude
+            ! --- multiplies the TARGET with a C2 smoothstep so the boundary data has no kink at
+            ! --- either end. Leave floating_start_time < 0 to take t_start, the old behaviour.
             flt_rel = floating_u_relax
-            if ( floating_ramp_time .gt. 0.d0 ) &
+            flt_amp = 1.d0
+            if ( floating_amp_ramp .and. (floating_ramp_time .gt. 0.d0) ) then
+              flt_t0 = floating_start_time
+              if ( flt_t0 .lt. 0.d0 ) flt_t0 = t_start
+              flt_x  = max(0.d0, min(1.d0, (t_now - flt_t0) / floating_ramp_time))
+              flt_amp = flt_x**3 * ( 10.d0 - 15.d0*flt_x + 6.d0*flt_x*flt_x )
+            elseif ( floating_ramp_time .gt. 0.d0 ) then
               flt_rel = flt_rel * max(0.d0, min(1.d0, (t_now - t_start) / floating_ramp_time))
+            endif
 
             ! --- OPTIONAL obliqueness gate, off by default and NOT required by the physics.
             ! --- Phi_float = Lambda*Te/e is a property of the sheath in front of a material
@@ -723,10 +764,39 @@ do i=1, n_local_elms !=== do elements
             if ( floating_min_bn .gt. 0.d0 ) &
               flt_rel = flt_rel * bn**2 / ( bn**2 + floating_min_bn**2 )
 
-            if ( flt_clip ) then
-              flt_du_dTi = 0.d0
-              flt_du_dTe = 0.d0
-            endif
+            if ( flt_clip_Ti ) flt_du_dTi = 0.d0
+            if ( flt_clip_Te ) flt_du_dTe = 0.d0
+
+            ! --- GAUGE REMOVAL (floating_gauge_removal)
+            ! ---
+            ! --- The model uses u only through its derivatives - v_pol = R grad(u) x e_phi and
+            ! --- w = Delta*u - so a spatially uniform shift of u is a gauge and drives nothing.
+            ! --- It is NOT harmless as a boundary condition, though. Imposing u = C on the wall
+            ! --- while the interior still sits near zero forces the offset to diffuse inwards
+            ! --- through a boundary layer, and while that layer is thin
+            ! ---     du/dn ~ C/h ,   w = Delta*u ~ C/h^2 ,
+            ! --- which is a large transient vorticity source with no physical content. This is the
+            ! --- mechanism behind the observation that a zero target is stable while a CONSTANT
+            ! --- nonzero target is not - a constant target has no tangential electric field at all,
+            ! --- so nothing physical distinguishes it from zero.
+            ! ---
+            ! --- Subtracting the wall-average removes exactly that component and leaves the physics
+            ! --- untouched, since d/ds (q - qbar) = d/ds q. flt_gauge is one arclength-weighted mean
+            ! --- over the WHOLE connected floating wall, computed in the previous sweep and reduced
+            ! --- across ranks; taking a separate mean per boundary type would reintroduce a jump at
+            ! --- every type transition.
+            ! ---
+            ! --- NOTE this is only legitimate while the wall draws no net current. A j-V sheath
+            ! --- condition depends on ePhi/kTe absolutely, not just on its gradient, and must NOT
+            ! --- use this.
+            flt_gsum = flt_gsum + flt_u
+            flt_gcnt = flt_gcnt + 1.d0
+            if ( floating_gauge_removal ) flt_u = flt_u - flt_gauge
+
+            ! --- Ramp the TARGET, not the relaxation (see above).
+            flt_u      = flt_amp * flt_u
+            flt_du_dTi = flt_amp * flt_du_dTi
+            flt_du_dTe = flt_amp * flt_du_dTe
 
             flt_coef          = 0.d0
             flt_coef(var_u )  =   1.d0
@@ -866,10 +936,30 @@ do i=1, n_local_elms !=== do elements
           cs0_TT   = - 0.25d0 * gamma**2 / cs0**3 
           cs0_TTT  = 3.d0/8.d0* gamma**3 / cs0**5 
 
-          Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0               + factor / Btot * BigR**2 * U0_b/ps0_b 
+          ! --- REGULARISED 1/ps0_b (mach1_psib_floor)
+          ! ---
+          ! --- This ExB term is identically zero under a Dirichlet u, because U0_b is then zero
+          ! --- everywhere on the boundary. Any condition that gives u structure along the wall -
+          ! --- floating_u among them - switches it on for the first time.
+          ! ---
+          ! --- ps0_b is the tangential derivative of psi along the wall, and from the definition
+          ! --- of bn a few hundred lines above, ps0_b = bn * BigR * Btot * dl. So 1/ps0_b is 1/bn
+          ! --- up to smooth factors: an amplification of about 30 where the field meets a target
+          ! --- at 2 degrees, and of order 1e4 on the near-tangential stretches of the main chamber
+          ! --- wall where bn ~ 1e-4. The existing Chodura smoothing does not protect this - it only
+          ! --- engages on edges where bn CHANGES SIGN (bn_1*bn_2 < 0), not where bn is merely small.
+          ! ---
+          ! --- Replace 1/x by x/(x^2 + eps^2): identical for |x| >> eps, bounded by 1/(2 eps), and
+          ! --- odd, so the sign of the term is preserved. mach1_psib_floor <= 0 keeps the raw form.
+          if ( mach1_psib_floor .gt. 0.d0 ) then
+            psib_inv = ps0_b / ( ps0_b**2 + mach1_psib_floor**2 )
+          else
+            psib_inv = 1.d0 / ps0_b
+          endif
+          Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0               + factor / Btot * BigR**2 * U0_b*psib_inv 
           Mach1BC_v   = - 1.0
           Mach1BC_T   =           + direction / Btot * factor  * cs0_T 
-          Mach1BC_u   =                                                            + factor / Btot * BigR**2 * element_size_0/ps0_b 
+          Mach1BC_u   =                                                            + factor / Btot * BigR**2 * element_size_0*psib_inv 
           dMach1BC    = - Vpar0_b + direction / Btot * factor  * cs0_T * (Ti0_b+Te0_b)  &
                                   + direction / Btot * Hfact_b * cs0         
           dMach1BC_v  = - element_size_0
@@ -883,8 +973,8 @@ do i=1, n_local_elms !=== do elements
 
 
           if (n_order .ge. 5) then
-            dMach1BC     = dMach1BC + factor / Btot * BigR**2 * U0_bb/ps0_b
-            dMach1BC_ubb = + factor / Btot * BigR**2 * element_size_3/ps0_b
+            dMach1BC     = dMach1BC + factor / Btot * BigR**2 * U0_bb*psib_inv
+            dMach1BC_ubb = + factor / Btot * BigR**2 * element_size_3*psib_inv
             d2Mach1BC    = - Vpar0_bb + direction / Btot * factor   * cs0_TT * (Ti0_b+Te0_b)**2   &
                                       + direction / Btot * factor   * cs0_T  * (Ti0_bb+Te0_bb)   !&
                                       !+ direction / Btot * Hfact_b  * cs0_T  * T0_b *2.0 !&
@@ -1081,6 +1171,17 @@ if (RMP_on) then
   if (allocated(dpsi_RMP_sin_dR1))     call tr_deallocate(dpsi_RMP_sin_dR1,"dpsi_RMP_sin_dR1",CAT_UNKNOWN)
   if (allocated(dpsi_RMP_sin_dZ1))     call tr_deallocate(dpsi_RMP_sin_dZ1,"dpsi_RMP_sin_dZ1",CAT_UNKNOWN)
 endif
+
+! --- Reduce the floating-target gauge reference over all ranks for use in the next sweep. Any
+! --- uniform constant is a valid gauge, so the only thing that matters is that every rank ends up
+! --- with the SAME value - hence the global reduction rather than a per-rank mean.
+if ( floating_gauge_removal ) then
+  call MPI_Allreduce(flt_gsum, flt_gs_glob, 1, MPI_REAL8, MPI_SUM, MPI_COMM_WORLD, ierr)
+  call MPI_Allreduce(flt_gcnt, flt_gc_glob, 1, MPI_REAL8, MPI_SUM, MPI_COMM_WORLD, ierr)
+  if ( flt_gc_glob .gt. 0.d0 ) flt_gauge = flt_gs_glob / flt_gc_glob
+endif
+flt_gsum = 0.d0
+flt_gcnt = 0.d0
 
 ! --- The scans above are one-off reports. Retire the one-shot only once the mach1 geometry
 ! --- block has actually been reached at least once - setting it unconditionally means an early

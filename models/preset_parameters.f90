@@ -448,6 +448,10 @@ subroutine preset_parameters
 
   ! --- Mach 1
   bcs(:)%mach1      = .false.
+  floating_start_time   = -1.d0     ! < 0 -> use t_start (old behaviour)
+  floating_gauge_removal = .false.
+  floating_amp_ramp      = .false.  ! .false. -> old relaxation ramp
+  mach1_psib_floor       = 0.d0     ! 0 -> unregularised 1/ps0_b
   bcs(:)%floating_u = .false.
 
   bcs(  1)%mach1 = .true.

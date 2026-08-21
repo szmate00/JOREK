@@ -67,6 +67,22 @@ module phys_module
   real*8  :: floating_V_wall       !< Wall potential in volts. Phi is referenced to the wall, so this offsets the imposed potential. 0 = grounded wall
   real*8  :: floating_u_relax      !< Strength of the constraint, 0..1. The diagonal of the row is never relaxed, so 0 reproduces the plain Dirichlet on u EXACTLY (the baseline) and 1 imposes the floating potential fully. Combined with floating_ramp_time this gives a continuation that is well posed at every stage
   real*8  :: floating_min_bn       !< OPTIONAL obliqueness gate for bcs%floating_u, weighting the constraint by b_n^2/(b_n^2 + floating_min_bn^2). NOT required by the physics and OFF by default: the floating potential Lambda*Te/e is a property of the sheath in front of a material surface and does not project with the incidence angle - a surface at 2 degrees floats at the same potential as one at 45. What projects is the current DENSITY through the wall, which is why a j-V sheath condition needs such a gate and this one does not. The same convention is already used for vpar: Mach 1 is imposed over the whole boundary type, with the Chodura factor smoothing only the few edges where b_n changes sign. Provided as a numerical experiment - if boundary structures appear on near-tangential stretches, gating them out isolates whether they come from there - not as a physical correction
+  real*8  :: floating_start_time  !< Time at which the floating BC switches on. Negative means
+                                  !< fall back to t_start. On a restart t_start is the ORIGINAL
+                                  !< start of the simulation, so a ramp measured from it saturates
+                                  !< immediately and does nothing - set this to the restart time.
+  logical :: floating_gauge_removal !< Subtract the wall-average from the floating target. The model
+                                  !< uses u only through derivatives, so a uniform shift is a gauge
+                                  !< and the tangential electric field is unchanged; but imposing a
+                                  !< uniform offset only at the wall drives it inwards through a
+                                  !< boundary layer with w ~ C/h^2. NOT valid once the wall carries
+                                  !< net current, since a j-V condition needs absolute ePhi/kTe.
+  logical :: floating_amp_ramp    !< Ramp the target rather than the under-relaxation. The old form
+                                  !< scaled flt_rel, which cannot reduce the target at all because
+                                  !< the row diagonal is unrelaxed.
+  real*8  :: mach1_psib_floor     !< Floor in the Mach-1 ExB term: 1/ps0_b -> ps0_b/(ps0_b^2+f^2).
+                                  !< ps0_b = bn*BigR*Btot*dl, so the raw form amplifies by ~1/bn.
+                                  !< Zero or negative keeps the unregularised form.
   logical :: floating_u_value_only !< MEASURED BAD - keep .false. Imposes the floating potential on the NODE VALUE of u only, leaving u's tangential-derivative degree of freedom to the vorticity equation. The intent was to avoid slaving du/dl to dTe/dl. In practice it is catastrophic: with C1 cubic elements, pinning only the value while leaving the tangential derivative free lets the interpolation between nodes develop large curvature, and w = Delta*u reads that curvature directly. On an AUG single null it gave w = +-5.6e4 at both strike points and a crash in 20 steps, against 718 steps and w within +-3 when the derivative row is kept. The same was seen for the j-V sheath condition (34 steps against 174). The standard Dirichlet degree-of-freedom set - value plus one tangential derivative - is the right one; deviating from it in either direction is worse
   real*8  :: floating_ramp_time    !< Ramp the constraint in linearly over this time (JOREK units) from t_start. 0 = full strength immediately. Useful because the restart normally has u = 0 at the wall, which is Lambda*Te/e away from the target
   real*8  :: min_sheath_angle     !< For sheath boundary conditions: Minimum incident angle for heat and particle fluxes (in degrees)
