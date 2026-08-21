@@ -75,6 +75,7 @@ integer, save     :: flt_tr_unit = -1
 logical, save     :: flt_tr_open = .false., flt_tr_ok = .false.
 character(len=64) :: flt_tr_file
 real*8            :: flt_tr_Te, flt_tr_Td, flt_tr_tgt
+real*8            :: flt_tr_ub, flt_tr_cs, flt_tr_ven, flt_tr_vet
 ! --- Gauge reference: one constant subtracted from the floating target over the whole connected
 ! --- wall. Accumulated during a sweep and used in the NEXT one, so no extra pass over the mesh is
 ! --- needed. The lag is harmless - the wall temperature moves slowly, and more fundamentally ANY
@@ -837,7 +838,7 @@ do i=1, n_local_elms !=== do elements
                   flt_tr_ok = .true.
                   write(flt_tr_unit,'(A)') '#            R               Z  bnd_type    iv_dir'// &
                         '        target_u           u_val           u_dof          Te_val'//     &
-                        '          Te_dof     target_dof'
+                        '          Te_dof     target_dof        vEn_o_cs    vEn_tgt_o_cs'
                 endif
               endif
               if ( flt_tr_ok ) then
@@ -856,12 +857,36 @@ do i=1, n_local_elms !=== do elements
                     flt_tr_tgt = flt_tr_tgt - flt_coef(k_flt)                                      &
                                * node_list%node(inode)%values(1,iv_dir,k_flt)
                 enddo
-                write(flt_tr_unit,'(2f16.8,2i10,6es16.6)')                                        &
+                ! --- NORMAL ExB VELOCITY THROUGH THE WALL.
+                ! ---
+                ! --- With v_pol = R grad(u) x e_phi, an exact identity holds on any boundary:
+                ! ---     v_E . n = - R du/dtau ,
+                ! --- so a u that VARIES along the wall drives flow through it. u = 0 or u =
+                ! --- const gives exactly zero; the floating potential does not.
+                ! ---
+                ! --- That matters because nothing in the model accounts for it. Every sheath flux
+                ! --- in mod_boundary_matrix_open is built from vpar0 and cs0 alone - no u appears
+                ! --- in any of them - and the ExB advection in the bulk (r0_s*u0_t - r0_t*u0_s) is
+                ! --- in STRONG form, so it carries no surface term either. Density and heat are
+                ! --- therefore advected to the wall with no corresponding outflow: a conservation
+                ! --- inconsistency, not a discretisation error, and one that is exactly zero under
+                ! --- the Dirichlet u this model was built around.
+                ! ---
+                ! --- Reported as a fraction of c_s, which is the scale the sheath fluxes use.
+                flt_tr_ub  = node_list%node(inode)%values(1,iv_dir,var_u) * element_size_0
+                flt_tr_cs  = sqrt( GAMMA * ( flt_Ti + flt_Te ) )
+                flt_tr_ven = 0.d0
+                flt_tr_vet = 0.d0
+                if ( flt_tr_cs .gt. 0.d0 ) then
+                  flt_tr_ven = - BigR * flt_tr_ub                  / flt_tr_cs
+                  flt_tr_vet = - BigR * flt_tr_tgt * element_size_0 / flt_tr_cs
+                endif
+                write(flt_tr_unit,'(2f16.8,2i10,8es16.6)')                                        &
                   node_list%node(inode)%x(1,1,1), node_list%node(inode)%x(1,1,2),                 &
                   bnd_type, iv_dir, flt_u,                                                        &
                   node_list%node(inode)%values(1,1,var_u),                                        &
                   node_list%node(inode)%values(1,iv_dir,var_u),                                   &
-                  flt_tr_Te, flt_tr_Td, flt_tr_tgt
+                  flt_tr_Te, flt_tr_Td, flt_tr_tgt, flt_tr_ven, flt_tr_vet
               endif
             endif
 

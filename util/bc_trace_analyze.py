@@ -70,6 +70,8 @@ def main():
     order = np.argsort(-Z)
     d = d[order]
     names = ['target_u','u_val','u_dof','Te_val','Te_dof','target_dof']
+    if d.shape[1] > 10:
+        names = names + ['vEn/cs','vEn_tgt/cs']
     print(f"\n=== ROUGHNESS (fraction of variation at the node-to-node scale) ===")
     print("    < 0.2  smooth      0.2-0.5  some grid-scale content      > 0.5  noise-dominated")
     print(f"    {'quantity':>12} {'roughness':>11} {'min':>13} {'max':>13}")
@@ -78,6 +80,21 @@ def main():
         r = roughness(y)
         flag = '' if r < 0.2 else ('  <-- grid-scale content' if r < 0.5 else '  <-- NOISE DOMINATED')
         print(f"    {nm:>12} {r:11.3f} {y.min():13.4e} {y.max():13.4e}{flag}")
+    if d.shape[1] > 10:
+        # v_E.n = -R du/dtau is exact; the sheath fluxes use only vpar and c_s, and the bulk ExB
+        # advection is strong form, so this normal flow has no outflow term anywhere. Its size
+        # relative to c_s is the size of the unaccounted flux.
+        ven = np.abs(d[:, 10]); vet = np.abs(d[:, 11])
+        print(f"\n=== NORMAL ExB FLOW THROUGH THE WALL (unaccounted for in every sheath flux) ===")
+        for nm, y in (("from current u", ven), ("demanded by target", vet)):
+            print(f"    {nm:>20}: median {np.median(y):9.3e}  95th {np.percentile(y,95):9.3e}"
+                  f"  max {y.max():9.3e}   (x c_s)")
+        big = (vet > 0.05).sum()
+        print(f"    nodes where the target demands |v_E.n| > 0.05 c_s: {big} of {len(vet)}"
+              f"  ({100.0*big/max(len(vet),1):.0f}%)")
+        print("    The sheath particle flux is n*c_s, so a v_E.n of 0.1 c_s is a 10% unbalanced")
+        print("    flux at that node. Under a Dirichlet u this quantity is identically zero.")
+
     print("\n  target_dof is the slope actually imposed on u by the derivative row.")
     print("  If its roughness is much higher than target_u's, the derivative row is")
     print("  injecting grid-scale structure that the value row is not - which is the case")
