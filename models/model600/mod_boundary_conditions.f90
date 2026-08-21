@@ -834,6 +834,11 @@ do i=1, n_local_elms !=== do elements
                 open(newunit=flt_tr_unit, file=trim(flt_tr_file), status='replace',               &
                      action='write', iostat=bcdiag_ios)
                 if ( bcdiag_ios .ne. 0 ) then
+                  ! --- Say so. A failed open here would otherwise leave no trace file and no
+                  ! --- explanation, which is the same silent-no-op failure mode that has already
+                  ! --- cost two rebuilds in this boundary condition.
+                  write(*,'(A,A,A,I0)') ' WARNING [boundary_conditions]: could not open ',        &
+                        trim(flt_tr_file), ', iostat = ', bcdiag_ios
                   flt_tr_unit = -1
                 else
                   flt_tr_ok = .true.
