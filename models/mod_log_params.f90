@@ -299,6 +299,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,INTG_FMT) 'n_leg                 ', n_leg
     write(*,INTG_FMT) 'n_leg_out             ', n_leg_out
     write(*,INTG_FMT) 'n_ext                 ', n_ext
+    write(*,LOGI_FMT) 'grid_leg_wall_match   ', grid_leg_wall_match
     write(*,INTG_FMT) 'n_outer               ', n_outer
     write(*,INTG_FMT) 'n_inner               ', n_inner
     write(*,LOGI_FMT) 'force_horizontal_xline', force_horizontal_xline

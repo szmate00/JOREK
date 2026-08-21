@@ -137,6 +137,7 @@ subroutine preset_parameters
   n_up_priv    = 0
   
   n_ext        = 0
+  grid_leg_wall_match = .false.   ! see phys_module; .true. matches wall and flux leg packing
 
   export_polar_boundary = .false.
 

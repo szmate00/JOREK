@@ -11,7 +11,8 @@ use data_structure
 use tr_module 
 use gauss
 use basis_at_gaussian
-use phys_module, only:   n_limiter, R_limiter, Z_limiter, write_ps, fix_axis_nodes, force_central_node, treat_axis, wall_file
+use phys_module, only:   n_limiter, R_limiter, Z_limiter, write_ps, fix_axis_nodes, force_central_node, treat_axis, wall_file, &
+                         grid_leg_wall_match
 use mod_neighbours, only: update_neighbours
 use mod_interp
 use mod_grid_conversions
@@ -42,6 +43,7 @@ type (type_bnd_node_list)    :: bnd_node_list
 type (type_bnd_element_list) :: bnd_elm_list
 
 real*8, allocatable :: s_values(:), theta_sep(:), R_sep(:), Z_sep(:), R_max(:), Z_max(:), R_min(:), Z_min(:),s_tmp(:), s_tmp_out(:)
+real*8              :: frac_leg
 real*8, allocatable :: R_wall_max(:), Z_wall_max(:), T_wall_par(:), R_wall_min(:), Z_wall_min(:)
 real*8              :: psi_axis, R_axis, Z_axis, s_axis, t_axis
 real*8              :: R_xpoint(2), Z_xpoint(2), s_xpoint(2), t_xpoint(2), psi_xpoint(2)
@@ -533,12 +535,26 @@ Z_sep(n_tht+n_leg_total) = Z_xpoint(1) ! this one is known
 
 s_tmp = 0.d0
 s_tmp_out = 0.d0
-call meshac2(n_leg,s_tmp,0.d0,1.d0,0.3d0,0.3d0,0.6d0,1.0d0)
-call meshac2(n_leg_out_loc,s_tmp_out,0.d0,1.d0,0.3d0,0.3d0,0.6d0,1.0d0)
+! --- Poloidal distribution used to place the WALL points along the legs. Note the result was
+! --- historically computed here and then never used - the loops below spread the wall points
+! --- uniformly with float(j-1)/float(n_leg-1) - while the flux-aligned leg nodes they are paired
+! --- with use SIG_leg_0/SIG_leg_1 (the meshac2 call much earlier in this routine). The extension
+! --- patch connects flux node j to wall point j, so wherever those two distributions disagree the
+! --- extension lines fan out and shear. grid_leg_wall_match wires the distribution up and gives it
+! --- the same packing as the flux side, so paired nodes sit at matching positions along the leg.
+if ( grid_leg_wall_match ) then
+  call meshac2(n_leg        ,s_tmp    ,0.d0,1.d0,SIG_leg_0,SIG_leg_1,0.6d0,1.0d0)
+  call meshac2(n_leg_out_loc,s_tmp_out,0.d0,1.d0,SIG_leg_0,SIG_leg_1,0.6d0,1.0d0)
+else
+  call meshac2(n_leg,s_tmp,0.d0,1.d0,0.3d0,0.3d0,0.6d0,1.0d0)
+  call meshac2(n_leg_out_loc,s_tmp_out,0.d0,1.d0,0.3d0,0.3d0,0.6d0,1.0d0)
+endif
 
 do j=1,n_leg
-  R_wall_max(j+n_tht) = R_wall_max(n_tht) + 0.8d0*(R_max(n_tht+1) - R_wall_max(n_tht)) * float(j-1)/float(n_leg-1)
-  Z_wall_max(j+n_tht) = Z_wall_max(n_tht) + 0.8d0*(Z_max(n_tht+1) - Z_wall_max(n_tht)) * float(j-1)/float(n_leg-1) 
+  frac_leg = float(j-1)/float(n_leg-1)
+  if ( grid_leg_wall_match ) frac_leg = s_tmp(j)
+  R_wall_max(j+n_tht) = R_wall_max(n_tht) + 0.8d0*(R_max(n_tht+1) - R_wall_max(n_tht)) * frac_leg
+  Z_wall_max(j+n_tht) = Z_wall_max(n_tht) + 0.8d0*(Z_max(n_tht+1) - Z_wall_max(n_tht)) * frac_leg
   tht_max = PI
   call find_wall_crossing(R_wall,Z_wall,n_wall,R_max(n_tht+n_leg-j+1)+0.1,Z_wall_max(j+n_tht),tht_max,Rw,Zw,Tw)
   R_wall_max(j+n_tht) = Rw
@@ -548,8 +564,10 @@ enddo
 
 
 do j=1,n_leg_out_loc
-  R_wall_max(j+n_tht+n_leg) = R_wall_max(1) + 0.8d0*(R_max(n_tht+n_leg+1)-R_wall_max(1)) * float(j-1)/float(n_leg_out_loc-1)
-  Z_wall_max(j+n_tht+n_leg) = Z_wall_max(1) + 0.8d0*(Z_max(n_tht+n_leg+1)-Z_wall_max(1)) * float(j-1)/float(n_leg_out_loc-1)
+  frac_leg = float(j-1)/float(n_leg_out_loc-1)
+  if ( grid_leg_wall_match ) frac_leg = s_tmp_out(j)
+  R_wall_max(j+n_tht+n_leg) = R_wall_max(1) + 0.8d0*(R_max(n_tht+n_leg+1)-R_wall_max(1)) * frac_leg
+  Z_wall_max(j+n_tht+n_leg) = Z_wall_max(1) + 0.8d0*(Z_max(n_tht+n_leg+1)-Z_wall_max(1)) * frac_leg
   tht_max = 0.d0
   call find_wall_crossing(R_wall,Z_wall,n_wall,R_max(j+n_tht+n_leg)-0.1,Z_wall_max(j+n_tht+n_leg),tht_max,Rw,Zw,Tw)
   R_wall_max(j+n_tht+n_leg) = Rw
