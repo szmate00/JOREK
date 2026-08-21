@@ -72,6 +72,8 @@ logical, save :: flt_scanned = .false.
 ! --- corner-consistency diagnostic for the mach1 direction/factor (see below)
 real*8,  allocatable, save :: bcdiag_dir(:), bcdiag_fac(:)
 integer, allocatable, save :: bcdiag_vis(:)
+integer, save              :: bcdiag_unit = -1
+character(len=64)          :: bcdiag_file
 real*8,                             intent(in)    :: R_axis
 real*8,                             intent(in)    :: Z_axis
 real*8,                             intent(in)    :: psi_axis
@@ -557,6 +559,20 @@ do i=1, n_local_elms !=== do elements
               allocate( bcdiag_dir(node_list%n_nodes) ) ; bcdiag_dir = 0.d0
               allocate( bcdiag_fac(node_list%n_nodes) ) ; bcdiag_fac = 0.d0
             endif
+            ! --- The comparison below needs both of a corner's elements on THIS rank, and the
+            ! --- element loop is distributed, so a corner split across ranks is missed. Dump the
+            ! --- raw geometry too: adjacent nodes with opposite direction are visible in the file
+            ! --- regardless of how the mesh was partitioned.
+            if ( bcdiag_unit .lt. 0 ) then
+              write(bcdiag_file,'(A,I0,A)') 'bc_geom_diag_', my_id, '.dat'
+              open(newunit=bcdiag_unit, file=trim(bcdiag_file), status='replace', action='write')
+              write(bcdiag_unit,'(A)') '#            R               Z  bnd_type    iv_dir'//     &
+                                       '              bn       direction          factor'
+            endif
+            write(bcdiag_unit,'(2f16.8,2i10,3es16.6)')                                            &
+              node_list%node(inode)%x(1,1,1), node_list%node(inode)%x(1,1,2),                     &
+              bnd_type, iv_dir, bn, direction, factor
+
             if ( bcdiag_vis(inode) .eq. 0 ) then
               bcdiag_vis(inode) = 1
               bcdiag_dir(inode) = direction
@@ -1048,6 +1064,10 @@ if (RMP_on) then
 endif
 
 flt_scanned = .true.   ! --- the scans above are one-off reports
+if ( bcdiag_unit .ge. 0 ) then
+  close(bcdiag_unit)
+  bcdiag_unit = -1
+endif
 if ( allocated(bcdiag_vis) ) deallocate(bcdiag_vis)
 if ( allocated(bcdiag_dir) ) deallocate(bcdiag_dir)
 if ( allocated(bcdiag_fac) ) deallocate(bcdiag_fac)
