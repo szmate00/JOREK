@@ -177,6 +177,65 @@ failed; the paper should be read directly.
 
 ---
 
+---
+
+## RESOLVED: what the plasma-sheath literature actually prescribes
+
+Verbatim from the Hermes-3 TCV-X21 validation paper:
+
+> "At the sheath (target) boundaries, Bohm-Chodura-Riemann boundary conditions are applied [...]
+> **the potential at the sheath is not fixed as a Dirichlet value.** Rather, the potential emerges
+> dynamically: currents flow into or out of the sheath until a (quasi-)steady-state potential is
+> reached, with these currents entering **through the vorticity equation itself**."
+
+And on the structure, from the drift-kinetic presheath derivations:
+
+> "[...] resulting in **Dirichlet boundary conditions for parallel flows** and **inhomogeneous
+> Neumann boundary conditions for remaining fields**."
+
+So the physical pair is:
+
+| quantity | condition | JOREK |
+|---|---|---|
+| parallel flow | Dirichlet (Bohm) | `mach1` - we have it |
+| potential `phi` | **Neumann / free**, set by current balance | we impose **Dirichlet** `u = Lambda Te/e` |
+| vorticity `omega` | `omega = 0`, imposed fresh each step | we **freeze** it at the restart value |
+
+**Nobody imposes `Phi = Lambda Te/e` as a Dirichlet on the potential.** The floating potential is
+the OUTCOME of zero net sheath current, not an input. We pin the answer and simultaneously freeze
+the quantity that would carry the current information - two Dirichlets on a coupled pair, where the
+literature has exactly one condition per equation.
+
+Note `omega = 0` is fine on its own (GBS uses it) PROVIDED `phi` is free. It is the PAIR that is
+wrong, not either half. This is why `natural%w` alone may not be enough while `u` stays pinned.
+
+### The null-space objection has a published answer
+
+The obvious retort to "use Neumann on phi" is the null space - which is exactly the ~0.003 tau_A
+blow-up seen in the earlier free-`u` sheath campaign. Hermes-3 names it and works around it:
+
+> "[...] this would lead to an ill-posed linear solve due to the null space of the operator.
+> Instead, a method adapted from **STORM** is used: **Dirichlet boundary conditions are used in the
+> linear solve for phi, so that the inversion is well posed, but the value of the boundaries
+> relaxes towards zero-gradient on a short timescale**, here chosen to be 1 microsecond."
+
+Dirichlet for well-posedness, relaxing toward zero-gradient for physics. 1 us is about 1.5 tau_A
+for the AUG case here.
+
+### Consequence for `floating_u_relax`
+
+JOREK already has a relaxed Dirichlet on `u`. The difference is the TARGET:
+
+```
+ours:   u_wall  ->  Lambda Te/e     (pins the answer)
+STORM:  u_wall  ->  zero-gradient   (lets it float; the current sets it)
+```
+
+Same machinery, opposite target. This also explains why `floating_u_relax = 0.02` changed nothing:
+relaxing more slowly toward the wrong target does not help.
+
+---
+
 ## Why this has not surfaced in the JOREK community
 
 1. `u ≡ 0` on the wall hides the entire problem: every term that would expose the inconsistency
