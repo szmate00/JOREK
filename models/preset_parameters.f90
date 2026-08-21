@@ -453,6 +453,7 @@ subroutine preset_parameters
   floating_amp_ramp      = .false.  ! .false. -> old relaxation ramp
   mach1_psib_floor       = 0.d0     ! 0 -> unregularised 1/ps0_b
   mach1_exb_term         = .true.   ! .false. only as a diagnostic
+  floating_keep_u_row    = .false.  ! .true. -> constraint stays in the u row
   bcs(:)%floating_u = .false.
 
   bcs(  1)%mach1 = .true.

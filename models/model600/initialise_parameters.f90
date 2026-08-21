@@ -213,7 +213,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 floating_V_wall, floating_u_relax, floating_ramp_time, &
                 floating_u_value_only, floating_start_time,          &
                 floating_gauge_removal, floating_amp_ramp,          &
-                mach1_psib_floor, mach1_exb_term, floating_min_bn,             &
+                mach1_psib_floor, mach1_exb_term, floating_keep_u_row, floating_min_bn,             &
                 use_sc, add_sources_in_sc, visco_sc_num,            &
                 D_perp_sc_num, D_par_sc_num, ZK_perp_sc_num,        &
                 ZK_par_sc_num, ZK_i_perp_sc_num, ZK_i_par_sc_num,   &

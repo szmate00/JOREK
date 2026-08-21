@@ -41,7 +41,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        floating_Lambda, floating_Lambda_local, floating_V_wall, floating_u_relax,              &
        floating_ramp_time, t_start, floating_u_value_only, floating_min_bn,            &
        floating_start_time, floating_gauge_removal, floating_amp_ramp, mach1_psib_floor, &
-       mach1_exb_term
+       mach1_exb_term, floating_keep_u_row
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -908,8 +908,25 @@ do i=1, n_local_elms !=== do elements
             ! --- for "fixed psi but free zj". The constraint count is preserved either way: one
             ! --- condition, one row. That matters here because u is no longer constant along the
             ! --- wall, so Delta*u is not the frozen w and pinning both would be inconsistent.
+            ! --- Which row carries the constraint. The default swaps it into the w row when w is
+            ! --- free, which is JOREK's idiom for "fixed psi but free zj". That means the
+            ! --- combination "constraint in the u row AND w free" has never been reachable:
+            ! --- clearing dirichlet%w always moved the constraint as well, so the two were
+            ! --- changed together and the 29-step failure measured for free w was really a
+            ! --- measurement of the SWAP, not of freeing w.
+            ! ---
+            ! --- That combination is the one remaining structural configuration. With u varying
+            ! --- along the wall the Poisson relation gives w = grad^2 u = u_tautau + u_nn there,
+            ! --- so freezing w at zero forces u_nn = -u_tautau: a boundary layer whose strength is
+            ! --- set by the curvature of the imposed potential. Keeping the var_w row instead lets
+            ! --- w take the value the Poisson relation actually implies.
+            ! ---
+            ! --- Caveat: vorticity-streamfunction formulations classically DO need a wall
+            ! --- vorticity condition (Thom, Wilkes, Woods). Removing it may simply be ill-posed.
+            ! --- This flag makes that testable rather than assumed.
             flt_row = var_u
-            if ( .not. bcs(bnd_type)%dirichlet%w ) flt_row = var_w
+            if ( (.not. bcs(bnd_type)%dirichlet%w) .and. (.not. floating_keep_u_row) )            &
+              flt_row = var_w
 
             index_node  = node_list%node(inode)%index(1)
             index_node2 = node_list%node(inode)%index(iv_dir)
