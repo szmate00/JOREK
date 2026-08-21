@@ -73,6 +73,8 @@ logical, save :: flt_scanned = .false.
 real*8,  allocatable, save :: bcdiag_dir(:), bcdiag_fac(:)
 integer, allocatable, save :: bcdiag_vis(:)
 integer, save              :: bcdiag_unit = -1
+integer, save              :: bcdiag_calls = 0, bcdiag_hits = 0
+integer                    :: bcdiag_ios
 character(len=64)          :: bcdiag_file
 real*8,                             intent(in)    :: R_axis
 real*8,                             intent(in)    :: Z_axis
@@ -563,15 +565,25 @@ do i=1, n_local_elms !=== do elements
             ! --- element loop is distributed, so a corner split across ranks is missed. Dump the
             ! --- raw geometry too: adjacent nodes with opposite direction are visible in the file
             ! --- regardless of how the mesh was partitioned.
+            bcdiag_hits = bcdiag_hits + 1
             if ( bcdiag_unit .lt. 0 ) then
               write(bcdiag_file,'(A,I0,A)') 'bc_geom_diag_', my_id, '.dat'
-              open(newunit=bcdiag_unit, file=trim(bcdiag_file), status='replace', action='write')
-              write(bcdiag_unit,'(A)') '#            R               Z  bnd_type    iv_dir'//     &
-                                       '              bn       direction          factor'
+              open(newunit=bcdiag_unit, file=trim(bcdiag_file), status='replace',                 &
+                   action='write', iostat=bcdiag_ios)
+              if ( bcdiag_ios .ne. 0 ) then
+                write(*,'(A,A,A,I0)') ' WARNING [boundary_conditions]: could not open ',          &
+                      trim(bcdiag_file), ', iostat = ', bcdiag_ios
+                bcdiag_unit = -1
+              else
+                write(bcdiag_unit,'(A)') '#            R               Z  bnd_type    iv_dir'//   &
+                                         '              bn       direction          factor'
+              endif
             endif
-            write(bcdiag_unit,'(2f16.8,2i10,3es16.6)')                                            &
-              node_list%node(inode)%x(1,1,1), node_list%node(inode)%x(1,1,2),                     &
-              bnd_type, iv_dir, bn, direction, factor
+            if ( bcdiag_unit .ge. 0 ) then
+              write(bcdiag_unit,'(2f16.8,2i10,3es16.6)')                                          &
+                node_list%node(inode)%x(1,1,1), node_list%node(inode)%x(1,1,2),                   &
+                bnd_type, iv_dir, bn, direction, factor
+            endif
 
             if ( bcdiag_vis(inode) .eq. 0 ) then
               bcdiag_vis(inode) = 1
@@ -1063,7 +1075,19 @@ if (RMP_on) then
   if (allocated(dpsi_RMP_sin_dZ1))     call tr_deallocate(dpsi_RMP_sin_dZ1,"dpsi_RMP_sin_dZ1",CAT_UNKNOWN)
 endif
 
-flt_scanned = .true.   ! --- the scans above are one-off reports
+! --- The scans above are one-off reports. Retire the one-shot only once the mach1 geometry
+! --- block has actually been reached at least once - setting it unconditionally means an early
+! --- call in which no local boundary element qualifies consumes the report and nothing is ever
+! --- written. Announce the outcome so a silent run is diagnosable: no BCDIAG line at all means
+! --- the binary predates this code, a line with 0 visits means the block is never reached.
+if ( .not. flt_scanned ) then
+  bcdiag_calls = bcdiag_calls + 1
+  if ( my_id .eq. 0 ) then
+    write(*,'(A,I0,A,I0)') ' BCDIAG [boundary_conditions]: call ', bcdiag_calls,                  &
+          ', mach1 boundary-node visits on rank 0 = ', bcdiag_hits
+  endif
+  if ( (bcdiag_hits .gt. 0) .or. (bcdiag_calls .ge. 10) ) flt_scanned = .true.
+endif
 if ( bcdiag_unit .ge. 0 ) then
   close(bcdiag_unit)
   bcdiag_unit = -1
