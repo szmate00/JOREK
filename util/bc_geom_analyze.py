@@ -17,7 +17,7 @@ The element loop is distributed, so the two visits may land on different ranks.
 Merging every rank's file here is what makes those corners visible.
 
 Usage:
-    ./bc_geom_analyze.py [files ...] [--region Rmin Rmax Zmin Zmax]
+    ./bc_geom_analyze.py [files ...] [--region Rmin Rmax Zmin Zmax] [--floor VALUE]
 """
 import sys, glob, warnings
 import numpy as np
@@ -45,7 +45,11 @@ def load(paths):
 
 def main():
     args = sys.argv[1:]
-    region = None
+    region, floor = None, None
+    if '--floor' in args:
+        i = args.index('--floor')
+        floor = float(args[i+1])
+        args = args[:i] + args[i+2:]
     if '--region' in args:
         i = args.index('--region')
         region = [float(x) for x in args[i+1:i+5]]
@@ -164,6 +168,28 @@ def main():
             print(f"    smallest |ps0_b| at R={R[i]:.4f} Z={Z[i]:.4f}, type {bt[i]}, bn={bn[i]:.3e}")
             print("    A floor near the 1st-5th percentile bounds the tail while leaving the")
             print("    bulk of the boundary, including the targets, unchanged.")
+
+    # --- impact of a candidate mach1_psib_floor, so the choice can be checked before running
+    if psb is not None and floor is not None:
+        a = np.abs(psb)
+        raw  = np.where(a > 0, 1.0/np.where(a > 0, a, 1.0), 0.0)
+        regd = a / (a**2 + floor**2)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            frac = np.where(raw > 0, regd/raw, 1.0)     # 1 = untouched, <1 = damped
+        print(f"\n=== IMPACT OF mach1_psib_floor = {floor:.3e} ===")
+        print(f"    bound on 1/ps0_b        : {1.0/(2*floor):.3e}   (was up to {raw.max():.3e})")
+        for tag, lo, hi in (("untouched  (>99%)", 0.99, 1.01),
+                            ("mild  (90-99%)   ", 0.90, 0.99),
+                            ("damped (50-90%)  ", 0.50, 0.90),
+                            ("strong (<50%)    ", -1.0, 0.50)):
+            m = (frac > lo) & (frac <= hi)
+            print(f"    {tag}: {m.sum():5d} visits ({100.0*m.sum()/len(frac):5.1f}%)")
+        for t in np.unique(bt):
+            m = bt == t
+            print(f"    type {t}: median retention {np.median(frac[m]):.4f}, "
+                  f"worst {frac[m].min():.4f}")
+        print("    Retention near 1 on the target types means the physical term is unchanged")
+        print("    there; the damping should fall on the near-tangential wall only.")
 
     if region:
         Rmin, Rmax, Zmin, Zmax = region
