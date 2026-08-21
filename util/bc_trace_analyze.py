@@ -72,6 +72,8 @@ def main():
     names = ['target_u','u_val','u_dof','Te_val','Te_dof','target_dof']
     if d.shape[1] > 10:
         names = names + ['vEn/cs','vEn_tgt/cs']
+    if d.shape[1] > 12:
+        names = names + ['vpn/cs','vbohm/cs']
     print(f"\n=== ROUGHNESS (fraction of variation at the node-to-node scale) ===")
     print("    < 0.2  smooth      0.2-0.5  some grid-scale content      > 0.5  noise-dominated")
     print(f"    {'quantity':>12} {'roughness':>11} {'min':>13} {'max':>13}")
@@ -89,6 +91,33 @@ def main():
         for nm, y in (("from current u", ven), ("demanded by target", vet)):
             print(f"    {nm:>20}: median {np.median(y):9.3e}  95th {np.percentile(y,95):9.3e}"
                   f"  max {y.max():9.3e}   (x c_s)")
+        if d.shape[1] > 12:
+            # Which of the two normal-velocity budgets does the code actually close?
+            #   Case A  the Mach-1 u_b/ps0_b term compensates:  v_par,n + v_E,n = v_Bohm
+            #   Case B  no compensation:                        v_par,n          = v_Bohm
+            # If A holds, the total normal flow is the intended Bohm flux and the absence of u
+            # from the sheath flux formulas is correct. If B holds, v_E,n is transport the sheath
+            # closure never sees.
+            vEn, vpn, vbo = d[:,10], d[:,12], d[:,13]
+            rA = np.abs(vpn + vEn - vbo)
+            rB = np.abs(vpn - vbo)
+            sc = np.maximum(np.abs(vbo), 1e-12)
+            print("\n=== WHICH NORMAL-VELOCITY BUDGET CLOSES? (all / c_s) ===")
+            print(f"    |v_par,n + v_E,n - v_Bohm|  median {np.median(rA):9.3e}"
+                  f"   rel {np.median(rA/sc):7.3f}   <- Case A: Mach-1 compensates")
+            print(f"    |v_par,n         - v_Bohm|  median {np.median(rB):9.3e}"
+                  f"   rel {np.median(rB/sc):7.3f}   <- Case B: no compensation")
+            print(f"    |v_E,n|                     median {np.median(np.abs(vEn)):9.3e}")
+            if np.median(rA) < 0.5*np.median(rB):
+                print("    -> A closes better: the ExB normal flow IS compensated in Mach-1,")
+                print("       so no u in the sheath flux is CORRECT and the suspect is the")
+                print("       1/ps0_b division and junction handling, not a missing flux.")
+            elif np.median(rB) < 0.5*np.median(rA):
+                print("    -> B closes better: v_par,n alone matches Bohm, so v_E,n is normal")
+                print("       transport the sheath closure never accounts for.")
+            else:
+                print("    -> neither closes cleanly; inspect per-node before concluding.")
+
         big = (vet > 0.05).sum()
         print(f"    nodes where the target demands |v_E.n| > 0.05 c_s: {big} of {len(vet)}"
               f"  ({100.0*big/max(len(vet),1):.0f}%)")

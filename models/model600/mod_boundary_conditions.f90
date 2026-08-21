@@ -76,6 +76,7 @@ logical, save     :: flt_tr_open = .false., flt_tr_ok = .false.
 character(len=64) :: flt_tr_file
 real*8            :: flt_tr_Te, flt_tr_Td, flt_tr_tgt
 real*8            :: flt_tr_ub, flt_tr_cs, flt_tr_ven, flt_tr_vet
+real*8            :: flt_tr_vpn, flt_tr_vbo
 ! --- Gauge reference: one constant subtracted from the floating target over the whole connected
 ! --- wall. Accumulated during a sweep and used in the NEXT one, so no extra pass over the mesh is
 ! --- needed. The lag is harmless - the wall temperature moves slowly, and more fundamentally ANY
@@ -838,7 +839,8 @@ do i=1, n_local_elms !=== do elements
                   flt_tr_ok = .true.
                   write(flt_tr_unit,'(A)') '#            R               Z  bnd_type    iv_dir'// &
                         '        target_u           u_val           u_dof          Te_val'//     &
-                        '          Te_dof     target_dof        vEn_o_cs    vEn_tgt_o_cs'
+                        '          Te_dof     target_dof        vEn_o_cs    vEn_tgt_o_cs'// &
+                        '        vpn_o_cs      vbohm_o_cs'
                 endif
               endif
               if ( flt_tr_ok ) then
@@ -877,16 +879,26 @@ do i=1, n_local_elms !=== do elements
                 flt_tr_cs  = sqrt( GAMMA * ( flt_Ti + flt_Te ) )
                 flt_tr_ven = 0.d0
                 flt_tr_vet = 0.d0
+                flt_tr_vpn = 0.d0
+                flt_tr_vbo = 0.d0
                 if ( flt_tr_cs .gt. 0.d0 ) then
                   flt_tr_ven = - BigR * flt_tr_ub                  / flt_tr_cs
                   flt_tr_vet = - BigR * flt_tr_tgt * element_size_0 / flt_tr_cs
+                  ! --- var_vpar is v_par/B in this model (Mach1BC reads
+                  ! ---     -Vpar0 + direction/Btot*factor*cs0 + ... = 0 ),
+                  ! --- so the physical parallel speed is Vpar0*Btot and its wall-normal
+                  ! --- component is Vpar0*Btot*bn.
+                  flt_tr_vpn = node_list%node(inode)%values(1,1,var_vpar) * Btot * bn / flt_tr_cs
+                  ! --- what Mach-1 intends for the normal flow, WITHOUT its u_b/ps0_b term
+                  flt_tr_vbo = direction * factor * bn
                 endif
-                write(flt_tr_unit,'(2f16.8,2i10,8es16.6)')                                        &
+                write(flt_tr_unit,'(2f16.8,2i10,10es16.6)')                                        &
                   node_list%node(inode)%x(1,1,1), node_list%node(inode)%x(1,1,2),                 &
                   bnd_type, iv_dir, flt_u,                                                        &
                   node_list%node(inode)%values(1,1,var_u),                                        &
                   node_list%node(inode)%values(1,iv_dir,var_u),                                   &
-                  flt_tr_Te, flt_tr_Td, flt_tr_tgt, flt_tr_ven, flt_tr_vet
+                  flt_tr_Te, flt_tr_Td, flt_tr_tgt, flt_tr_ven, flt_tr_vet,               &
+                  flt_tr_vpn, flt_tr_vbo
               endif
             endif
 
