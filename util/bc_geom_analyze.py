@@ -19,17 +19,28 @@ Merging every rank's file here is what makes those corners visible.
 Usage:
     ./bc_geom_analyze.py [files ...] [--region Rmin Rmax Zmin Zmax]
 """
-import sys, glob
+import sys, glob, warnings
 import numpy as np
 
 def load(paths):
-    rows = []
+    # Ranks that own no boundary element write a header and nothing else, which is normal and
+    # not worth a warning - only every file being empty means something went wrong.
+    rows, empty = [], 0
     for p in paths:
-        d = np.loadtxt(p, comments='#', ndmin=2)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            d = np.loadtxt(p, comments='#', ndmin=2)
         if d.size:
             rows.append(d)
+        else:
+            empty += 1
+    if empty:
+        print(f"note: {empty} of {len(paths)} rank files hold no rows "
+              f"(ranks owning no boundary element)")
     if not rows:
-        sys.exit("no data found - check that bc_geom_diag_*.dat exist and are non-empty")
+        sys.exit("every file is header-only: the dump ran but wrote no rows. Check the log for\n"
+                 "  'BCDIAG [boundary_conditions]: call N, mach1 boundary-node visits ...'\n"
+                 "A visit count > 0 with no rows means the build predates the newunit fix.")
     return np.vstack(rows)
 
 def main():

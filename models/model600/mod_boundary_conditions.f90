@@ -73,6 +73,11 @@ logical, save :: flt_scanned = .false.
 real*8,  allocatable, save :: bcdiag_dir(:), bcdiag_fac(:)
 integer, allocatable, save :: bcdiag_vis(:)
 integer, save              :: bcdiag_unit = -1
+logical, save              :: bcdiag_open = .false.   ! newunit= returns a NEGATIVE unit, so the
+                                                      ! sign of bcdiag_unit says nothing about
+                                                      ! whether the file is open. Track it here.
+logical, save              :: bcdiag_ok   = .false.   ! open succeeded (bcdiag_ios is a local and
+                                                      ! is undefined on visits that skip the open)
 integer, save              :: bcdiag_calls = 0, bcdiag_hits = 0
 integer                    :: bcdiag_ios
 character(len=64)          :: bcdiag_file
@@ -566,7 +571,8 @@ do i=1, n_local_elms !=== do elements
             ! --- raw geometry too: adjacent nodes with opposite direction are visible in the file
             ! --- regardless of how the mesh was partitioned.
             bcdiag_hits = bcdiag_hits + 1
-            if ( bcdiag_unit .lt. 0 ) then
+            if ( .not. bcdiag_open ) then
+              bcdiag_open = .true.
               write(bcdiag_file,'(A,I0,A)') 'bc_geom_diag_', my_id, '.dat'
               open(newunit=bcdiag_unit, file=trim(bcdiag_file), status='replace',                 &
                    action='write', iostat=bcdiag_ios)
@@ -575,11 +581,12 @@ do i=1, n_local_elms !=== do elements
                       trim(bcdiag_file), ', iostat = ', bcdiag_ios
                 bcdiag_unit = -1
               else
+                bcdiag_ok = .true.
                 write(bcdiag_unit,'(A)') '#            R               Z  bnd_type    iv_dir'//   &
                                          '              bn       direction          factor'
               endif
             endif
-            if ( bcdiag_unit .ge. 0 ) then
+            if ( bcdiag_ok ) then
               write(bcdiag_unit,'(2f16.8,2i10,3es16.6)')                                          &
                 node_list%node(inode)%x(1,1,1), node_list%node(inode)%x(1,1,2),                   &
                 bnd_type, iv_dir, bn, direction, factor
@@ -1088,9 +1095,9 @@ if ( .not. flt_scanned ) then
   endif
   if ( (bcdiag_hits .gt. 0) .or. (bcdiag_calls .ge. 10) ) flt_scanned = .true.
 endif
-if ( bcdiag_unit .ge. 0 ) then
+if ( bcdiag_ok ) then
   close(bcdiag_unit)
-  bcdiag_unit = -1
+  bcdiag_ok = .false.
 endif
 if ( allocated(bcdiag_vis) ) deallocate(bcdiag_vis)
 if ( allocated(bcdiag_dir) ) deallocate(bcdiag_dir)
