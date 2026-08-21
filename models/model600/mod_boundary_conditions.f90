@@ -71,6 +71,10 @@ integer :: k_flt, flt_row
 logical :: flt_clip_Ti, flt_clip_Te
 real*8  :: flt_amp, flt_x, flt_t0
 real*8  :: psib_inv
+integer, save     :: flt_tr_unit = -1
+logical, save     :: flt_tr_open = .false., flt_tr_ok = .false.
+character(len=64) :: flt_tr_file
+real*8            :: flt_tr_Te, flt_tr_Td, flt_tr_tgt
 ! --- Gauge reference: one constant subtracted from the floating target over the whole connected
 ! --- wall. Accumulated during a sweep and used in the NEXT one, so no extra pass over the mesh is
 ! --- needed. The lag is harmless - the wall temperature moves slowly, and more fundamentally ANY
@@ -812,6 +816,55 @@ do i=1, n_local_elms !=== do elements
             endif
             flt_R = flt_u - node_list%node(inode)%values(1,1,var_u)
 
+            ! --- TRACE DUMP: the imposed boundary data, node by node.
+            ! ---
+            ! --- The derivative row slaves du/dl to dTe/dl through the RAW nodal temperature
+            ! --- derivative DOF. Te at the wall carries a natural BC, so that DOF is not
+            ! --- constrained by anything, and any grid-scale noise in it is handed straight to the
+            ! --- boundary electric field, to w = grad^2 u, and to the Mach-1 u_b/ps0_b term where
+            ! --- it is amplified by 1/bn. Whether that noise actually exists is a question about
+            ! --- this run, not about the formulation, so measure it rather than assume it: dump
+            ! --- the target and the DOFs it is built from and look at them along the wall.
+            if ( .not. flt_scanned ) then
+              if ( .not. flt_tr_open ) then
+                flt_tr_open = .true.
+                write(flt_tr_file,'(A,I0,A)') 'bc_float_trace_', my_id, '.dat'
+                open(newunit=flt_tr_unit, file=trim(flt_tr_file), status='replace',               &
+                     action='write', iostat=bcdiag_ios)
+                if ( bcdiag_ios .ne. 0 ) then
+                  flt_tr_unit = -1
+                else
+                  flt_tr_ok = .true.
+                  write(flt_tr_unit,'(A)') '#            R               Z  bnd_type    iv_dir'// &
+                        '        target_u           u_val           u_dof          Te_val'//     &
+                        '          Te_dof     target_dof'
+                endif
+              endif
+              if ( flt_tr_ok ) then
+                flt_tr_Te = 0.d0
+                flt_tr_Td = 0.d0
+                if ( with_TiTe ) then
+                  flt_tr_Te = node_list%node(inode)%values(1,1,var_Te)
+                  flt_tr_Td = node_list%node(inode)%values(1,iv_dir,var_Te)
+                else
+                  flt_tr_Te = node_list%node(inode)%values(1,1,var_T)
+                  flt_tr_Td = node_list%node(inode)%values(1,iv_dir,var_T)
+                endif
+                flt_tr_tgt = 0.d0
+                do k_flt = 1, n_var
+                  if ( flt_coef(k_flt) .ne. 0.d0 .and. k_flt .ne. var_u )                          &
+                    flt_tr_tgt = flt_tr_tgt - flt_coef(k_flt)                                      &
+                               * node_list%node(inode)%values(1,iv_dir,k_flt)
+                enddo
+                write(flt_tr_unit,'(2f16.8,2i10,6es16.6)')                                        &
+                  node_list%node(inode)%x(1,1,1), node_list%node(inode)%x(1,1,2),                 &
+                  bnd_type, iv_dir, flt_u,                                                        &
+                  node_list%node(inode)%values(1,1,var_u),                                        &
+                  node_list%node(inode)%values(1,iv_dir,var_u),                                   &
+                  flt_tr_Te, flt_tr_Td, flt_tr_tgt
+              endif
+            endif
+
             ! --- Which ROW carries the constraint. With a Dirichlet on w the natural place is the u
             ! --- row. With w free, JOREK's idiom is to put the condition on u into the w EQUATION
             ! --- instead and leave the u row to the vorticity equation - the same swap the code uses
@@ -1231,6 +1284,10 @@ endif
 if ( bcdiag_ok ) then
   close(bcdiag_unit)
   bcdiag_ok = .false.
+endif
+if ( flt_tr_ok ) then
+  close(flt_tr_unit)
+  flt_tr_ok = .false.
 endif
 if ( allocated(bcdiag_vis) ) deallocate(bcdiag_vis)
 if ( allocated(bcdiag_dir) ) deallocate(bcdiag_dir)
