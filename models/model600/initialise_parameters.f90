@@ -72,7 +72,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 sheath_zj_ratio_max,                                &
                 sheath_min_bn, sheath_ramp_time,                    &
                 sheath_stiff_max, sheath_init_u, sheath_flux_sign,  &
-                sheath_init_u_all,                                  &
+                sheath_init_u_all, sheath_diag_R_split,             &
                 deuterium_adas, deuterium_adas_1e20,                &
                 old_deuterium_atomic,                               &
                 density_reflection,                                 &

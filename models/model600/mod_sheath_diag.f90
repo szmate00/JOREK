@@ -60,6 +60,13 @@ module mod_sheath_diag
   real*8,  save :: sd_zjrel_n                 = 0.d0  !< node count, as a real for one reduction
   real*8,  save :: sd_zjratio_sum             = 0.d0  !< sum of |zj/zj_sat| demanded, same nodes
 
+  !> Inner/outer target split, keyed on major radius against sheath_diag_R_split. Boundary type 1
+  !! carries BOTH targets, so every total above averages the two together - and an in-out
+  !! difference is exactly what HFSHD is. Opposite errors on the two targets cancel in the sum.
+  !! Index 1 = inner (R < split), 2 = outer. Second index: 1 I_sheath, 2 I_Ampere, 3 area, 4 phi*dS
+  real*8,  save :: sd_io_sum(2,4)             = 0.d0
+  real*8,  save :: sd_io_max(2)               = 0.d0  !< max |j/j_sat| on each target
+
 contains
 
 !> Zero the accumulators. Called once per matrix construction, before the element loop.
@@ -74,6 +81,8 @@ subroutine sheath_diag_reset()
   sd_phi_max_act = -1.d30
   sd_gate_off_area = 0.d0
   sd_ratio_max= 0.d0
+  sd_io_sum   = 0.d0
+  sd_io_max   = 0.d0
   sd_lim_area = 0.d0
 end subroutine sheath_diag_reset
 
@@ -90,10 +99,10 @@ end subroutine sheath_diag_reset
 !! @param Bdotn     B.n
 !! @param dS        surface element of this sample: ws*dl*R*(2*pi/n_plane) [m^2]
 subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, dS, gate, &
-                           V_wall_loc)
+                           V_wall_loc, R_loc)
 
   use constants,     only: MU_ZERO
-  use phys_module,   only: F0, sheath_X_min, sheath_smooth_dX
+  use phys_module,   only: F0, sheath_X_min, sheath_smooth_dX, sheath_diag_R_split
   use mod_sheath_bc, only: sheath_norm
 
   implicit none
@@ -105,8 +114,10 @@ subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, 
                                           !< the SAME reference the constraint imposes. Omitting it
                                           !< silently reports against the global sheath_V_wall,
                                           !< which differs wherever sheath_V_wall_asym /= 0.
+  real*8,  intent(in), optional :: R_loc   !< major radius, for the inner/outer target split
 
   real*8 :: jn_sheath, jn_amp, phi_over_te, ratio, a_n, c_sat, vw
+  integer :: io
 
   if ( bnd_type .lt. 1 .or. bnd_type .gt. max_bnd_types ) return
 
@@ -148,6 +159,16 @@ subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, 
     sd_phi_max_act = max(sd_phi_max_act, phi_over_te)
   endif
   sd_ratio_max           = max(sd_ratio_max, ratio)
+  ! --- inner/outer split; ratio here is already gate-masked, so it reports where the term is live
+  if ( present(R_loc) .and. (sheath_diag_R_split .gt. 0.d0) ) then
+    io = 1
+    if ( R_loc .ge. sheath_diag_R_split ) io = 2
+    sd_io_sum(io,1) = sd_io_sum(io,1) + jn_sheath * dS
+    sd_io_sum(io,2) = sd_io_sum(io,2) + jn_amp    * dS
+    sd_io_sum(io,3) = sd_io_sum(io,3) + dS
+    sd_io_sum(io,4) = sd_io_sum(io,4) + phi_over_te * dS
+    sd_io_max(io)   = max(sd_io_max(io), ratio)
+  endif
   ! --- area where the electron side limiter is biting, i.e. where the wall is close to
   ! --- electron saturation and the characteristic is being held back
   if ( x_lim .lt. sheath_X_min + 2.d0*max(sheath_smooth_dX,1.d-3) ) sd_lim_area = sd_lim_area + dS
@@ -188,9 +209,11 @@ subroutine sheath_diag_report(my_id)
   integer, intent(in) :: my_id
 
   integer, parameter :: ns = 3*max_bnd_types + 2
-  integer, parameter :: nx = ns + 5                  ! ns+1 gate-off area, ns+2..ns+5 nodal block
-  real*8  :: loc_sum(nx), glo_sum(nx), loc_max(3), glo_max(3), loc_min(2), glo_min(2)
+  integer, parameter :: nx = ns + 13                 ! ns+1 gate-off, ns+2..5 nodal, ns+6..13 in/out
+  real*8  :: loc_sum(nx), glo_sum(nx), loc_max(5), glo_max(5), loc_min(2), glo_min(2)
   real*8  :: area_tot, I_sh_tot, I_am_tot, phi_mean, lim_frac, zjrel_mean, zjratio_mean
+  integer :: io, ib0
+  character(len=5), parameter :: io_name(2) = (/ 'INNER', 'OUTER' /)
   integer :: ierr, i, i0, i1, i2
 
   i0 = 0                      ! offsets into the packed reduction buffer
@@ -211,11 +234,15 @@ subroutine sheath_diag_report(my_id)
   loc_sum(ns+3) = sd_zjrel_n
   loc_sum(ns+4) = sd_zjratio_sum
   loc_sum(ns+5) = 0.d0
+  loc_sum(ns+6 :ns+9 ) = sd_io_sum(1,:)
+  loc_sum(ns+10:ns+13) = sd_io_sum(2,:)
+  loc_max(4) = sd_io_max(1)
+  loc_max(5) = sd_io_max(2)
   loc_min(1) = sd_phi_min
   loc_min(2) = sd_zjrel_min
 
   call MPI_Reduce(loc_sum, glo_sum, nx, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
-  call MPI_Reduce(loc_max, glo_max,  3, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(loc_max, glo_max,  5, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
   call MPI_Reduce(loc_min, glo_min,  2, MPI_REAL8, MPI_MIN, 0, MPI_COMM_WORLD, ierr)
 
   ! --- zero the nodal block here, not in sheath_diag_reset: boundary_conditions runs AFTER this
@@ -254,6 +281,18 @@ subroutine sheath_diag_report(my_id)
       '         sheath_zj strength mean=', zjrel_mean, ' min=', glo_min(2),        &
       '   mean|j/jsat|=', zjratio_mean, '  over ', nint(glo_sum(ns+3)), ' nodes'
   endif
+
+  ! --- Inner vs outer target. HFSHD IS an in-out difference, so the totals above - which average
+  ! --- the two targets together and let opposite errors cancel - cannot answer the question.
+  do io = 1, 2
+    ib0 = ns + 2 + 4*io          ! inner block starts at ns+6, outer at ns+10
+    if ( glo_sum(ib0+2) .le. 0.d0 ) cycle                      ! +0 I_sheath  +1 I_Ampere
+    write(*,'(A,A,A,es11.3,A,es11.3,A,f7.2,A,es9.2,A,es10.3,A)')                   &
+      '         ', io_name(io), ' target: I_sheath=', glo_sum(ib0),                &
+      ' A  I_Ampere=', glo_sum(ib0+1),                                             &
+      '  ePhi/kTe=', glo_sum(ib0+3) / glo_sum(ib0+2),                              &
+      '  max|j/jsat|=', glo_max(3+io), '  area=', glo_sum(ib0+2), ' m^2'
+  enddo
 
   do i = 1, max_bnd_types
     if ( glo_sum(i2+i) .le. 0.d0 ) cycle

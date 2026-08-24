@@ -479,7 +479,7 @@ do ms=1, n_gauss
       ! --- wall current / potential diagnostic; dS is the toroidally integrated surface element
       call sheath_diag_add(bnd_type1, zj_sh, zj0, zj_sat_g, x_sheath, u0, Te0_corr, sh_Bn, &
                            ws * dl * BigR * TWOPI / dble(n_plane), sh_wgt_bn,             &
-                           sheath_V_wall_at(BigR))
+                           sheath_V_wall_at(BigR), BigR)
     endif
 
     ! --- Same diagnostic for the nodal sheath_zj route. Evaluated at the Gauss point purely to be
@@ -496,7 +496,7 @@ do ms=1, n_gauss
         dzj_wgt = bdotn**2 / ( bdotn**2 + sheath_min_bn**2 )
       call sheath_diag_add(bnd_type1, dzj_sh, zj0, dzj_sat, dzj_x, u0, Te0_corr, sh_Bn, &
                            ws * dl * BigR * TWOPI / dble(n_plane), dzj_wgt,             &
-                           sheath_V_wall_at(BigR))
+                           sheath_V_wall_at(BigR), BigR)
     endif
 
     do i=1,2                ! loop over nodes
