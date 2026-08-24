@@ -290,8 +290,51 @@ subroutine sheath_init_potential(node_list, my_id)
 
   integer :: i, id, ib, ierr
   real*8  :: a_n, c_sat, vw, Ti0, Te0, T0, lam, dlam_dTi, dlam_dTe, cfac
-  real*8  :: n_loc(2), n_glo(2)
+  real*8  :: n_loc(2), n_glo(2), u_loc(2), u_glo(2), u_wall
   logical :: is_sheath_type
+
+  ! --- Pass 1: the mean floating potential over the sheath boundary. The GAUGE types are then set
+  ! --- to that single CONSTANT rather than to their own local Lambda*Te/e.
+  ! ---
+  ! --- Why a constant: a metal wall is an EQUIPOTENTIAL. Te varies by orders of magnitude along
+  ! --- it (0.66 eV at a cold strike point against tens of eV in the outer SOL), so most of the
+  ! --- wall is NOT at its local floating potential - net current flows and closes through the
+  ! --- wall, which is the physics the sheath BC exists to capture. Imposing Lambda*Te/e pointwise
+  ! --- is neither an equipotential nor a self-consistent sheath: it makes Phi vary as strongly as
+  ! --- Te, and since Delta*u ~ 0 in the interior u is harmonic and immediately smooths that
+  ! --- variation, leaving cold nodes at a Phi set by their hot neighbours. Measured: ePhi/kTe
+  ! --- starts at exactly 3.00 everywhere, then reaches 23.69 after ONE step - about the Te
+  ! --- contrast between adjacent wall regions - and that excursion is completely insensitive to
+  ! --- the sheath row (20x weaker constraint gave 23.69 to three digits), so it is the imposed
+  ! --- profile, not the boundary condition.
+  ! ---
+  ! --- The derivative DOFs are left at ZERO on the gauge types for the same reason: an
+  ! --- equipotential has no tangential gradient, and grad(u) along the wall IS ExB flow through it.
+  u_loc = 0.d0
+
+  if ( sheath_init_u_all ) then
+    do i = 1, node_list%n_nodes
+      ib = node_list%node(i)%boundary
+      if ( ib .lt. 1 .or. ib .gt. max_bnd_types ) cycle
+      if ( .not. (bcs(ib)%natural%u .or. bcs(ib)%sheath_zj) ) cycle
+      if ( with_TiTe ) then
+        Ti0 = node_list%node(i)%values(1,1,var_Ti)
+        Te0 = node_list%node(i)%values(1,1,var_Te)
+      else
+        T0  = node_list%node(i)%values(1,1,var_T)
+        Ti0 = 0.5d0 * T0
+        Te0 = 0.5d0 * T0
+      endif
+      if ( Te0 .le. 0.d0 ) cycle
+      call sheath_norm(a_n, c_sat, vw, sheath_V_wall_at(node_list%node(i)%x(1,1,1)))
+      call sheath_get_lambda(Ti0, Te0, lam, dlam_dTi, dlam_dTe)
+      u_loc(1) = u_loc(1) + 2.d0 * ( lam * Te0 + vw ) / a_n
+      u_loc(2) = u_loc(2) + 1.d0
+    enddo
+    call MPI_Allreduce(u_loc, u_glo, 2, MPI_REAL8, MPI_SUM, MPI_COMM_WORLD, ierr)
+    u_wall = 0.d0
+    if ( u_glo(2) .gt. 0.d0 ) u_wall = u_glo(1) / u_glo(2)
+  endif
 
   n_loc = 0.d0
 
@@ -329,17 +372,28 @@ subroutine sheath_init_potential(node_list, my_id)
 
     call sheath_get_lambda(Ti0, Te0, lam, dlam_dTi, dlam_dTe)
 
-    ! --- zero net current (X = 0) sits at e*Phi/(k*Te) = Lambda, i.e. a_n*u/2 - vw = Lambda*Te
-    cfac = 2.d0 * lam / a_n
-    node_list%node(i)%values(1,1,var_u) = cfac * Te0 + 2.d0 * vw / a_n
+    if ( is_sheath_type ) then
+      ! --- zero net current (X = 0) sits at e*Phi/(k*Te) = Lambda, i.e. a_n*u/2 - vw = Lambda*Te.
+      ! --- u is free on these types, so this is only a starting guess and the local value is the
+      ! --- right one: it is where the sheath itself carries no net current.
+      cfac = 2.d0 * lam / a_n
+      node_list%node(i)%values(1,1,var_u) = cfac * Te0 + 2.d0 * vw / a_n
 
-    do id = 2, n_degrees
-      if ( with_TiTe ) then
-        node_list%node(i)%values(1,id,var_u) = cfac * node_list%node(i)%values(1,id,var_Te)
-      else
-        node_list%node(i)%values(1,id,var_u) = cfac * 0.5d0 * node_list%node(i)%values(1,id,var_T)
-      endif
-    enddo
+      do id = 2, n_degrees
+        if ( with_TiTe ) then
+          node_list%node(i)%values(1,id,var_u) = cfac * node_list%node(i)%values(1,id,var_Te)
+        else
+          node_list%node(i)%values(1,id,var_u) = cfac * 0.5d0 * node_list%node(i)%values(1,id,var_T)
+        endif
+      enddo
+    else
+      ! --- gauge: one constant over the whole wall, no tangential gradient. Dirichlet freezes
+      ! --- these, so this is the value they hold for the run.
+      node_list%node(i)%values(1,1,var_u) = u_wall
+      do id = 2, n_degrees
+        node_list%node(i)%values(1,id,var_u) = 0.d0
+      enddo
+    endif
 
     if ( is_sheath_type ) then
       n_loc(1) = n_loc(1) + 1.d0
@@ -351,9 +405,14 @@ subroutine sheath_init_potential(node_list, my_id)
 
   call MPI_Reduce(n_loc, n_glo, 2, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
 
-  if ( my_id .eq. 0 ) write(*,'(A,i0,A,i0,A)')                                       &
-    ' SHEATH: sheath_init_u set u to the floating potential on ', nint(n_glo(1)),    &
-    ' sheath nodes and ', nint(n_glo(2)), ' gauge nodes'
+  if ( my_id .eq. 0 ) then
+    write(*,'(A,i0,A,i0,A)')                                                        &
+      ' SHEATH: sheath_init_u set u to the floating potential on ', nint(n_glo(1)),  &
+      ' sheath nodes and ', nint(n_glo(2)), ' gauge nodes'
+    if ( sheath_init_u_all ) write(*,'(A,es12.4,A)')                                &
+      '         gauge nodes held at the CONSTANT wall potential u = ', u_wall,       &
+      ' (equipotential, zero tangential gradient)'
+  endif
 
 end subroutine sheath_init_potential
 
