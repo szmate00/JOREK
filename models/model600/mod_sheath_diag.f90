@@ -23,6 +23,7 @@ module mod_sheath_diag
   private
 
   public :: sheath_diag_reset, sheath_diag_add, sheath_diag_report
+  public :: sheath_diag_add_nodal
   public :: sheath_store_psi0, sheath_psi0
   public :: sheath_init_potential
 
@@ -45,6 +46,19 @@ module mod_sheath_diag
   real*8,  save :: sd_gate_off_area           = 0.d0
   real*8,  save :: sd_ratio_max               = 0.d0  !< max |j/j_sat| demanded by the interior
   real*8,  save :: sd_lim_area                = 0.d0  !< area sitting on the electron side limiter
+
+  !> Effective strength the NODAL sheath_zj constraint is actually applied with, accumulated in
+  !! mod_boundary_conditions. szj_rel is the product of sheath_zj_relax, the ramp and the two
+  !! gates; where it is small the row degenerates towards d(zj) = 0, i.e. the Dirichlet freeze the
+  !! constraint replaces, and zj is then free to sit far off the sheath characteristic. That is
+  !! invisible in every other number here - `gated-off area` only sees the obliqueness gate - and
+  !! it is the natural explanation for I_Ampere and I_sheath differing by a constant factor.
+  !! Zeroed in sheath_diag_report AFTER packing, not in sheath_diag_reset: boundary_conditions is
+  !! called after the report within one matrix construction, so these describe the PREVIOUS pass.
+  real*8,  save :: sd_zjrel_sum               = 0.d0  !< sum of szj_rel over sheath_zj nodes
+  real*8,  save :: sd_zjrel_min               = 1.d30
+  real*8,  save :: sd_zjrel_n                 = 0.d0  !< node count, as a real for one reduction
+  real*8,  save :: sd_zjratio_sum             = 0.d0  !< sum of |zj/zj_sat| demanded, same nodes
 
 contains
 
@@ -141,6 +155,26 @@ subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, 
 end subroutine sheath_diag_add
 
 
+!> Record the strength the nodal sheath_zj constraint is applied with at one boundary node.
+!!
+!! Called from mod_boundary_conditions once szj_rel is final, i.e. after the relaxation, the ramp,
+!! the obliqueness gate and the validity gate have all been folded in.
+!!
+!! @param szj_rel   effective row strength, 1 = constraint imposed fully, 0 = zj left frozen
+!! @param zj_ratio  |zj/zj_sat| the interior is demanding at this node
+subroutine sheath_diag_add_nodal(szj_rel, zj_ratio)
+
+  implicit none
+  real*8, intent(in) :: szj_rel, zj_ratio
+
+  sd_zjrel_sum   = sd_zjrel_sum   + szj_rel
+  sd_zjrel_min   = min(sd_zjrel_min, szj_rel)
+  sd_zjrel_n     = sd_zjrel_n     + 1.d0
+  sd_zjratio_sum = sd_zjratio_sum + zj_ratio
+
+end subroutine sheath_diag_add_nodal
+
+
 !> Reduce over MPI ranks and print one line. Called after the element loop; rank 0 prints.
 !!
 !! Every rank calls all three collectives unconditionally (no early return), and only arrays are
@@ -153,8 +187,9 @@ subroutine sheath_diag_report(my_id)
   integer, intent(in) :: my_id
 
   integer, parameter :: ns = 3*max_bnd_types + 2
-  real*8  :: loc_sum(ns+1), glo_sum(ns+1), loc_max(3), glo_max(3), loc_min(1), glo_min(1)
-  real*8  :: area_tot, I_sh_tot, I_am_tot, phi_mean, lim_frac
+  integer, parameter :: nx = ns + 5                  ! ns+1 gate-off area, ns+2..ns+5 nodal block
+  real*8  :: loc_sum(nx), glo_sum(nx), loc_max(3), glo_max(3), loc_min(2), glo_min(2)
+  real*8  :: area_tot, I_sh_tot, I_am_tot, phi_mean, lim_frac, zjrel_mean, zjratio_mean
   integer :: ierr, i, i0, i1, i2
 
   i0 = 0                      ! offsets into the packed reduction buffer
@@ -171,11 +206,20 @@ subroutine sheath_diag_report(my_id)
   loc_max(2) = sd_ratio_max
   loc_max(3) = sd_phi_max_act
   loc_sum(ns+1) = sd_gate_off_area
+  loc_sum(ns+2) = sd_zjrel_sum
+  loc_sum(ns+3) = sd_zjrel_n
+  loc_sum(ns+4) = sd_zjratio_sum
+  loc_sum(ns+5) = 0.d0
   loc_min(1) = sd_phi_min
+  loc_min(2) = sd_zjrel_min
 
-  call MPI_Reduce(loc_sum, glo_sum, ns+1, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(loc_sum, glo_sum, nx, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
   call MPI_Reduce(loc_max, glo_max,  3, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
-  call MPI_Reduce(loc_min, glo_min,  1, MPI_REAL8, MPI_MIN, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(loc_min, glo_min,  2, MPI_REAL8, MPI_MIN, 0, MPI_COMM_WORLD, ierr)
+
+  ! --- zero the nodal block here, not in sheath_diag_reset: boundary_conditions runs AFTER this
+  ! --- report within one matrix construction, so zeroing at reset would wipe the pass we want.
+  sd_zjrel_sum = 0.d0; sd_zjrel_n = 0.d0; sd_zjratio_sum = 0.d0; sd_zjrel_min = 1.d30
 
   if ( my_id .ne. 0 ) return
 
@@ -197,6 +241,18 @@ subroutine sheath_diag_report(my_id)
   write(*,'(A,f8.2,A,f5.1,A)')                                                     &
     '         ePhi/kTe max where the sheath is ACTIVE=', glo_max(3),               &
     '   gated-off area ', 1.d2*glo_sum(ns+1)/max(area_tot,1.d-30), ' %'
+
+  ! --- How hard the nodal constraint is actually being pushed. mean(szj_rel) well below 1 means
+  ! --- the row is mostly the Dirichlet freeze, so zj is under no obligation to match zj_sheath and
+  ! --- I_Ampere/I_sheath cannot close. Compare mean|j/jsat| with max|j/jsat| above: a mean near 1
+  ! --- with a large max is a hot spot, a large mean is a wall-wide violation.
+  if ( glo_sum(ns+3) .gt. 0.d0 ) then
+    zjrel_mean   = glo_sum(ns+2) / glo_sum(ns+3)
+    zjratio_mean = glo_sum(ns+4) / glo_sum(ns+3)
+    write(*,'(A,f7.4,A,f7.4,A,f8.2,A,i0,A)')                                       &
+      '         sheath_zj strength mean=', zjrel_mean, ' min=', glo_min(2),        &
+      '   mean|j/jsat|=', zjratio_mean, '  over ', nint(glo_sum(ns+3)), ' nodes'
+  endif
 
   do i = 1, max_bnd_types
     if ( glo_sum(i2+i) .le. 0.d0 ) cycle

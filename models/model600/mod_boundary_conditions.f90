@@ -34,6 +34,7 @@ use data_structure
 use vacuum, ONLY: is_freebound
 use corr_neg, only: corr_neg_temp
 use mod_sheath_bc, only: sheath_get_lambda, sheath_current, sheath_V_wall_at
+use mod_sheath_diag, only: sheath_diag_add_nodal
 use mod_sheath_diag, only: sheath_psi0, sheath_store_psi0
 use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_cos_dR, dpsi_RMP_cos_dZ, &
        psi_RMP_sin, dpsi_RMP_sin_dR, dpsi_RMP_sin_dZ, t_now, RMP_growth_rate, RMP_ramp_up_time,            &
@@ -1179,12 +1180,16 @@ do i=1, n_local_elms !=== do elements
             ! --- range the characteristic carries no useful information, so fade the constraint
             ! --- out and let the node keep its frozen zj, which is the baseline and is stable.
             ! --- The weight is smooth, monotone, and 1 to within 6% for ratio < 0.5*max.
-            if ( sheath_zj_ratio_max .gt. 0.d0 ) then
-              szj_ratio = 0.d0
-              if ( abs(szj_sat) .gt. 1.d-30 ) &
-                szj_ratio = abs( node_list%node(inode)%values(1,1,var_zj) / szj_sat )
+            szj_ratio = 0.d0
+            if ( abs(szj_sat) .gt. 1.d-30 ) &
+              szj_ratio = abs( node_list%node(inode)%values(1,1,var_zj) / szj_sat )
+            if ( sheath_zj_ratio_max .gt. 0.d0 ) &
               szj_rel = szj_rel / ( 1.d0 + (szj_ratio/sheath_zj_ratio_max)**4 )
-            endif
+
+            ! --- Report the strength the row is ACTUALLY assembled with. Without this the only
+            ! --- gate visible in the SHEATH output is the obliqueness one, and a small szj_rel
+            ! --- silently degrades the constraint to the Dirichlet freeze it is meant to replace.
+            call sheath_diag_add_nodal(szj_rel, szj_ratio)
 
             ! --- Row:  d(zj) - sum_k (d zj_sh / d x_k) d x_k = zj_sh - zj0
             szj_coef            = 0.d0
