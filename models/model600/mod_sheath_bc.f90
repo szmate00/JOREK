@@ -121,12 +121,13 @@ pure subroutine sheath_norm(a_n, c_sat, vw, V_wall_loc)
   ! --- bias that DIFFERS between the two targets makes a potential difference across the private
   ! --- flux region, which is what drives a PFR ExB flow.
   real*8, intent(in), optional :: V_wall_loc
-  real*8 :: Vw
+  ! --- NOTE: not "Vw" - Fortran is case insensitive, so that collides with the vw dummy above
+  real*8 :: V_wall_use
 
   real*8 :: m_i, rho0
 
-  Vw = sheath_V_wall
-  if ( present(V_wall_loc) ) Vw = V_wall_loc
+  V_wall_use = sheath_V_wall
+  if ( present(V_wall_loc) ) V_wall_use = V_wall_loc
 
   m_i  = central_mass * ATOMIC_MASS_UNIT
   rho0 = central_density * 1.d20 * m_i
@@ -134,7 +135,7 @@ pure subroutine sheath_norm(a_n, c_sat, vw, V_wall_loc)
   ! --- NOTE the minus sign: Phi = -F0*u in the code's variables (see the module header)
   a_n   = - 2.d0 * EL_CHG * F0 * sqrt(MU_ZERO * rho0) / m_i
   c_sat = - 0.5d0 * a_n
-  vw    =   EL_CHG * Vw * MU_ZERO * central_density * 1.d20
+  vw    =   EL_CHG * V_wall_use * MU_ZERO * central_density * 1.d20
 
 end subroutine sheath_norm
 
