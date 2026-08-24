@@ -91,6 +91,7 @@ module mod_sheath_bc
 
   public :: sheath_norm, sheath_get_lambda, sheath_x_limited, sheath_current
   public :: sheath_V_wall_at
+  public :: sheath_temp_floor, dsheath_temp_floor_dT
 
   !> Below these values the characteristic is evaluated with the floor instead. Callers are
   !! expected to pass corr_neg corrected quantities; this is only a last defence against a
@@ -138,6 +139,56 @@ pure subroutine sheath_norm(a_n, c_sat, vw, V_wall_loc)
   vw    =   EL_CHG * V_wall_use * MU_ZERO * central_density * 1.d20
 
 end subroutine sheath_norm
+
+
+!> Positivity floor for the temperatures the SHEATH characteristic sees.
+!!
+!! Same functional form as corr_neg_temp1, but with its own floor T_min_sheath. The global
+!! T_min_neg exists to keep every other term well behaved and is usually set well ABOVE divertor
+!! temperatures: with T_min_neg = 3e-5 the knee sits at 1.93 eV, so a real target profile of
+!! 0.3 -> 1.5 eV is delivered to the sheath as 1.14 -> 1.58 eV. Phi = Lambda*Te/e then inherits
+!! that compression and the target's RADIAL potential gradient - which is what drives the E_r,
+!! hence the PFR ExB drift, hence the in-out density asymmetry - is flattened by ~3.5x before the
+!! boundary condition ever sees it.
+!!
+!! T_min_sheath < 0 (default) falls back to corr_neg_temp1, i.e. no change.
+pure real*8 function sheath_temp_floor(T)
+
+  use phys_module, only: T_min_neg, T_min_sheath, corr_neg_temp_coef
+
+  implicit none
+  real*8, intent(in) :: T
+  real*8 :: L1, L2, Tf
+
+  Tf = T_min_sheath
+  if ( Tf .lt. 0.d0 ) Tf = T_min_neg
+  L1 = Tf * corr_neg_temp_coef(1)
+  L2 = Tf * corr_neg_temp_coef(2)
+
+  sheath_temp_floor = T
+  if ( T .lt. L1 + L2 ) sheath_temp_floor = L1 + L2 * exp( (T - (L1+L2)) / L2 )
+
+end function sheath_temp_floor
+
+
+!> d(sheath_temp_floor)/dT, for the Jacobian chain rule.
+pure real*8 function dsheath_temp_floor_dT(T)
+
+  use phys_module, only: T_min_neg, T_min_sheath, corr_neg_temp_coef
+
+  implicit none
+  real*8, intent(in) :: T
+  real*8 :: L1, L2, Tf
+
+  Tf = T_min_sheath
+  if ( Tf .lt. 0.d0 ) Tf = T_min_neg
+  L1 = Tf * corr_neg_temp_coef(1)
+  L2 = Tf * corr_neg_temp_coef(2)
+
+  dsheath_temp_floor_dT = 1.d0
+  if ( T .lt. L1 + L2 ) dsheath_temp_floor_dT = exp( (T - (L1+L2)) / L2 )
+
+end function dsheath_temp_floor_dT
 
 
 !> Wall potential at major radius R, in volts.

@@ -33,7 +33,7 @@ use mod_assembly, only : boundary_conditions_add_one_entry, boundary_conditions_
 use data_structure
 use vacuum, ONLY: is_freebound
 use corr_neg, only: corr_neg_temp
-use mod_sheath_bc, only: sheath_get_lambda, sheath_current, sheath_V_wall_at
+use mod_sheath_bc, only: sheath_get_lambda, sheath_current, sheath_V_wall_at, sheath_temp_floor
 use mod_sheath_diag, only: sheath_psi0, sheath_store_psi0, sheath_diag_add_nodal
 use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_cos_dR, dpsi_RMP_cos_dZ, &
        psi_RMP_sin, dpsi_RMP_sin_dR, dpsi_RMP_sin_dZ, t_now, RMP_growth_rate, RMP_ramp_up_time,            &
@@ -1148,7 +1148,7 @@ do i=1, n_local_elms !=== do elements
 
             call sheath_current( u0,                                                  &
                                  max(node_list%node(inode)%values(1,1,var_rho), 1.d-10), &
-                                 corr_neg_temp(Ti0), corr_neg_temp(Te0),              &
+                                 sheath_temp_floor(Ti0), sheath_temp_floor(Te0),      &
                                  szj_g, sign(1.d0, bn), Btot,                         &
                                  szj_sh, szj_du, szj_drho, szj_dTi, szj_dTe,          &
                                  szj_sat, szj_x, sheath_V_wall_at(BigR) )

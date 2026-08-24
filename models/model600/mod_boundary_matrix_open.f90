@@ -17,7 +17,8 @@ use phys_module
 use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
-use mod_sheath_bc, only: sheath_current, sheath_norm, sheath_get_lambda, sheath_V_wall_at
+use mod_sheath_bc, only: sheath_current, sheath_norm, sheath_get_lambda, sheath_V_wall_at, &
+                         sheath_temp_floor, dsheath_temp_floor_dT
 use mod_sheath_diag, only: sheath_diag_add
 
 implicit none
@@ -55,6 +56,7 @@ real*8     :: normal_sign, normal_sign3
 
 real*8     :: v, v_x, v_y, v_s, v_p, v_ss, v_xx, v_yy, v_xs, v_ys
 real*8     :: ps0, ps0_s, ps0_t, ps0_x, ps0_y, Vpar0, r0_corr, T0_corr, Ti0_corr, Te0_corr, cs0  
+real*8     :: Ti0_sh, Te0_sh   ! temperatures for the SHEATH characteristic only, own floor
 real*8     :: vpar0_s, vpar0_t, vpar0_x, vpar0_y 
 real*8     :: vpar_s, vpar_t, vpar_x, vpar_y 
 real*8     :: psi, psi_s, psi_t, vpar, T, Ti, Te, cs_T, cs_Ti, cs_Te
@@ -332,6 +334,9 @@ do ms=1, n_gauss
     T0_corr  = corr_neg_temp1(T0)
     Ti0_corr = corr_neg_temp1(Ti0)
     Te0_corr = corr_neg_temp1(Te0)
+    ! --- the sheath characteristic gets its own, milder floor: see sheath_temp_floor
+    Ti0_sh   = sheath_temp_floor(Ti0)
+    Te0_sh   = sheath_temp_floor(Te0)
     r0_corr  = corr_neg_dens(r0)
 
     if (with_TiTe) then
@@ -401,14 +406,14 @@ do ms=1, n_gauss
 
     zj_sh = 0.d0; dzj_du = 0.d0; dzj_drho = 0.d0; dzj_dTi = 0.d0; dzj_dTe = 0.d0
     if ( apply_natural_bc(var_u) ) then
-      call sheath_current(u0, r0_corr, Ti0_corr, Te0_corr, g_bn, normal_sign, Btot, &
+      call sheath_current(u0, r0_corr, Ti0_sh, Te0_sh, g_bn, normal_sign, Btot, &
                           zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, zj_sat_g, x_sheath, &
                           sheath_V_wall_at(BigR))
       ! --- chain rule through the corr_neg corrections, so the Jacobian stays exact where the
       ! --- density and temperature floors are active (which is exactly the cold divertor)
       dzj_drho = dzj_drho * dcorr_neg_dens_drho1(r0)
-      dzj_dTi  = dzj_dTi  * dcorr_neg_temp_dT1(Ti0)
-      dzj_dTe  = dzj_dTe  * dcorr_neg_temp_dT1(Te0)
+      dzj_dTi  = dzj_dTi  * dsheath_temp_floor_dT(Ti0)
+      dzj_dTe  = dzj_dTe  * dsheath_temp_floor_dT(Te0)
 
       ! --- Cap the stiffness of the Robin term. Its diagonal scales as
       ! --- R*|dzj/du|*|B.n|*dl*theta*tstep while the row's own polarisation diagonal scales as
@@ -488,7 +493,7 @@ do ms=1, n_gauss
     ! --- describe the same characteristic. The obliqueness weight matches the one the nodal block
     ! --- applies, so max|j/jsat| is reported only where the constraint is actually active.
     if ( diag_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
-      call sheath_current(u0, r0_corr, Ti0_corr, Te0_corr, g_bn, normal_sign, Btot, &
+      call sheath_current(u0, r0_corr, Ti0_sh, Te0_sh, g_bn, normal_sign, Btot, &
                           dzj_sh, dzj_d1, dzj_d2, dzj_d3, dzj_d4, dzj_sat, dzj_x,      &
                           sheath_V_wall_at(BigR))
       dzj_wgt = 1.d0

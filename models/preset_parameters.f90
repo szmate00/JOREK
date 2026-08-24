@@ -119,6 +119,7 @@ subroutine preset_parameters
   sheath_ramp_time   =  0.d0
   sheath_stiff_max   =  0.d0  ! 0 = no cap; 1.0 keeps the sheath term comparable to the polarisation term
   sheath_init_u      = .false.
+  T_min_sheath       = -1.d0  ! < 0 = use the global T_min_neg for the sheath too
   sheath_diag_R_split=  0.d0  ! 0 = do not split the SHEATH diagnostic by target
   sheath_init_u_all  = .false. ! .true. = the Dirichlet gauge types float too, not just the sheath types
   sheath_flux_sign   =  1.d0  ! debug knob, see phys_module
