@@ -91,6 +91,9 @@ subroutine preset_parameters
   ! --- potential, and Phi = 0 is electron saturation. Lambda = ln(sqrt(m_i/(2*pi*m_e))).
   sheath_Lambda      =  3.d0
   sheath_V_wall      =  0.d0  ! grounded wall
+  sheath_V_wall_asym =  0.d0  ! 0 = no differential bias (a uniform one is a gauge, see phys_module)
+  sheath_V_wall_R0   =  1.42d0! between the strike points; override per case
+  sheath_V_wall_dR   =  0.10d0
   ! --- Clips on X. The upper one caps Phi and keeps |j| below j_sat; the lower one is the
   ! --- electron saturation limit and belongs at -Lambda, where Phi = 0 and |j| = (e^Lambda-1)*j_sat,
   ! --- close to the deuterium ratio 0.5*sqrt(m_i/(pi*m_e)) ~ 17. Change both together with Lambda.

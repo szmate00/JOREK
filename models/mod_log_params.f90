@@ -836,6 +836,9 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,'(A,30(1x,i0))') ' sheath_u bnd types    :', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%sheath_u )
     write(*,REAL_FMT) 'sheath_Lambda         ', sheath_Lambda
     write(*,REAL_FMT) 'sheath_V_wall [V]     ', sheath_V_wall
+    write(*,REAL_FMT) 'sheath_V_wall_asym    ', sheath_V_wall_asym
+    write(*,REAL_FMT) 'sheath_V_wall_R0      ', sheath_V_wall_R0
+    write(*,REAL_FMT) 'sheath_V_wall_dR      ', sheath_V_wall_dR
     write(*,REAL_FMT) 'sheath_u_exp_max      ', sheath_u_exp_max
     write(*,REAL_FMT) 'sheath_u_exp_min      ', sheath_u_exp_min
     write(*,REAL_FMT) 'sheath_u_relax        ', sheath_u_relax

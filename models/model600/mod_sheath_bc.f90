@@ -90,6 +90,7 @@ module mod_sheath_bc
   private
 
   public :: sheath_norm, sheath_get_lambda, sheath_x_limited, sheath_current
+  public :: sheath_V_wall_at
 
   !> Below these values the characteristic is evaluated with the floor instead. Callers are
   !! expected to pass corr_neg corrected quantities; this is only a last defence against a
@@ -108,15 +109,24 @@ contains
 !! @param a_n    -2*e*F0*sqrt(mu0*rho0)/m_i , so that e*Phi/(k*Te) = (a_n*u/2 - vw)/Te
 !! @param c_sat  -a_n/2, the ion saturation current coefficient
 !! @param vw     e*V_wall*mu0*n0, the wall bias in the same units
-pure subroutine sheath_norm(a_n, c_sat, vw)
+pure subroutine sheath_norm(a_n, c_sat, vw, V_wall_loc)
 
   use constants,   only: MU_ZERO, ATOMIC_MASS_UNIT, EL_CHG
   use phys_module, only: F0, central_density, central_mass, sheath_V_wall
 
   implicit none
   real*8, intent(out) :: a_n, c_sat, vw
+  ! --- Local wall potential in VOLTS, overriding the uniform sheath_V_wall. A uniform bias is a
+  ! --- gauge: Phi shifts everywhere, E = -grad(Phi) does not, and no drift responds to it. Only a
+  ! --- bias that DIFFERS between the two targets makes a potential difference across the private
+  ! --- flux region, which is what drives a PFR ExB flow.
+  real*8, intent(in), optional :: V_wall_loc
+  real*8 :: Vw
 
   real*8 :: m_i, rho0
+
+  Vw = sheath_V_wall
+  if ( present(V_wall_loc) ) Vw = V_wall_loc
 
   m_i  = central_mass * ATOMIC_MASS_UNIT
   rho0 = central_density * 1.d20 * m_i
@@ -124,9 +134,40 @@ pure subroutine sheath_norm(a_n, c_sat, vw)
   ! --- NOTE the minus sign: Phi = -F0*u in the code's variables (see the module header)
   a_n   = - 2.d0 * EL_CHG * F0 * sqrt(MU_ZERO * rho0) / m_i
   c_sat = - 0.5d0 * a_n
-  vw    =   EL_CHG * sheath_V_wall * MU_ZERO * central_density * 1.d20
+  vw    =   EL_CHG * Vw * MU_ZERO * central_density * 1.d20
 
 end subroutine sheath_norm
+
+
+!> Wall potential at major radius R, in volts.
+!>
+!>   V_wall(R) = sheath_V_wall + sheath_V_wall_asym * tanh( (R - R0) / dR )
+!>
+!> An ANTISYMMETRIC bias about R0: the inner target sees about
+!> sheath_V_wall - sheath_V_wall_asym and the outer about + it, so the
+!> target-to-target difference is roughly 2*sheath_V_wall_asym while the mean is
+!> unchanged. tanh rather than a step, because a discontinuity in the imposed
+!> trace is turned straight into boundary vorticity by w = grad^2 u.
+!>
+!> This is a DIAGNOSTIC, not physics. It answers: if a potential difference of
+!> this size existed between the targets, would the PFR ExB drift carry enough
+!> to produce the in-out asymmetry? A positive answer means the transport chain
+!> works and the self-consistent Phi is merely too small; a negative answer means
+!> the chain is broken downstream of the boundary condition.
+pure real*8 function sheath_V_wall_at(BigR)
+
+  use phys_module, only: sheath_V_wall, sheath_V_wall_asym, &
+                         sheath_V_wall_R0, sheath_V_wall_dR
+
+  implicit none
+  real*8, intent(in) :: BigR
+
+  sheath_V_wall_at = sheath_V_wall
+  if ( (sheath_V_wall_asym .ne. 0.d0) .and. (sheath_V_wall_dR .gt. 0.d0) )      &
+    sheath_V_wall_at = sheath_V_wall + sheath_V_wall_asym                       &
+                     * tanh( (BigR - sheath_V_wall_R0) / sheath_V_wall_dR )
+
+end function sheath_V_wall_at
 
 
 !> Sheath factor Lambda and its derivatives.
@@ -219,7 +260,7 @@ end subroutine sheath_x_limited
 !! @param x_out  the exponent X actually used, after limiting (diagnostic)
 subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
                           zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, &
-                          zj_sat, x_out)
+                          zj_sat, x_out, V_wall_loc)
 
   use phys_module, only: GAMMA, sheath_min_bn, sheath_sat_slope
 
@@ -228,6 +269,7 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
   real*8, intent(in)  :: u, rho, Ti, Te, g_bn, sgn_bn, Btot
   real*8, intent(out) :: zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe
   real*8, intent(out) :: zj_sat, x_out
+  real*8, intent(in), optional :: V_wall_loc
 
   real*8 :: a_n, c_sat, vw
   real*8 :: rho_l, Ti_l, Te_l, T_l, cs, g_eff
@@ -236,7 +278,11 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
   real*8  :: dx_du, dx_dTi, dx_dTe
   logical :: x_frozen
 
-  call sheath_norm(a_n, c_sat, vw)
+  if ( present(V_wall_loc) ) then
+    call sheath_norm(a_n, c_sat, vw, V_wall_loc)
+  else
+    call sheath_norm(a_n, c_sat, vw)
+  endif
 
   rho_l = max(rho, sheath_rho_floor)
   Ti_l  = max(Ti,  sheath_t_floor)

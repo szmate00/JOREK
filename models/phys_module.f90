@@ -54,6 +54,20 @@ module phys_module
   ! --- J. Artola, "Sheath boundary conditions for the electric potential in JOREK" (rev. 2026).
   real*8  :: sheath_Lambda        !< Sheath factor Lambda_0 in f = 1 - exp(-(e*Phi/(k*Te) - Lambda)). Phi is referenced to the wall, so zero current is at Phi = Lambda*Te/e (the floating potential) and Phi = 0 is electron saturation. Lambda_0 = ln(sqrt(m_i/(2*pi*m_e))), ~3 for deuterium; set it <= 0 to have it computed from central_mass
   real*8  :: sheath_V_wall        !< Wall potential in volts: Phi = V_sheath_entrance - V_wall. 0 = grounded wall
+  real*8  :: sheath_V_wall_asym !< ANTISYMMETRIC wall bias about sheath_V_wall_R0, in volts:
+                                !< V_wall(R) = sheath_V_wall + asym*tanh((R-R0)/dR). A UNIFORM bias
+                                !< is a gauge - Phi shifts everywhere and E = -grad(Phi) does not
+                                !< change, so no drift responds. Only a bias that DIFFERS between
+                                !< the inner and outer target creates a potential difference across
+                                !< the private flux region, which is what drives a PFR ExB flow.
+                                !< Target-to-target difference is about 2*asym. 0 disables it.
+                                !< DIAGNOSTIC: it imposes an asymmetry rather than letting the
+                                !< plasma produce one, to test whether the transport chain responds
+  real*8  :: sheath_V_wall_R0   !< Major radius the antisymmetric bias is centred on [m]; put it
+                                !< between the two strike points, e.g. the geometric axis
+  real*8  :: sheath_V_wall_dR   !< Width of the tanh transition [m]. tanh, not a step: a jump in the
+                                !< imposed trace is converted straight into boundary vorticity by
+                                !< w = grad^2 u. <= 0 disables the bias
   real*8  :: sheath_u_exp_max     !< Upper clip of the sheath exponent X. Caps Phi at (Lambda+X_max)*Te/e and |j| at (1-exp(-X_max))*j_sat
   real*8  :: sheath_u_exp_min     !< Lower clip of X. Effective electron saturation limit; -Lambda puts it at Phi = 0, where |j| = (exp(Lambda)-1)*j_sat
   real*8  :: sheath_u_relax       !< Under-relaxation: u moves this fraction of the way to the characteristic per step. Fixed point unchanged. 1 = none

@@ -61,7 +61,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 F0,                                                 &
                 gamma_stangeby,gamma_i_stangeby,gamma_e_stangeby,   &
                 gamma_sheath, gamma_sheath_i, gamma_sheath_e,       &
-                sheath_Lambda, sheath_V_wall, sheath_u_relax,       &
+                sheath_Lambda, sheath_V_wall, sheath_V_wall_asym, sheath_V_wall_R0, sheath_V_wall_dR, sheath_u_relax,       &
                 sheath_u_relax_time,                                &
                 sheath_wall_vel,                                    &
                 sheath_u_align_psi,                                 &

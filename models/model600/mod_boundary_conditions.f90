@@ -33,7 +33,7 @@ use mod_assembly, only : boundary_conditions_add_one_entry, boundary_conditions_
 use data_structure
 use vacuum, ONLY: is_freebound
 use corr_neg, only: corr_neg_temp
-use mod_sheath_bc, only: sheath_get_lambda, sheath_current
+use mod_sheath_bc, only: sheath_get_lambda, sheath_current, sheath_V_wall_at
 use mod_sheath_diag, only: sheath_psi0, sheath_store_psi0
 use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_cos_dR, dpsi_RMP_cos_dZ, &
        psi_RMP_sin, dpsi_RMP_sin_dR, dpsi_RMP_sin_dZ, t_now, RMP_growth_rate, RMP_ramp_up_time,            &
@@ -860,7 +860,8 @@ do i=1, n_local_elms !=== do elements
             sh_a_n   = - 2.d0 * EL_CHG * F0 * sqrt(MU_ZERO * central_density * 1.d20 * central_mass * ATOMIC_MASS_UNIT) &
                      / (central_mass * ATOMIC_MASS_UNIT)
             sh_c_sat = - 0.5d0 * sh_a_n
-            sh_vw    = EL_CHG * sheath_V_wall * MU_ZERO * central_density * 1.d20
+            ! --- local wall potential, so an antisymmetric bias between the targets is felt
+            sh_vw    = EL_CHG * sheath_V_wall_at(BigR) * MU_ZERO * central_density * 1.d20
 
             ! --- State at the boundary node (axisymmetric component)
             sh_rho   = max( node_list%node(inode)%values(1,1,var_rho), sheath_rho_floor )
@@ -1150,7 +1151,7 @@ do i=1, n_local_elms !=== do elements
                                  corr_neg_temp(Ti0), corr_neg_temp(Te0),              &
                                  szj_g, sign(1.d0, bn), Btot,                         &
                                  szj_sh, szj_du, szj_drho, szj_dTi, szj_dTe,          &
-                                 szj_sat, szj_x )
+                                 szj_sat, szj_x, sheath_V_wall_at(BigR) )
 
             ! --- Effective strength. The diagonal below is never relaxed, so this factor going to
             ! --- zero leaves the row as d(zj) = 0, i.e. exactly the Dirichlet freeze this
