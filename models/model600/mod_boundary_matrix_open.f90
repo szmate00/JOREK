@@ -17,7 +17,7 @@ use phys_module
 use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
-use mod_sheath_bc, only: sheath_current, sheath_norm, sheath_get_lambda
+use mod_sheath_bc, only: sheath_current, sheath_norm, sheath_get_lambda, sheath_V_wall_at
 use mod_sheath_diag, only: sheath_diag_add
 
 implicit none
@@ -402,7 +402,8 @@ do ms=1, n_gauss
     zj_sh = 0.d0; dzj_du = 0.d0; dzj_drho = 0.d0; dzj_dTi = 0.d0; dzj_dTe = 0.d0
     if ( apply_natural_bc(var_u) ) then
       call sheath_current(u0, r0_corr, Ti0_corr, Te0_corr, g_bn, normal_sign, Btot, &
-                          zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, zj_sat_g, x_sheath)
+                          zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, zj_sat_g, x_sheath, &
+                          sheath_V_wall_at(BigR))
       ! --- chain rule through the corr_neg corrections, so the Jacobian stays exact where the
       ! --- density and temperature floors are active (which is exactly the cold divertor)
       dzj_drho = dzj_drho * dcorr_neg_dens_drho1(r0)
@@ -457,7 +458,7 @@ do ms=1, n_gauss
       ! --- multiplies (u0 - u_float), which vanishes at this term's own fixed point.
       sh_pen_c = 0.d0; sh_u_float = 0.d0; sh_duf_dTi = 0.d0; sh_duf_dTe = 0.d0
       if ( sheath_wall_pen .gt. 0.d0 ) then
-        call sheath_norm(sh_an, sh_csat, sh_vw)
+        call sheath_norm(sh_an, sh_csat, sh_vw, sheath_V_wall_at(BigR))
         call sheath_get_lambda(Ti0_corr, Te0_corr, sh_lam, sh_dlTi, sh_dlTe)
         ! --- dzj_du*B.n with g(b_n)*b_n replaced by the reference sheath_wall_pen^2 and f' = 1
         sh_pen_c   = sh_csat * r0_corr * sqrt(GAMMA*(Ti0_corr+Te0_corr))                     &
@@ -477,7 +478,8 @@ do ms=1, n_gauss
 
       ! --- wall current / potential diagnostic; dS is the toroidally integrated surface element
       call sheath_diag_add(bnd_type1, zj_sh, zj0, zj_sat_g, x_sheath, u0, Te0_corr, sh_Bn, &
-                           ws * dl * BigR * TWOPI / dble(n_plane), sh_wgt_bn)
+                           ws * dl * BigR * TWOPI / dble(n_plane), sh_wgt_bn,             &
+                           sheath_V_wall_at(BigR))
     endif
 
     ! --- Same diagnostic for the nodal sheath_zj route. Evaluated at the Gauss point purely to be
@@ -487,12 +489,14 @@ do ms=1, n_gauss
     ! --- applies, so max|j/jsat| is reported only where the constraint is actually active.
     if ( diag_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
       call sheath_current(u0, r0_corr, Ti0_corr, Te0_corr, g_bn, normal_sign, Btot, &
-                          dzj_sh, dzj_d1, dzj_d2, dzj_d3, dzj_d4, dzj_sat, dzj_x)
+                          dzj_sh, dzj_d1, dzj_d2, dzj_d3, dzj_d4, dzj_sat, dzj_x,      &
+                          sheath_V_wall_at(BigR))
       dzj_wgt = 1.d0
       if ( sheath_min_bn .gt. 0.d0 ) &
         dzj_wgt = bdotn**2 / ( bdotn**2 + sheath_min_bn**2 )
       call sheath_diag_add(bnd_type1, dzj_sh, zj0, dzj_sat, dzj_x, u0, Te0_corr, sh_Bn, &
-                           ws * dl * BigR * TWOPI / dble(n_plane), dzj_wgt)
+                           ws * dl * BigR * TWOPI / dble(n_plane), dzj_wgt,             &
+                           sheath_V_wall_at(BigR))
     endif
 
     do i=1,2                ! loop over nodes

@@ -79,13 +79,17 @@ subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, 
 
   use constants,     only: MU_ZERO
   use phys_module,   only: F0, sheath_X_min, sheath_smooth_dX
-  use mod_sheath_bc, only: sheath_norm
+  use mod_sheath_bc, only: sheath_norm, sheath_V_wall_at
 
   implicit none
   integer, intent(in) :: bnd_type
   real*8,  intent(in) :: zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, dS
   real*8,  intent(in), optional :: gate   !< obliqueness weight; the ratio below is only
                                           !< meaningful where the term is actually active
+  real*8,  intent(in), optional :: V_wall_loc !< local wall bias, so e*Phi/kTe is measured against
+                                          !< the SAME reference the constraint imposes. Omitting it
+                                          !< silently reports against the global sheath_V_wall,
+                                          !< which differs wherever sheath_V_wall_asym /= 0.
 
   real*8 :: jn_sheath, jn_amp, phi_over_te, ratio, a_n, c_sat, vw
 
@@ -95,7 +99,11 @@ subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, 
   jn_sheath = zj_sh * Bdotn / (F0 * MU_ZERO)
   jn_amp    = zj0   * Bdotn / (F0 * MU_ZERO)
 
-  call sheath_norm(a_n, c_sat, vw)
+  if ( present(V_wall_loc) ) then
+    call sheath_norm(a_n, c_sat, vw, V_wall_loc)
+  else
+    call sheath_norm(a_n, c_sat, vw)
+  endif
   phi_over_te = ( 0.5d0*a_n*u0 - vw ) / max(Te0, 1.d-14)     ! e*Phi/(k*Te)
 
   ! --- Solvability ratio. The characteristic can only deliver f in (-(exp(-X_min)-1), 1], so
@@ -215,7 +223,7 @@ subroutine sheath_init_potential(node_list, my_id)
   use mod_parameters
   use data_structure
   use phys_module,   only: bcs
-  use mod_sheath_bc, only: sheath_norm, sheath_get_lambda
+  use mod_sheath_bc, only: sheath_norm, sheath_V_wall_at, sheath_get_lambda
   use mpi_mod
 
   implicit none
@@ -227,7 +235,6 @@ subroutine sheath_init_potential(node_list, my_id)
   real*8  :: a_n, c_sat, vw, Ti0, Te0, T0, lam, dlam_dTi, dlam_dTe, cfac
   real*8  :: n_loc(1), n_glo(1)
 
-  call sheath_norm(a_n, c_sat, vw)
   n_loc(1) = 0.d0
 
   do i = 1, node_list%n_nodes
@@ -247,6 +254,9 @@ subroutine sheath_init_potential(node_list, my_id)
       Te0 = 0.5d0 * T0
     endif
     if ( Te0 .le. 0.d0 ) cycle
+
+    ! --- per node: with a differentially biased wall the floating potential is a function of R
+    call sheath_norm(a_n, c_sat, vw, sheath_V_wall_at(node_list%node(i)%x(1,1,1)))
 
     call sheath_get_lambda(Ti0, Te0, lam, dlam_dTi, dlam_dTe)
 
