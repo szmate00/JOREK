@@ -89,11 +89,12 @@ end subroutine sheath_diag_reset
 !! @param Te0       electron temperature (JOREK units)
 !! @param Bdotn     B.n
 !! @param dS        surface element of this sample: ws*dl*R*(2*pi/n_plane) [m^2]
-subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, dS, gate)
+subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, dS, gate, &
+                           V_wall_loc)
 
   use constants,     only: MU_ZERO
   use phys_module,   only: F0, sheath_X_min, sheath_smooth_dX
-  use mod_sheath_bc, only: sheath_norm, sheath_V_wall_at
+  use mod_sheath_bc, only: sheath_norm
 
   implicit none
   integer, intent(in) :: bnd_type
