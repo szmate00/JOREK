@@ -119,6 +119,7 @@ subroutine preset_parameters
   sheath_ramp_time   =  0.d0
   sheath_stiff_max   =  0.d0  ! 0 = no cap; 1.0 keeps the sheath term comparable to the polarisation term
   sheath_init_u      = .false.
+  sheath_init_u_all  = .false. ! .true. = the Dirichlet gauge types float too, not just the sheath types
   sheath_flux_sign   =  1.d0  ! debug knob, see phys_module
   density_reflection = 0.d0   ! reflection coefficient for outgoing density
   neutral_reflection = 0.d0   ! reflection coefficient for (fluid) neutrals

@@ -278,7 +278,7 @@ subroutine sheath_init_potential(node_list, my_id)
 
   use mod_parameters
   use data_structure
-  use phys_module,   only: bcs
+  use phys_module,   only: bcs, sheath_init_u_all
   use mod_sheath_bc, only: sheath_norm, sheath_V_wall_at, sheath_get_lambda
   use mpi_mod
 
@@ -289,9 +289,10 @@ subroutine sheath_init_potential(node_list, my_id)
 
   integer :: i, id, ib, ierr
   real*8  :: a_n, c_sat, vw, Ti0, Te0, T0, lam, dlam_dTi, dlam_dTe, cfac
-  real*8  :: n_loc(1), n_glo(1)
+  real*8  :: n_loc(2), n_glo(2)
+  logical :: is_sheath_type
 
-  n_loc(1) = 0.d0
+  n_loc = 0.d0
 
   do i = 1, node_list%n_nodes
 
@@ -299,7 +300,18 @@ subroutine sheath_init_potential(node_list, my_id)
     if ( ib .lt. 1 .or. ib .gt. max_bnd_types ) cycle
     ! --- both sheath routes want u to start at its own fixed point rather than at 0, which is
     ! --- deep electron saturation (X = -Lambda) and demands ~19*j_sat of electron current
-    if ( .not. (bcs(ib)%natural%u .or. bcs(ib)%sheath_zj) ) cycle
+    !
+    ! --- With sheath_init_u_all the Dirichlet GAUGE types are set as well. They are the same
+    ! --- physical wall: freezing them at u = 0 asserts Phi = 0 there while an adjacent sheath
+    ! --- boundary floats at Lambda*Te/e, and the difference appears as a node-to-node potential
+    ! --- step whose along-wall gradient is ExB flow through the boundary. For pure ExB the
+    ! --- offset would be arbitrary, but the sheath characteristic depends on ABSOLUTE Phi
+    ! --- (X = e*Phi/kTe - Lambda), so once a sheath BC exists the gauge is fixed by physics.
+    ! --- Dirichlet still freezes these nodes - it freezes them at a physical value instead of 0.
+    is_sheath_type = bcs(ib)%natural%u .or. bcs(ib)%sheath_zj
+    if ( .not. is_sheath_type ) then
+      if ( .not. sheath_init_u_all ) cycle
+    endif
 
     if ( with_TiTe ) then
       Ti0 = node_list%node(i)%values(1,1,var_Ti)
@@ -328,15 +340,19 @@ subroutine sheath_init_potential(node_list, my_id)
       endif
     enddo
 
-    n_loc(1) = n_loc(1) + 1.d0
+    if ( is_sheath_type ) then
+      n_loc(1) = n_loc(1) + 1.d0
+    else
+      n_loc(2) = n_loc(2) + 1.d0
+    endif
 
   enddo
 
-  call MPI_Reduce(n_loc, n_glo, 1, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(n_loc, n_glo, 2, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
 
-  if ( my_id .eq. 0 ) write(*,'(A,i0,A)')                                            &
+  if ( my_id .eq. 0 ) write(*,'(A,i0,A,i0,A)')                                       &
     ' SHEATH: sheath_init_u set u to the floating potential on ', nint(n_glo(1)),    &
-    ' boundary nodes'
+    ' sheath nodes and ', nint(n_glo(2)), ' gauge nodes'
 
 end subroutine sheath_init_potential
 

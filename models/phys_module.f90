@@ -88,6 +88,7 @@ module phys_module
   real*8  :: sheath_ramp_time     !< The sheath surface term is ramped in linearly over this time (JOREK units), measured from t_start. 0 = no ramp
   real*8  :: sheath_stiff_max     !< Cap on the sheath Robin term: it may not exceed this multiple of the row's own polarisation diagonal, so u stays solved by the vorticity equation instead of being slaved pointwise. <= 0 disables the cap
   logical :: sheath_init_u        !< Initialise u on the natural%u boundary types to the floating potential Lambda*Te/e at t_start, so the boundary condition does not start ~Lambda*Te away from its own fixed point
+  logical :: sheath_init_u_all    !< With sheath_init_u, ALSO initialise u on the boundary types that are not sheath types - the Dirichlet gauge. They are the same physical wall, and freezing them at u = 0 states Phi = 0, i.e. X = -Lambda, deep electron saturation. Against a neighbouring sheath boundary floating at Lambda*Te/e that is a node-to-node potential step, and grad(Phi) along the wall is ExB flow through it. Once a sheath BC is present the gauge is no longer arbitrary: the characteristic depends on ABSOLUTE Phi
   real*8  :: sheath_flux_sign     !< DEBUG multiplier on the sheath surface term (+1 or -1). The derivation gives +1; -1 tests the hypothesis that the coupling into the u row is inverted, without a rebuild
   real*8  :: density_reflection   !< density reflection coeefficient on open fieldlines
   real*8  :: neutral_reflection   !< reflection coefficient of ions into neutrals (model500)

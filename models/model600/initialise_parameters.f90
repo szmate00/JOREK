@@ -72,6 +72,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 sheath_zj_ratio_max,                                &
                 sheath_min_bn, sheath_ramp_time,                    &
                 sheath_stiff_max, sheath_init_u, sheath_flux_sign,  &
+                sheath_init_u_all,                                  &
                 deuterium_adas, deuterium_adas_1e20,                &
                 old_deuterium_atomic,                               &
                 density_reflection,                                 &
@@ -471,6 +472,18 @@ if (my_id .eq. 0) then
           write(*,*) '      for relaxing the wall current toward a sheath-consistent state, not as'
           write(*,*) '      physics. Set dirichlet%u = .false. to let the potential respond,'
           write(*,*) '      keeping a Dirichlet on u on at least one other type as the gauge.'
+        endif
+        if ( (.not. bcs(i)%dirichlet%u) .and. (.not. sheath_init_u_all) ) then
+          write(*,*) 'NOTE: bcs(', i, ')%sheath_zj with a Dirichlet u gauge on other boundary'
+          write(*,*) '      types that is NOT initialised to the floating potential. Those nodes'
+          write(*,*) '      are frozen at whatever u the restart holds - usually 0, i.e. Phi = 0,'
+          write(*,*) '      X = -Lambda, deep electron saturation - while this boundary floats at'
+          write(*,*) '      Lambda*Te/e. The step between them appears as grad(Phi) along the'
+          write(*,*) '      wall, which IS ExB flow through it. Delta*u is ~0 in the interior, so'
+          write(*,*) '      u is harmonic and the excursion grows with the free boundary area:'
+          write(*,*) '      observed max ePhi/kTe 10.6 on one sheath type, 35.8 on two, then'
+          write(*,*) '      blow-up. Set sheath_init_u = .true. AND sheath_init_u_all = .true. to'
+          write(*,*) '      put the whole wall at the floating potential instead.'
         endif
         if ( .not. bc_natural_open ) then
           write(*,*) 'NOTE: bcs(', i, ')%sheath_zj without bc_natural_open. The boundary condition'
