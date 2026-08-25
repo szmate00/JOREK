@@ -428,11 +428,19 @@ if (my_id .eq. 0) then
       ! --- belongs: the u equation is assembled in STRONG form, so it has no boundary flux a
       ! --- surface term could replace, and adding one injects a spurious source at the wall.
       if ( bcs(i)%sheath_zj_weak ) then
+        if ( sheath_weak_beta .gt. 1.d0 ) then
+          write(*,*) 'WARNING: sheath_weak_beta =', sheath_weak_beta, ' is very large. The penalty'
+          write(*,*) '         exceeds the zj equation''s own diagonal by ~beta*R^2/h, which for a'
+          write(*,*) '         3 mm boundary mesh at R = 1.4 m is ~650*beta. Above ~1 that is a'
+          write(*,*) '         Gauss-point Dirichlet with an effective zbig of 1e3 or more, and'
+          write(*,*) '         it will wreck the conditioning. Parity is at beta ~ 1.5e-3.'
+        endif
         if ( sheath_weak_beta .le. 0.d0 ) then
           write(*,*) 'WARNING: bcs(', i, ')%sheath_zj_weak with sheath_weak_beta <= 0. The weak'
-          write(*,*) '         sheath term is inactive. beta scales as 1/h: the boundary term'
-          write(*,*) '         goes as h while the zj equation diagonal goes as h^2, so beta must'
-          write(*,*) '         grow as the mesh refines. Scan it and check the answer is stable.'
+          write(*,*) '         sheath term is inactive. Parity with the zj equation is at'
+          write(*,*) '         beta ~ h/R^2 (about 1.5e-3 for a 3 mm boundary mesh at R = 1.4 m);'
+          write(*,*) '         useful enforcement is one to three decades above that, so ~1e-2 is'
+          write(*,*) '         a sensible start. Scan it and check the answer does not move.'
         endif
         if ( bcs(i)%sheath_zj ) then
           write(*,*) 'ERROR: bcs(', i, ')%sheath_zj and %sheath_zj_weak are both set. They are'

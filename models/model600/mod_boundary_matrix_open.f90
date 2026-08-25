@@ -564,9 +564,12 @@ do ms=1, n_gauss
           ! --- evaluated there with the LOCAL g_bn, |B| and R, so the incomplete chain rule of
           ! --- the nodal tangential-derivative row (which treats |B| and R as constant along the
           ! --- boundary) does not arise either. Algebraic equation: no theta, no tstep.
+          ! --- /BigR, matching the zj equation this is added to:
+          ! ---   rhs_ij(var_zj) = -( v_x*ps0_x + v_y*ps0_y + v*zj0 ) / BigR * xjac
+          ! --- so the penalty carries the same geometric weight as the term it competes with.
           if ( wk_here ) &
             rhs_ij(var_zj) = rhs_ij(var_zj)                                             &
-                           + v * sheath_weak_beta * ( dzj_sh - zj0 ) * BigR * dl
+                           + v * sheath_weak_beta * ( dzj_sh - zj0 ) / BigR * dl
 
           ! --- Surface term of the current definition (zj = Delta*psi). REFUSED for the same
           ! --- reason as the w term above, and equally unnecessary: the frozen zj trace cancels
@@ -712,20 +715,20 @@ do ms=1, n_gauss
                 ! --- why this assembles where the zj = Delta*psi surface term above cannot.
                 if ( wk_here ) then
                   amat(var_zj,var_zj ) = amat(var_zj,var_zj )                          &
-                                       + v * sheath_weak_beta * psi * BigR * dl
+                                       + v * sheath_weak_beta * psi / BigR * dl
                   amat(var_zj,var_u  ) = amat(var_zj,var_u  )                          &
-                                       - v * sheath_weak_beta * dzj_d1 * psi * BigR * dl
+                                       - v * sheath_weak_beta * dzj_d1 * psi / BigR * dl
                   amat(var_zj,var_rho) = amat(var_zj,var_rho)                          &
-                                       - v * sheath_weak_beta * dzj_d2 * psi * BigR * dl
+                                       - v * sheath_weak_beta * dzj_d2 * psi / BigR * dl
                   if ( with_TiTe ) then
                     amat(var_zj,var_Ti) = amat(var_zj,var_Ti)                          &
-                                        - v * sheath_weak_beta * dzj_d3 * psi * BigR * dl
+                                        - v * sheath_weak_beta * dzj_d3 * psi / BigR * dl
                     amat(var_zj,var_Te) = amat(var_zj,var_Te)                          &
-                                        - v * sheath_weak_beta * dzj_d4 * psi * BigR * dl
+                                        - v * sheath_weak_beta * dzj_d4 * psi / BigR * dl
                   else
                     amat(var_zj,var_T ) = amat(var_zj,var_T )                          &
                                         - v * sheath_weak_beta * 0.5d0*(dzj_d3+dzj_d4) &
-                                            * psi * BigR * dl
+                                            * psi / BigR * dl
                   endif
                 endif
 
