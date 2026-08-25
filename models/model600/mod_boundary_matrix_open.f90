@@ -82,6 +82,9 @@ real*8     :: sh_ramp_t, sh_act
 logical    :: diag_sheath_zj
 logical    :: weak_sheath_zj   ! penalty enforcement of the characteristic at the Gauss points
 logical    :: wk_here          ! ... and whether it is active at THIS Gauss point
+real*8     :: wk_res            ! bounded sheath residual driving the weak term
+real*8     :: wk_dfac           ! d(bounded)/d(raw), the factor every Jacobian column carries
+real*8     :: wk_cap, wk_den   ! the cap itself and the saturating denominator
 real*8     :: dzj_sh, dzj_sat, dzj_x, dzj_d1, dzj_d2, dzj_d3, dzj_d4, dzj_wgt
 real*8     :: sh_duf_dTi, sh_duf_dTe
 real*8     :: gradu0dotn, gradps0dotn, gradudotn, gradpsidotn
@@ -502,6 +505,7 @@ do ms=1, n_gauss
     ! --- filled when the nodal/diagnostic branch runs. A hard zero makes the term vanish rather
     ! --- than pick up whatever the previous Gauss point left behind.
     dzj_sh = 0.d0; dzj_d1 = 0.d0; dzj_d2 = 0.d0; dzj_d3 = 0.d0; dzj_d4 = 0.d0
+    dzj_sat = 0.d0; wk_res = 0.d0; wk_dfac = 0.d0
     wk_here = weak_sheath_zj .and. (.not. apply_natural_bc(var_u))
 
     if ( diag_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
@@ -520,6 +524,24 @@ do ms=1, n_gauss
       dzj_d2 = dzj_d2 * dcorr_neg_dens_drho1(r0)
       dzj_d3 = dzj_d3 * dsheath_temp_floor_dT(Ti0)
       dzj_d4 = dzj_d4 * dsheath_temp_floor_dT(Te0)
+
+      ! --- Trust region on the residual. zj_sh - zj is unbounded on the electron branch - at
+      ! --- u = 0 the characteristic sits at X = -Lambda, f = 1-exp(Lambda) ~ -19 - so from a
+      ! --- restart whose wall is not already near the floating potential the penalty is asked for
+      ! --- ~20*j_sat of driving force on the first step. Measured doing exactly that: ePhi/kTe
+      ! --- 0.00/0.01/0.03, e-limited 100%, I_sheath -12 kA against I_Ampere +1 kA, blow-up in 4
+      ! --- steps. r/(1+|r|/cap) is the IDENTITY for |r| << cap, so the fixed point and the local
+      ! --- convergence rate are untouched, and saturates at cap however far off the state starts.
+      ! --- Its derivative 1/(1+|r|/cap)^2 decays only algebraically, unlike a tanh clip whose
+      ! --- exponential decay would leave the row effectively explicit during the approach.
+      wk_res  = dzj_sh - zj0
+      wk_dfac = 1.d0
+      if ( sheath_weak_rmax .gt. 0.d0 ) then
+        wk_cap  = sheath_weak_rmax * max(abs(dzj_sat), 1.d-30)
+        wk_den  = 1.d0 + abs(wk_res) / wk_cap
+        wk_res  = wk_res  / wk_den
+        wk_dfac = 1.d0 / wk_den**2
+      endif
     endif
 
     do i=1,2                ! loop over nodes
@@ -574,7 +596,7 @@ do ms=1, n_gauss
           ! --- so the penalty carries the same geometric weight as the term it competes with.
           if ( wk_here ) &
             rhs_ij(var_zj) = rhs_ij(var_zj)                                             &
-                           + v * sheath_weak_beta * sh_ramp_t * ( dzj_sh - zj0 ) / BigR * dl
+                           + v * sheath_weak_beta * sh_ramp_t * wk_res / BigR * dl
 
           ! --- Surface term of the current definition (zj = Delta*psi). REFUSED for the same
           ! --- reason as the w term above, and equally unnecessary: the frozen zj trace cancels
@@ -720,19 +742,19 @@ do ms=1, n_gauss
                 ! --- why this assembles where the zj = Delta*psi surface term above cannot.
                 if ( wk_here ) then
                   amat(var_zj,var_zj ) = amat(var_zj,var_zj )                          &
-                                       + v * sheath_weak_beta * sh_ramp_t * psi / BigR * dl
+                                       + v * sheath_weak_beta * sh_ramp_t * wk_dfac * psi / BigR * dl
                   amat(var_zj,var_u  ) = amat(var_zj,var_u  )                          &
-                                       - v * sheath_weak_beta * sh_ramp_t * dzj_d1 * psi / BigR * dl
+                                       - v * sheath_weak_beta * sh_ramp_t * wk_dfac * dzj_d1 * psi / BigR * dl
                   amat(var_zj,var_rho) = amat(var_zj,var_rho)                          &
-                                       - v * sheath_weak_beta * sh_ramp_t * dzj_d2 * psi / BigR * dl
+                                       - v * sheath_weak_beta * sh_ramp_t * wk_dfac * dzj_d2 * psi / BigR * dl
                   if ( with_TiTe ) then
                     amat(var_zj,var_Ti) = amat(var_zj,var_Ti)                          &
-                                        - v * sheath_weak_beta * sh_ramp_t * dzj_d3 * psi / BigR * dl
+                                        - v * sheath_weak_beta * sh_ramp_t * wk_dfac * dzj_d3 * psi / BigR * dl
                     amat(var_zj,var_Te) = amat(var_zj,var_Te)                          &
-                                        - v * sheath_weak_beta * sh_ramp_t * dzj_d4 * psi / BigR * dl
+                                        - v * sheath_weak_beta * sh_ramp_t * wk_dfac * dzj_d4 * psi / BigR * dl
                   else
                     amat(var_zj,var_T ) = amat(var_zj,var_T )                          &
-                                        - v * sheath_weak_beta * sh_ramp_t                &
+                                        - v * sheath_weak_beta * sh_ramp_t * wk_dfac      &
                                             * 0.5d0*(dzj_d3+dzj_d4) * psi / BigR * dl
                   endif
                 endif
