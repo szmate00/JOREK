@@ -265,10 +265,14 @@ subroutine sheath_trace_report(my_id)
 
   if ( my_id .ne. 0 ) return
 
+  ! --- 10 edit descriptors, 10 output items. Counted, because getting this wrong is a run-time
+  ! --- severe(61) that kills rank 0 mid-write and hangs every other rank in the next collective.
   write(*,'(A,i0,A,i0,A,i0,A,es9.2,A,es9.2)')                                   &
-    '         sheath trace rows: ', nint(glo(1)), ' accumulated, ',              &
-    nint(glo(2)), ' replaced, ', nint(glo(4)), ' below the degeneracy floor;',   &
-    '  D min=', dglo(1), ' max=', dglo(2)
+    '         sheath trace rows: ', nint(glo(1)),                                &
+    ' accumulated, ',              nint(glo(2)),                                 &
+    ' replaced, ',                 nint(glo(4)),                                 &
+    ' below the floor;  D min=',   dglo(1),                                      &
+    ' max=',                       dglo(2)
 
   if ( glo(3) .gt. 0.d0 ) then
     write(*,*) 'ERROR: the sheath trace accumulator overflowed. A truncated row is a WRONG'
