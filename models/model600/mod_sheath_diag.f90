@@ -245,7 +245,7 @@ subroutine sheath_diag_report(my_id)
   integer, parameter :: nx = ns + 17                 ! +1 gate-off, +2..5 nodal, +6..13 in/out, +14..17 residuals
   real*8  :: loc_sum(nx), glo_sum(nx), loc_max(5), glo_max(5), loc_min(2), glo_min(2)
   real*8  :: area_tot, I_sh_tot, I_am_tot, phi_mean, lim_frac, zjrel_mean, zjratio_mean
-  real*8  :: wr_loc(1), wr_glo(1), eps_node, eps_gauss
+  real*8  :: wr_loc(1), wr_glo(1), wr_own(3), wr_all(3), eps_node, eps_gauss
   integer :: io, ib0
   character(len=5), parameter :: io_name(2) = (/ 'INNER', 'OUTER' /)
   integer :: ierr, i, i0, i1, i2
@@ -281,14 +281,19 @@ subroutine sheath_diag_report(my_id)
   call MPI_Reduce(loc_max, glo_max,  5, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
   call MPI_Reduce(loc_min, glo_min,  2, MPI_REAL8, MPI_MIN, 0, MPI_COMM_WORLD, ierr)
 
-  ! --- Locate the worst node. Every rank takes the global max, then whichever rank owns it prints
-  ! --- its position; a tie just prints twice, which is harmless and informative in itself.
+  ! --- Locate the worst node. Take the global max, then have ONLY the owning rank contribute its
+  ! --- position to a SUM reduction, so the position arrives on rank 0 and the line is printed
+  ! --- there with everything else. Printing from the owning rank directly would be simpler but
+  ! --- many MPI launchers only capture rank 0's stdout, which would silently lose the line.
   wr_loc(1) = sd_worst_ratio
   call MPI_Allreduce(wr_loc, wr_glo, 1, MPI_REAL8, MPI_MAX, MPI_COMM_WORLD, ierr)
-  if ( (wr_glo(1) .gt. 0.d0) .and. (sd_worst_ratio .ge. wr_glo(1)) )                &
-    write(*,'(A,es10.3,A,f7.4,A,f8.4,A)')                                           &
-      '         worst node |zj/zj_sat|=', sd_worst_ratio,                           &
-      ' at R=', sd_worst_RZ(1), ' Z=', sd_worst_RZ(2), ' m'
+  wr_own = 0.d0
+  if ( (wr_glo(1) .gt. 0.d0) .and. (sd_worst_ratio .ge. wr_glo(1)) ) then
+    wr_own(1) = sd_worst_RZ(1)
+    wr_own(2) = sd_worst_RZ(2)
+    wr_own(3) = 1.d0                      ! owner count, so a tie can be divided out
+  endif
+  call MPI_Reduce(wr_own, wr_all, 3, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
 
   ! --- zero the nodal block here, not in sheath_diag_reset: boundary_conditions runs AFTER this
   ! --- report within one matrix construction, so zeroing at reset would wipe the pass we want.
@@ -315,6 +320,11 @@ subroutine sheath_diag_report(my_id)
   write(*,'(A,f8.2,A,f5.1,A)')                                                     &
     '         ePhi/kTe max where the sheath is ACTIVE=', glo_max(3),               &
     '   gated-off area ', 1.d2*glo_sum(ns+1)/max(area_tot,1.d-30), ' %'
+
+  if ( (wr_glo(1) .gt. 0.d0) .and. (wr_all(3) .gt. 0.d0) )                          &
+    write(*,'(A,es10.3,A,f7.4,A,f8.4,A)')                                           &
+      '         worst node |zj/zj_sat|=', wr_glo(1),                                &
+      ' at R=', wr_all(1)/wr_all(3), ' Z=', wr_all(2)/wr_all(3), ' m'
 
   ! --- Acceptance metric: is zj actually ON the characteristic? eps = ||zj - zj_sh|| / ||zj_sat||,
   ! --- at nodes (where the row is imposed) and at Gauss points (where the currents are
