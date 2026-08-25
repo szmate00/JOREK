@@ -126,11 +126,20 @@ subroutine sheath_trace_add(irow, dD, dF, nc, icol, ivar, vals)
   integer :: is, ic, jc
   logical :: found
 
-  is = st_slot(irow)
-  if ( is .eq. 0 ) return
+  ! --- The element loop that calls this is OpenMP-threaded (construct_matrix_mod passes omp_tid),
+  ! --- and every st_* array here is module-level shared state that this routine both searches and
+  ! --- extends. Without the critical section two threads race on st_n and write past each other,
+  ! --- producing corrupted row indices - which is a crash, not a wrong answer. sheath_diag_add
+  ! --- protects its own accumulators the same way. Boundary elements are a small fraction of the
+  ! --- mesh, so serialising here costs little.
+  !$omp critical (sheath_trace_accumulate)
 
-  st_D(is) = st_D(is) + dD
-  st_F(is) = st_F(is) + dF
+  is = st_slot(irow)
+
+  if ( is .gt. 0 ) then
+
+    st_D(is) = st_D(is) + dD
+    st_F(is) = st_F(is) + dF
 
   do ic = 1, nc
     found = .false.
@@ -152,6 +161,10 @@ subroutine sheath_trace_add(irow, dD, dF, nc, icol, ivar, vals)
       st_val(st_nc(is), is)  = vals(ic)
     endif
   enddo
+
+  endif
+
+  !$omp end critical (sheath_trace_accumulate)
 
 end subroutine sheath_trace_add
 
