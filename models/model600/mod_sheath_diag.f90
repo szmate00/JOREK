@@ -67,6 +67,13 @@ module mod_sheath_diag
   real*8,  save :: sd_io_sum(2,4)             = 0.d0
   real*8,  save :: sd_io_max(2)               = 0.d0  !< max |j/j_sat| on each target
 
+  !> Where the worst NODE is. A single node whose |zj/zj_sat| grows without bound is the observed
+  !! failure on the target plate: the validity gate shuts it off progressively (strength min decays
+  !! monotonically) and it diverges anyway. Knowing whether it sits at a corner, at the strike
+  !! point, or on a leg edge decides what to fix, and no other number here localises it.
+  real*8,  save :: sd_worst_ratio             = -1.d0
+  real*8,  save :: sd_worst_RZ(2)             = 0.d0
+
 contains
 
 !> Zero the accumulators. Called once per matrix construction, before the element loop.
@@ -83,6 +90,8 @@ subroutine sheath_diag_reset()
   sd_ratio_max= 0.d0
   sd_io_sum   = 0.d0
   sd_io_max   = 0.d0
+  sd_worst_ratio = -1.d0
+  sd_worst_RZ    = 0.d0
   sd_lim_area = 0.d0
 end subroutine sheath_diag_reset
 
@@ -184,15 +193,22 @@ end subroutine sheath_diag_add
 !!
 !! @param szj_rel   effective row strength, 1 = constraint imposed fully, 0 = zj left frozen
 !! @param zj_ratio  |zj/zj_sat| the interior is demanding at this node
-subroutine sheath_diag_add_nodal(szj_rel, zj_ratio)
+subroutine sheath_diag_add_nodal(szj_rel, zj_ratio, R_node, Z_node)
 
   implicit none
   real*8, intent(in) :: szj_rel, zj_ratio
+  real*8, intent(in), optional :: R_node, Z_node   !< position, to locate the worst node
 
   sd_zjrel_sum   = sd_zjrel_sum   + szj_rel
   sd_zjrel_min   = min(sd_zjrel_min, szj_rel)
   sd_zjrel_n     = sd_zjrel_n     + 1.d0
   sd_zjratio_sum = sd_zjratio_sum + zj_ratio
+
+  if ( zj_ratio .gt. sd_worst_ratio ) then
+    sd_worst_ratio = zj_ratio
+    if ( present(R_node) ) sd_worst_RZ(1) = R_node
+    if ( present(Z_node) ) sd_worst_RZ(2) = Z_node
+  endif
 
 end subroutine sheath_diag_add_nodal
 
@@ -212,6 +228,7 @@ subroutine sheath_diag_report(my_id)
   integer, parameter :: nx = ns + 13                 ! ns+1 gate-off, ns+2..5 nodal, ns+6..13 in/out
   real*8  :: loc_sum(nx), glo_sum(nx), loc_max(5), glo_max(5), loc_min(2), glo_min(2)
   real*8  :: area_tot, I_sh_tot, I_am_tot, phi_mean, lim_frac, zjrel_mean, zjratio_mean
+  real*8  :: wr_loc(1), wr_glo(1)
   integer :: io, ib0
   character(len=5), parameter :: io_name(2) = (/ 'INNER', 'OUTER' /)
   integer :: ierr, i, i0, i1, i2
@@ -245,9 +262,19 @@ subroutine sheath_diag_report(my_id)
   call MPI_Reduce(loc_max, glo_max,  5, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
   call MPI_Reduce(loc_min, glo_min,  2, MPI_REAL8, MPI_MIN, 0, MPI_COMM_WORLD, ierr)
 
+  ! --- Locate the worst node. Every rank takes the global max, then whichever rank owns it prints
+  ! --- its position; a tie just prints twice, which is harmless and informative in itself.
+  wr_loc(1) = sd_worst_ratio
+  call MPI_Allreduce(wr_loc, wr_glo, 1, MPI_REAL8, MPI_MAX, MPI_COMM_WORLD, ierr)
+  if ( (wr_glo(1) .gt. 0.d0) .and. (sd_worst_ratio .ge. wr_glo(1)) )                &
+    write(*,'(A,es10.3,A,f7.4,A,f8.4,A)')                                           &
+      '         worst node |zj/zj_sat|=', sd_worst_ratio,                           &
+      ' at R=', sd_worst_RZ(1), ' Z=', sd_worst_RZ(2), ' m'
+
   ! --- zero the nodal block here, not in sheath_diag_reset: boundary_conditions runs AFTER this
   ! --- report within one matrix construction, so zeroing at reset would wipe the pass we want.
   sd_zjrel_sum = 0.d0; sd_zjrel_n = 0.d0; sd_zjratio_sum = 0.d0; sd_zjrel_min = 1.d30
+  sd_worst_ratio = -1.d0; sd_worst_RZ = 0.d0
 
   if ( my_id .ne. 0 ) return
 

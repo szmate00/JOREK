@@ -1188,7 +1188,8 @@ do i=1, n_local_elms !=== do elements
             ! --- Report the strength the row is ACTUALLY assembled with. Without this the only
             ! --- gate visible in the SHEATH output is the obliqueness one, and a small szj_rel
             ! --- silently degrades the constraint to the Dirichlet freeze it is meant to replace.
-            call sheath_diag_add_nodal(szj_rel, szj_ratio)
+            call sheath_diag_add_nodal(szj_rel, szj_ratio, BigR,                &
+                                       node_list%node(inode)%x(1,1,2))
 
             ! --- Row:  d(zj) - sum_k (d zj_sh / d x_k) d x_k = zj_sh - zj0
             szj_coef            = 0.d0
