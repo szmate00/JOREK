@@ -40,8 +40,12 @@ module mod_sheath_trace
 
   public :: sheath_trace_reset, sheath_trace_add, sheath_trace_apply, sheath_trace_report
 
-  integer, parameter :: st_max_row = 40000   !< trace DOFs per rank; boundary only, so generous
-  integer, parameter :: st_max_col = 24      !< 3 nodes x 2 trace DOFs x (zj,u,rho,Ti,Te) worst case
+  integer, parameter :: st_max_row = 4000    !< trace DOFs per rank; 204 observed, so ample
+  !> Columns per row. A shared trace DOF collects columns from BOTH adjacent edges: 3 distinct
+  !! nodes x 2 trace DOFs x up to 6 variables (zj, u, rho, Ti, Te or T) = 36, and a junction where
+  !! three boundary segments meet takes 4 nodes = 48. 64 leaves headroom; the overflow is fatal
+  !! rather than silent, so the cost of being generous is only memory.
+  integer, parameter :: st_max_col = 64
 
   integer, save :: st_n = 0
   integer, save :: st_row(st_max_row)
@@ -55,6 +59,7 @@ module mod_sheath_trace
   logical, save :: st_over_row = .false.     !< ran out of rows
   logical, save :: st_over_col = .false.     !< ran out of columns in some row
   integer, save :: st_n_applied = 0
+  integer, save :: st_n_skipped = 0
 
 contains
 
@@ -163,15 +168,30 @@ subroutine sheath_trace_apply(in, zbig, index_min, index_max, a_mat, RHS_loc)
   real*8,               intent(inout) :: RHS_loc(*)
 
   integer :: is, ic
-  real*8  :: sc
+  real*8  :: sc, d_max
 
   st_n_applied = 0
+  st_n_skipped = 0
+
+  ! --- Degeneracy floor, relative to the largest diagonal on this rank. The spread between value
+  ! --- and derivative rows is genuine element-size scaling (measured 2.6e10 on this mesh) and
+  ! --- normalising it is exactly the point, so the floor must be far below that - it is here only
+  ! --- to catch a row that received essentially no boundary support, where 1/D_a would manufacture
+  ! --- an enormous row out of numerical noise.
+  d_max = 0.d0
+  do is = 1, st_n
+    d_max = max(d_max, st_D(is))
+  enddo
 
   do is = 1, st_n
 
     ! --- A row with no diagonal received no boundary-edge contribution at all; writing zbig into
     ! --- it would create a singular equation, so leave the assembled row alone.
     if ( st_D(is) .le. 0.d0 ) cycle
+    if ( st_D(is) .lt. 1.d-14 * d_max ) then
+      st_n_skipped = st_n_skipped + 1
+      cycle
+    endif
 
     sc = 1.d0 / st_D(is)
 
@@ -208,12 +228,13 @@ subroutine sheath_trace_report(my_id)
   integer, intent(in) :: my_id
 
   integer :: ierr
-  real*8  :: loc(3), glo(3), dloc(2), dglo(2)
+  real*8  :: loc(4), glo(4), dloc(2), dglo(2)
 
   loc(1) = dble(st_n)
   loc(2) = dble(st_n_applied)
   loc(3) = 0.d0
   if ( st_over_row .or. st_over_col ) loc(3) = 1.d0
+  loc(4) = dble(st_n_skipped)
 
   dloc(1) = 1.d30; dloc(2) = -1.d30
   if ( st_n .gt. 0 ) then
@@ -221,15 +242,16 @@ subroutine sheath_trace_report(my_id)
     dloc(2) = maxval(st_D(1:st_n))
   endif
 
-  call MPI_Reduce(loc,  glo,  3, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(loc,  glo,  4, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
   call MPI_Reduce(dloc(1), dglo(1), 1, MPI_REAL8, MPI_MIN, 0, MPI_COMM_WORLD, ierr)
   call MPI_Reduce(dloc(2), dglo(2), 1, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
 
   if ( my_id .ne. 0 ) return
 
-  write(*,'(A,i0,A,i0,A,es9.2,A,es9.2)')                                        &
+  write(*,'(A,i0,A,i0,A,i0,A,es9.2,A,es9.2)')                                   &
     '         sheath trace rows: ', nint(glo(1)), ' accumulated, ',              &
-    nint(glo(2)), ' replaced;  D min=', dglo(1), ' max=', dglo(2)
+    nint(glo(2)), ' replaced, ', nint(glo(4)), ' below the degeneracy floor;',   &
+    '  D min=', dglo(1), ' max=', dglo(2)
 
   if ( glo(3) .gt. 0.d0 ) then
     write(*,*) 'ERROR: the sheath trace accumulator overflowed. A truncated row is a WRONG'
