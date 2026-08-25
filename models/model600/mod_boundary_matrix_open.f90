@@ -916,7 +916,6 @@ do ms=1, n_gauss
   enddo
 enddo
 
-return
 ! --- Hand the element's trace rows to the diagnostic. Normalising by D_a is what makes value
 ! --- rows and derivative rows comparable: the trace mass block scales as h, h^2, h^3 across the
 ! --- value/derivative combinations, so an unnormalised Galerkin row block spans orders of
@@ -934,6 +933,8 @@ if ( diag_sheath_zj ) then
     enddo
   enddo
 endif
+
+return
 
 end subroutine
 
