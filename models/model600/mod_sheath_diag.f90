@@ -23,7 +23,7 @@ module mod_sheath_diag
   private
 
   public :: sheath_diag_reset, sheath_diag_add, sheath_diag_report
-  public :: sheath_diag_add_nodal
+  public :: sheath_diag_add_nodal, sheath_diag_add_weak
   public :: sheath_store_psi0, sheath_psi0
   public :: sheath_init_potential
 
@@ -83,6 +83,19 @@ module mod_sheath_diag
   real*8,  save :: sd_res_node(2)             = 0.d0  !< 1: sum (zj-zj_sh)^2   2: sum zj_sat^2
   real*8,  save :: sd_res_gauss(2)            = 0.d0  !< same, weighted by dS
 
+  !> WEAK (Galerkin) residual of the sheath characteristic on the boundary trace space:
+  !!     F_a = integral over Gamma of  N_a * (zj - zj_sh) dS,   normalised by the trace mass
+  !!     diagonal D_a = integral of N_a*N_a dS.
+  !! This is what a projection would drive to zero, and it is NOT the pointwise residual: a
+  !! Galerkin condition only needs (zj - zj_sh) ORTHOGONAL to the trace space, not zero. Reporting
+  !! both separates "the trace cannot represent zj_sh" from "the trace is not being projected onto
+  !! it", which the pointwise number alone cannot do. Purely diagnostic - nothing is imposed.
+  real*8,  save :: sd_wk_res2                 = 0.d0  !< sum of (F_a/D_a)^2
+  real*8,  save :: sd_wk_ref2                 = 0.d0  !< sum of (S_a/D_a)^2, S_a = int N_a zj_sat
+  real*8,  save :: sd_wk_n                    = 0.d0  !< number of trace rows sampled
+  real*8,  save :: sd_wk_dmin                 =  1.d30
+  real*8,  save :: sd_wk_dmax                 = -1.d30
+
 contains
 
 !> Zero the accumulators. Called once per matrix construction, before the element loop.
@@ -102,6 +115,9 @@ subroutine sheath_diag_reset()
   sd_worst_ratio = -1.d0
   sd_worst_RZ    = 0.d0
   sd_res_gauss   = 0.d0
+  sd_wk_res2 = 0.d0; sd_wk_ref2 = 0.d0; sd_wk_n = 0.d0
+  sd_wk_dmin = 1.d30; sd_wk_dmax = -1.d30
+
   sd_lim_area = 0.d0
 end subroutine sheath_diag_reset
 
@@ -230,6 +246,25 @@ subroutine sheath_diag_add_nodal(szj_rel, zj_ratio, R_node, Z_node, zj_resid, zj
 end subroutine sheath_diag_add_nodal
 
 
+!> One boundary trace row's weak sheath residual, already divided by its trace mass diagonal.
+!!
+!! @param res_over_D  F_a / D_a, in zj units
+!! @param ref_over_D  S_a / D_a, the same projection applied to zj_sat, to normalise with
+!! @param diag        D_a itself, to expose the value/derivative row scaling spread
+subroutine sheath_diag_add_weak(res_over_D, ref_over_D, diag)
+
+  implicit none
+  real*8, intent(in) :: res_over_D, ref_over_D, diag
+
+  sd_wk_res2 = sd_wk_res2 + res_over_D**2
+  sd_wk_ref2 = sd_wk_ref2 + ref_over_D**2
+  sd_wk_n    = sd_wk_n    + 1.d0
+  sd_wk_dmin = min(sd_wk_dmin, diag)
+  sd_wk_dmax = max(sd_wk_dmax, diag)
+
+end subroutine sheath_diag_add_weak
+
+
 !> Reduce over MPI ranks and print one line. Called after the element loop; rank 0 prints.
 !!
 !! Every rank calls all three collectives unconditionally (no early return), and only arrays are
@@ -242,10 +277,10 @@ subroutine sheath_diag_report(my_id)
   integer, intent(in) :: my_id
 
   integer, parameter :: ns = 3*max_bnd_types + 2
-  integer, parameter :: nx = ns + 17                 ! +1 gate-off, +2..5 nodal, +6..13 in/out, +14..17 residuals
-  real*8  :: loc_sum(nx), glo_sum(nx), loc_max(5), glo_max(5), loc_min(2), glo_min(2)
+  integer, parameter :: nx = ns + 20                 ! +1 gate-off, +2..5 nodal, +6..13 in/out, +14..17 resid, +18..20 weak
+  real*8  :: loc_sum(nx), glo_sum(nx), loc_max(6), glo_max(6), loc_min(3), glo_min(3)
   real*8  :: area_tot, I_sh_tot, I_am_tot, phi_mean, lim_frac, zjrel_mean, zjratio_mean
-  real*8  :: wr_loc(1), wr_glo(1), wr_own(3), wr_all(3), eps_node, eps_gauss
+  real*8  :: wr_loc(1), wr_glo(1), wr_own(3), wr_all(3), eps_node, eps_gauss, wk_eps
   integer :: io, ib0
   character(len=5), parameter :: io_name(2) = (/ 'INNER', 'OUTER' /)
   integer :: ierr, i, i0, i1, i2
@@ -272,14 +307,19 @@ subroutine sheath_diag_report(my_id)
   loc_sum(ns+10:ns+13) = sd_io_sum(2,:)
   loc_sum(ns+14:ns+15) = sd_res_node
   loc_sum(ns+16:ns+17) = sd_res_gauss
+  loc_sum(ns+18) = sd_wk_res2
+  loc_sum(ns+19) = sd_wk_ref2
+  loc_sum(ns+20) = sd_wk_n
+  loc_max(6) = sd_wk_dmax
+  loc_min(3) = -sd_wk_dmin        ! MIN via a MAX reduction on the negated value
   loc_max(4) = sd_io_max(1)
   loc_max(5) = sd_io_max(2)
   loc_min(1) = sd_phi_min
   loc_min(2) = sd_zjrel_min
 
   call MPI_Reduce(loc_sum, glo_sum, nx, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
-  call MPI_Reduce(loc_max, glo_max,  5, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
-  call MPI_Reduce(loc_min, glo_min,  2, MPI_REAL8, MPI_MIN, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(loc_max, glo_max,  6, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(loc_min, glo_min,  3, MPI_REAL8, MPI_MIN, 0, MPI_COMM_WORLD, ierr)
 
   ! --- Locate the worst node. Take the global max, then have ONLY the owning rank contribute its
   ! --- position to a SUM reduction, so the position arrives on rank 0 and the line is printed
@@ -338,6 +378,20 @@ subroutine sheath_diag_report(my_id)
   if ( (eps_node .ge. 0.d0) .or. (eps_gauss .ge. 0.d0) )                             &
     write(*,'(A,es10.3,A,es10.3)')                                                   &
       '         |zj-zj_sh|/|zj_sat|  nodes=', eps_node, '  gauss=', eps_gauss
+
+  ! --- WEAK residual: what a Galerkin projection onto the boundary trace space would drive to
+  ! --- zero. A projection only needs (zj - zj_sh) ORTHOGONAL to that space, so this can be far
+  ! --- smaller than the pointwise `gauss` figure above without anything being wrong. If it is
+  ! --- already small, a weak formulation has little left to gain and the closure gap lies
+  ! --- elsewhere. D_max/D_min is the value-row vs derivative-row scaling spread, which is what
+  ! --- makes a Galerkin row block hard to condition.
+  if ( glo_sum(ns+20) .gt. 0.d0 ) then
+    wk_eps = 0.d0
+    if ( glo_sum(ns+19) .gt. 0.d0 ) wk_eps = sqrt( glo_sum(ns+18) / glo_sum(ns+19) )
+    write(*,'(A,es10.3,A,i0,A,es9.2,A,es9.2)')                                       &
+      '         weak |F_a/D_a|/|S_a/D_a|=', wk_eps, '  over ', nint(glo_sum(ns+20)), &
+      ' trace rows;  D min=', -glo_min(3), ' max=', glo_max(6)
+  endif
 
   ! --- How hard the nodal constraint is actually being pushed. mean(szj_rel) well below 1 means
   ! --- the row is mostly the Dirichlet freeze, so zj is under no obligation to match zj_sheath and

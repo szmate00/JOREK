@@ -19,7 +19,7 @@ use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
 use mod_sheath_bc, only: sheath_current, sheath_norm, sheath_get_lambda, sheath_V_wall_at, &
                          sheath_temp_floor, dsheath_temp_floor_dT
-use mod_sheath_diag, only: sheath_diag_add
+use mod_sheath_diag, only: sheath_diag_add, sheath_diag_add_weak
 
 implicit none
 
@@ -85,6 +85,11 @@ logical    :: wk_here          ! ... and whether it is active at THIS Gauss poin
 real*8     :: wk_res            ! bounded sheath residual driving the weak term
 real*8     :: wk_dfac           ! d(bounded)/d(raw), the factor every Jacobian column carries
 real*8     :: wk_cap, wk_den   ! the cap itself and the saturating denominator
+! --- Galerkin trace diagnostics: D_a = int N_a N_a dS, F_a = int N_a (zj - zj_sh) dS,
+! --- S_a = int N_a zj_sat dS. Purely diagnostic - see sheath_diag_add_weak.
+real*8     :: wk_D(2,2,n_tor), wk_F(2,2,n_tor), wk_S(2,2,n_tor)
+real*8     :: wk_dl, wk_R, wk_vv, wk_esz
+integer    :: wk_i, wk_j, wk_m
 real*8     :: dzj_sh, dzj_sat, dzj_x, dzj_d1, dzj_d2, dzj_d3, dzj_d4, dzj_wgt
 real*8     :: sh_duf_dTi, sh_duf_dTe
 real*8     :: gradu0dotn, gradps0dotn, gradudotn, gradpsidotn
@@ -236,6 +241,31 @@ delta_g = delta_g * tstep / tstep_prev
 delta_s = delta_s * tstep / tstep_prev
 
 n_tor_local = i_tor_max - i_tor_min +1
+
+! --- Trace mass diagonals for the weak sheath diagnostic. Done here because x_s, y_s and x_g are
+! --- complete after the field loop above but the main loop writes RHS inside its own quadrature,
+! --- so a row-normalising factor has to exist before that loop starts.
+wk_D = 0.d0; wk_F = 0.d0; wk_S = 0.d0
+if ( diag_sheath_zj ) then
+  do ms = 1, n_gauss
+    wk_dl = sqrt(x_s(ms)**2 + y_s(ms)**2)
+    wk_R  = x_g(ms)
+    if ( wk_R .le. 0.d0 ) cycle
+    do mp = 1, n_plane
+      do wk_i = 1, 2
+        do wk_j = 1, 2
+          wk_esz = element%size(vertex(wk_i), direction(wk_j))
+          do wk_m = i_tor_min, i_tor_max
+            wk_vv = H1(wk_i,wk_j,ms) * wk_esz * HZ(wk_m,mp)
+            wk_D(wk_i,wk_j,wk_m-i_tor_min+1) = wk_D(wk_i,wk_j,wk_m-i_tor_min+1)       &
+                                             + wk_vv*wk_vv * wgauss(ms) * wk_dl / wk_R
+          enddo
+        enddo
+      enddo
+    enddo
+  enddo
+endif
+
 !--------------------------------------------------- sum over the Gaussian integration points
 do ms=1, n_gauss
 
@@ -586,6 +616,16 @@ do ms=1, n_gauss
           ! --- evaluated there with the LOCAL g_bn, |B| and R, so the incomplete chain rule of
           ! --- the nodal tangential-derivative row (which treats |B| and R as constant along the
           ! --- boundary) does not arise either. Algebraic equation: no theta, no tstep.
+          ! --- Galerkin trace residual, diagnostic only. Uses the SAME test function v, quadrature
+          ! --- weight and geometric measure as the rows the assembly writes, so F_a/D_a is
+          ! --- directly the coefficient a projection would have to remove.
+          if ( diag_sheath_zj ) then
+            wk_F(i,j,im-i_tor_min+1) = wk_F(i,j,im-i_tor_min+1)                        &
+                                     + v * ( zj0 - dzj_sh ) * ws * dl / BigR
+            wk_S(i,j,im-i_tor_min+1) = wk_S(i,j,im-i_tor_min+1)                        &
+                                     + v * abs(dzj_sat)     * ws * dl / BigR
+          endif
+
           ! --- sheath_ramp_time ramps the penalty in, exactly as it ramps the nodal route. This
           ! --- matters because the characteristic is unbounded on the electron side: starting
           ! --- from u = 0 gives X = -Lambda and f = 1 - exp(Lambda) ~ -19, so the penalty is
@@ -877,6 +917,24 @@ do ms=1, n_gauss
 enddo
 
 return
+! --- Hand the element's trace rows to the diagnostic. Normalising by D_a is what makes value
+! --- rows and derivative rows comparable: the trace mass block scales as h, h^2, h^3 across the
+! --- value/derivative combinations, so an unnormalised Galerkin row block spans orders of
+! --- magnitude internally - which is why a large penalty on it fails where a pointwise Dirichlet,
+! --- assigning the same zbig to both row types, does not.
+if ( diag_sheath_zj ) then
+  do wk_m = 1, n_tor_local
+    do wk_i = 1, 2
+      do wk_j = 1, 2
+        if ( wk_D(wk_i,wk_j,wk_m) .gt. 0.d0 )                                          &
+          call sheath_diag_add_weak( wk_F(wk_i,wk_j,wk_m) / wk_D(wk_i,wk_j,wk_m),      &
+                                     wk_S(wk_i,wk_j,wk_m) / wk_D(wk_i,wk_j,wk_m),      &
+                                     wk_D(wk_i,wk_j,wk_m) )
+      enddo
+    enddo
+  enddo
+endif
+
 end subroutine
 
 end module mod_boundary_matrix_open
