@@ -442,7 +442,9 @@ if (my_id .eq. 0) then
           stop
         endif
         if ( .not. bcs(i)%mach1 ) then
-          write(*,*) 'WARNING: bcs(', i, ')%sheath_zj_weak without mach1 (the DEFAULT is off).'
+          write(*,*) 'WARNING: bcs(', i, ')%sheath_zj_weak without mach1. Note the presets turn'
+          write(*,*) '         mach1 ON for types 1, 3-5, 9, 11, 15 and 19, so reaching this means'
+          write(*,*) '         it was switched off deliberately or this is another type.'
           write(*,*) '         The ion current is built from c_s = sqrt(gamma*(Ti+Te)), not from'
           write(*,*) '         the actual v_par, i.e. it ASSUMES the Bohm condition v_par = c_s at'
           write(*,*) '         the sheath entrance - which is what mach1 imposes. With mach1 off'
