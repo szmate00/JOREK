@@ -41,10 +41,14 @@ module mod_sheath_trace
   public :: sheath_trace_reset, sheath_trace_add, sheath_trace_apply, sheath_trace_report
 
   integer, parameter :: st_max_row = 4000    !< trace DOFs per rank; 204 observed, so ample
-  !> Columns per row. A shared trace DOF collects columns from BOTH adjacent edges: 3 distinct
-  !! nodes x 2 trace DOFs x up to 6 variables (zj, u, rho, Ti, Te or T) = 36, and a junction where
-  !! three boundary segments meet takes 4 nodes = 48. 64 leaves headroom; the overflow is fatal
-  !! rather than silent, so the cost of being generous is only memory.
+  !> Columns per row. Only the variables the characteristic actually depends on appear: zj (the
+  !! unit diagonal), u, rho and Ti/Te - or T without WITH_TiTe. vpar and w are absent because
+  !! sheath_current takes neither, so their derivatives are identically zero; psi is absent by
+  !! CHOICE, since zj_sat ~ 1/Btot and g_bn do depend on the field but sheath_current returns no
+  !! d(zj_sh)/d(psi) - the geometry is frozen within a Newton iteration (quasi-Newton).
+  !! A shared trace DOF collects columns from BOTH adjacent edges: 3 distinct nodes x 2 trace DOFs
+  !! x 5 variables = 30, and a junction where three boundary segments meet takes 4 nodes = 40.
+  !! 64 leaves headroom; the overflow is fatal rather than silent, so being generous costs memory.
   integer, parameter :: st_max_col = 64
 
   integer, save :: st_n = 0

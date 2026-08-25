@@ -441,6 +441,15 @@ if (my_id .eq. 0) then
           write(*,*) '       parameter from the namelist.'
           stop
         endif
+        if ( .not. bcs(i)%mach1 ) then
+          write(*,*) 'WARNING: bcs(', i, ')%sheath_zj_weak without mach1 (the DEFAULT is off).'
+          write(*,*) '         The ion current is built from c_s = sqrt(gamma*(Ti+Te)), not from'
+          write(*,*) '         the actual v_par, i.e. it ASSUMES the Bohm condition v_par = c_s at'
+          write(*,*) '         the sheath entrance - which is what mach1 imposes. With mach1 off'
+          write(*,*) '         nothing enforces it, and the characteristic carries no dependence'
+          write(*,*) '         on v_par (sheath_current has no such argument), so the two are'
+          write(*,*) '         never reconciled. The same caveat applies to the nodal route.'
+        endif
         if ( n_tor .gt. 1 ) then
           write(*,*) 'ERROR: bcs(', i, ')%sheath_zj_weak with n_tor > 1. The trace accumulator'
           write(*,*) '       stores one toroidal index per row. The sheath characteristic is'
