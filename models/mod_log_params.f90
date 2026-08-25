@@ -45,6 +45,7 @@ integer           :: used_segs !< used for write out of puff ctrls
 integer           :: n_wall_actions, n_poly
 character(len=10) :: mode_num
 logical           :: short2
+logical           :: from_file !< whether a file has been specified for this input (used in puff ctrls)
 
 ! --- Text out format
 200 format(' ',79('*'))
@@ -184,6 +185,13 @@ write(*,'(1x,a)',advance='no') ' USE_CATALYST : '
   write(*,*) 'on'
 #else
   write(*,*) 'off'
+#endif
+
+write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
+#ifdef USE_DOMM
+  write(*,*) 'on  (Dommaschk-only vacuum field, no FE correction)'
+#else
+  write(*,*) 'off (GVEC import + FE correction for vacuum field)'
 #endif
 
   write(*,*)
@@ -429,6 +437,7 @@ write(*,'(1x,a)',advance='no') ' USE_CATALYST : '
   write(*,LOGI_FMT) 'extended_boundary     ', extended_boundary
   write(*,REAL_FMT) 'j_cutoff_rcoord       ', j_cutoff_rcoord
   write(*,REAL_FMT) 'j_cutoff_sig          ', j_cutoff_sig
+  write(*,REAL_FMT) 'bloating_factor       ', bloating_factor
 
   if ( (abs(V_0) .ge. 1.d-19) .or. (num_rot) ) then
      write(*,LOGI_FMT) 'normalized_velocity_profile', normalized_velocity_profile
@@ -1092,7 +1101,10 @@ write(*,'(1x,a)',advance='no') ' USE_CATALYST : '
           write(*,LOGI_FMT) 'use_kin_cx,             ',sim%groups(group_num)%use_kin_cx
           write(*,LOGI_FMT) 'use_kin_recombination,  ',sim%groups(group_num)%use_kin_recombination
           write(*,LOGI_FMT) 'use_kin_neutral_coll,   ',sim%groups(group_num)%use_kin_neutral_coll
-          if(sim%groups(group_num)%use_kin_neutral_coll) write(*,REAL_FMT) 'neutral_coll_dTw,       ',part_group_configs(group_num)%neutral_coll_dTw
+          if(sim%groups(group_num)%use_kin_neutral_coll) then
+            write(*,REAL_FMT) 'neutral_coll_dTw,       ',part_group_configs(group_num)%neutral_coll_dTw
+            write(*,INTG_FMT) 'ncoll_each_nstep_part,  ',part_group_configs(group_num)%ncoll_each_nstep_part
+          endif
         endif
 
         ! ics specific
@@ -1109,8 +1121,9 @@ write(*,'(1x,a)',advance='no') ' USE_CATALYST : '
           write(*,*) "Puff ctrls: "
 
           do i=1, n_valves_max
-            used_segs = count(part_group_configs(group_num)%puff_ctrl(i)%rates > 0)
-            if (used_segs > 0) then
+            used_segs = count(part_group_configs(group_num)%puff_ctrl(i)%rates /= -1)
+            from_file = trim(part_group_configs(group_num)%puff_ctrl(i)%from_file) /= "none"
+            if (used_segs > 0 .or. from_file) then
               write(*,"(3X,A,' = ',100I12)")    'Puff valve            ', i
 
               !> config of the number of supers to create per event
@@ -1121,9 +1134,13 @@ write(*,'(1x,a)',advance='no') ' USE_CATALYST : '
               else
                 write(*,"(3X,A,' = ',99ES12.4)")    'supers_ratio_puff     ', part_group_configs(group_num)%puff_ctrl(i)%supers_ratio_puff
               endif
-
-              write(*,"(3X,A,' = ',99ES10.3)")  'rates                 ', part_group_configs(group_num)%puff_ctrl(i)%rates(1:used_segs)
-              write(*,"(3X,A,' = ',99ES10.3)")  'times                 ', part_group_configs(group_num)%puff_ctrl(i)%times(1:used_segs)
+              if(used_segs > 0) then
+                write(*,"(3X,A,' = ',99ES10.3)")  'rates                 ', part_group_configs(group_num)%puff_ctrl(i)%rates(1:used_segs)
+                write(*,"(3X,A,' = ',99ES10.3)")  'times                 ', part_group_configs(group_num)%puff_ctrl(i)%times(1:used_segs)
+              end if
+              if(from_file) then
+                write(*,"(3X,A,' = ',99A)")  'from_file             ', part_group_configs(group_num)%puff_ctrl(i)%from_file
+              end if
             endif
           enddo
         endif ! puffing
@@ -1178,7 +1195,6 @@ write(*,'(1x,a)',advance='no') ' USE_CATALYST : '
           else
             write(*,"(3X,A,' = ',99ES12.4)")    'supers_ratio_wall     ', part_group_configs(group_num)%wall_act_configs(i)%supers_ratio_wall
           endif
-
         end do
       end if !wall actions
 
@@ -1230,7 +1246,6 @@ write(*,'(1x,a)',advance='no') ' USE_CATALYST : '
           else
             write(*,"(3X,A,' = ',99ES12.4)")    'supers_ratio_wall     ', fluid_configs(group_num)%wall_act_configs(i)%supers_ratio_wall
           endif
-
         end do
       end if !wall actions
 

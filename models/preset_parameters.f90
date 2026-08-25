@@ -67,6 +67,7 @@ subroutine preset_parameters
   extended_boundary = .false.
   j_cutoff_rcoord = 99.0
   j_cutoff_sig = 0.025
+  bloating_factor = 1.0d0
 
   freeboundary_equil = .false. ! use free or fixed boundary equilibrium
   freeboundary       = .false. ! use free or fixed boundary?
@@ -916,6 +917,7 @@ part_group_configs(:)%use_kin_neutral_coll   = .false.
 do i=1,n_part_groups_max
   part_group_configs(i)%neutral_coll_dTw(:)  = -1.d99
 end do
+part_group_configs(:)%ncoll_each_nstep_part  = -9999991
 ! --- ics only
 part_group_configs(:)%use_kin_bg_collisions  = .false.
 part_group_configs(:)%kin_bg_coll_type       = 'Homma2020'
@@ -946,6 +948,7 @@ do i=1, n_part_groups_max
     !< which overrides the default value of supers_ratio_puff set here
     part_group_configs(i)%puff_ctrl(j)%times = -1.d0
     part_group_configs(i)%puff_ctrl(j)%rates = -1.d0
+    part_group_configs(i)%puff_ctrl(j)%from_file = "none"
   enddo
 enddo
 

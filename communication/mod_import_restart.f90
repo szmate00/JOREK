@@ -923,7 +923,9 @@ endif
       do i=1,node_list%n_nodes
         node_list%node(i)%values(n_tor_tmp+1:n_tor,:,:)= 0.d0
         do j=n_tor_tmp+1, n_tor
-          node_list%node(i)%values(j,:,var_rho)= amplitude * node_list%node(i)%values(1,:,var_rho)
+          if (with_rho) then
+            node_list%node(i)%values(j,:,var_rho)= amplitude * node_list%node(i)%values(1,:,var_rho)
+          endif
 #ifdef WITH_TiTe
           node_list%node(i)%values(j,:,var_Ti)= amplitude * node_list%node(i)%values(1,:,var_Ti)
           node_list%node(i)%values(j,:,var_Te)= amplitude * node_list%node(i)%values(1,:,var_Te)
@@ -1023,6 +1025,7 @@ subroutine import_hdf5_restart(node_list, element_list, filename, format_rst, er
   real(RKIND), allocatable :: t_r_tor_eq(:,:)
   real(RKIND), allocatable :: t_j_field(:,:,:,:)
   real(RKIND), allocatable :: t_b_field(:,:,:,:)
+  real(RKIND), allocatable :: t_b_vac_field(:,:,:,:)
   real(RKIND), allocatable :: t_chi_correction(:,:,:)
   real(RKIND), allocatable :: t_j_source(:,:,:)
 
@@ -1242,6 +1245,7 @@ subroutine import_hdf5_restart(node_list, element_list, filename, format_rst, er
   call tr_allocate(t_pressure,1,node_list%n_nodes,1,n_degrees_tmp,                              "node_list%pressure",CAT_UNKNOWN)
   call tr_allocate(t_j_field,1,node_list%n_nodes,1,n_coord_tor_tmp,1,n_degrees_tmp,1,n_dim+1,  "node_list%j_field",CAT_UNKNOWN)
   call tr_allocate(t_b_field,1,node_list%n_nodes,1,n_coord_tor_tmp,1,n_degrees_tmp,1,n_dim+1,    "node_list%b_field",     CAT_UNKNOWN)
+  call tr_allocate(t_b_vac_field,1,node_list%n_nodes,1,n_coord_tor_tmp,1,n_degrees_tmp,1,n_dim+1,"node_list%b_vac_field",     CAT_UNKNOWN)
   call tr_allocate(t_chi_correction,1,node_list%n_nodes,1,     n_coord_tor_tmp,1,n_degrees_tmp,            "node_list%chi_correction",CAT_UNKNOWN)
   call tr_allocate(t_j_source,1,node_list%n_nodes,1,     n_tor_tmp,1,n_degrees_tmp,            "node_list%j_source",CAT_UNKNOWN)
 #endif 
@@ -1334,7 +1338,11 @@ subroutine import_hdf5_restart(node_list, element_list, filename, format_rst, er
   endif
 
 #ifndef USE_DOMM
+#ifdef USE_EXT_FIELD
+  call HDF5_array4D_reading(file_id,t_b_vac_field,   'b_vac_field')
+#else
   call HDF5_array3D_reading(file_id,t_chi_correction, 'chi_correction')
+#endif
 #endif
 
   call HDF5_array3D_reading(file_id,t_j_source, 'j_source')
@@ -1431,7 +1439,11 @@ subroutine import_hdf5_restart(node_list, element_list, filename, format_rst, er
     node_list%node(i)%j_field  = t_j_field(i,:,:,:)
 #endif
 #ifndef USE_DOMM
+#ifdef USE_EXT_FIELD
+    node_list%node(i)%b_vac_field     = t_b_vac_field(i,:,:,:)
+#else
     node_list%node(i)%chi_correction  = t_chi_correction(i,:,:)
+#endif
 #endif
     node_list%node(i)%j_source = 0.d0 
     do m=1,n_tor_tmp,2
@@ -2370,7 +2382,9 @@ subroutine import_hdf5_restart(node_list, element_list, filename, format_rst, er
         do m=2,n_tor
           if ( new_mode(m) .eq. 1 ) then
           node_list%node(i)%values(m,:,:) = 0.d0
-          node_list%node(i)%values(m,:,var_rho)   = amplitude * node_list%node(i)%values(1,:,var_rho)
+          if (with_rho) then
+            node_list%node(i)%values(m,:,var_rho)   = amplitude * node_list%node(i)%values(1,:,var_rho)
+          endif
 #ifdef WITH_TiTe
           node_list%node(i)%values(m,:,var_Ti)   = amplitude * node_list%node(i)%values(1,:,var_Ti)
           node_list%node(i)%values(m,:,var_Te)   = amplitude * node_list%node(i)%values(1,:,var_Te)
@@ -2406,6 +2420,7 @@ subroutine import_hdf5_restart(node_list, element_list, filename, format_rst, er
   call tr_deallocate(t_r_tor_eq,"t_r_tor_eq",CAT_UNKNOWN)
   call tr_deallocate(t_j_field,"t_j_field",CAT_UNKNOWN)
   call tr_deallocate(t_b_field,"t_b_field",CAT_UNKNOWN)
+  call tr_deallocate(t_b_vac_field,"t_b_vac_field",CAT_UNKNOWN)
   call tr_deallocate(t_chi_correction,"t_chi_correction",CAT_UNKNOWN)
   call tr_deallocate(t_j_source,"t_j_source",CAT_UNKNOWN)
 #endif
