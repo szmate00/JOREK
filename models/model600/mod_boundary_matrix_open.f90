@@ -85,10 +85,10 @@ logical    :: weak_sheath_zj   ! penalty enforcement of the characteristic at th
 real*8     :: wk_res            ! bounded sheath residual driving the weak term
 real*8     :: wk_dfac           ! d(bounded)/d(raw), the factor every Jacobian column carries
 real*8     :: wk_cap, wk_den   ! the cap itself and the saturating denominator
+real*8     :: wk_wgt, wk_rat  ! validity weight and the ratio it is built from
 ! --- Galerkin trace diagnostics: D_a = int N_a N_a dS, F_a = int N_a (zj - zj_sh) dS,
 ! --- S_a = int N_a zj_sat dS. Purely diagnostic - see sheath_diag_add_weak.
 real*8     :: wk_D(2,2,n_tor), wk_F(2,2,n_tor), wk_S(2,2,n_tor)
-real*8     :: wk_dl, wk_R, wk_vv, wk_esz
 integer    :: wk_i, wk_j, wk_m
 ! --- Galerkin trace block for the WEAK sheath row: J(a,b,var) = int N_a * dres/dvar * N_b dS,
 ! --- with a = (i,j) the test trace DOF and b = (k,l) the trial one. Axisymmetric only, so no
@@ -247,29 +247,7 @@ delta_s = delta_s * tstep / tstep_prev
 
 n_tor_local = i_tor_max - i_tor_min +1
 
-! --- Trace mass diagonals for the weak sheath diagnostic. Done here because x_s, y_s and x_g are
-! --- complete after the field loop above but the main loop writes RHS inside its own quadrature,
-! --- so a row-normalising factor has to exist before that loop starts.
 wk_D = 0.d0; wk_F = 0.d0; wk_S = 0.d0; tr_J = 0.d0; tr_F = 0.d0
-if ( diag_sheath_zj ) then
-  do ms = 1, n_gauss
-    wk_dl = sqrt(x_s(ms)**2 + y_s(ms)**2)
-    wk_R  = x_g(ms)
-    if ( wk_R .le. 0.d0 ) cycle
-    do mp = 1, n_plane
-      do wk_i = 1, 2
-        do wk_j = 1, 2
-          wk_esz = element%size(vertex(wk_i), direction(wk_j))
-          do wk_m = i_tor_min, i_tor_max
-            wk_vv = H1(wk_i,wk_j,ms) * wk_esz * HZ(wk_m,mp)
-            wk_D(wk_i,wk_j,wk_m-i_tor_min+1) = wk_D(wk_i,wk_j,wk_m-i_tor_min+1)       &
-                                             + wk_vv*wk_vv * wgauss(ms) * wk_dl / wk_R
-          enddo
-        enddo
-      enddo
-    enddo
-  enddo
-endif
 
 !--------------------------------------------------- sum over the Gaussian integration points
 do ms=1, n_gauss
@@ -540,7 +518,7 @@ do ms=1, n_gauss
     ! --- filled when the nodal/diagnostic branch runs. A hard zero makes the term vanish rather
     ! --- than pick up whatever the previous Gauss point left behind.
     dzj_sh = 0.d0; dzj_d1 = 0.d0; dzj_d2 = 0.d0; dzj_d3 = 0.d0; dzj_d4 = 0.d0
-    dzj_sat = 0.d0; wk_res = 0.d0; wk_dfac = 0.d0
+    dzj_sat = 0.d0; wk_res = 0.d0; wk_dfac = 0.d0; wk_wgt = 0.d0
 
     if ( diag_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
       call sheath_current(u0, r0_corr, Ti0_sh, Te0_sh, g_bn, normal_sign, Btot, &
@@ -568,6 +546,21 @@ do ms=1, n_gauss
       ! --- convergence rate are untouched, and saturates at cap however far off the state starts.
       ! --- Its derivative 1/(1+|r|/cap)^2 decays only algebraically, unlike a tanh clip whose
       ! --- exponential decay would leave the row effectively explicit during the approach.
+      ! --- Validity weight, reusing sheath_zj_ratio_max. Where the plasma demands |zj/zj_sat| far
+      ! --- outside what the characteristic can deliver, the relation carries no information and
+      ! --- driving zj toward it is what destroys the run - measured, a local j_sat collapse took
+      ! --- INNER max|j/jsat| 13 -> 18.7 -> 354 in three steps and ended a 550-step run. The trust
+      ! --- region cannot cover this: it bounds the residual by rmax*j_sat_local, which vanishes
+      ! --- with j_sat itself. Applied to F_a, D_a AND J_ab alike, so the normalised row stays a
+      ! --- consistent weighted residual and simply fades out there, leaving those Gauss points to
+      ! --- the assembled equation. Smooth, monotone, 1 to within 6% for ratio < 0.5*max.
+      wk_wgt = 1.d0
+      if ( sheath_zj_ratio_max .gt. 0.d0 ) then
+        wk_rat = 0.d0
+        if ( abs(dzj_sat) .gt. 1.d-30 ) wk_rat = abs( zj0 / dzj_sat )
+        wk_wgt = 1.d0 / ( 1.d0 + (wk_rat/sheath_zj_ratio_max)**4 )
+      endif
+
       wk_res  = dzj_sh - zj0
       wk_dfac = 1.d0
       if ( sheath_weak_rmax .gt. 0.d0 ) then
@@ -624,10 +617,12 @@ do ms=1, n_gauss
           ! --- weight and geometric measure as the rows the assembly writes, so F_a/D_a is
           ! --- directly the coefficient a projection would have to remove.
           if ( diag_sheath_zj ) then
+            wk_D(i,j,im-i_tor_min+1) = wk_D(i,j,im-i_tor_min+1)                        &
+                                     + v * v * wk_wgt       * ws * dl / BigR
             wk_F(i,j,im-i_tor_min+1) = wk_F(i,j,im-i_tor_min+1)                        &
-                                     + v * ( zj0 - dzj_sh ) * ws * dl / BigR
+                                     + v * ( zj0 - dzj_sh ) * wk_wgt * ws * dl / BigR
             wk_S(i,j,im-i_tor_min+1) = wk_S(i,j,im-i_tor_min+1)                        &
-                                     + v * abs(dzj_sat)     * ws * dl / BigR
+                                     + v * abs(dzj_sat)     * wk_wgt * ws * dl / BigR
           endif
 
           ! --- Residual driving the replacement row, using the TRUST-REGION-bounded value. The
@@ -635,7 +630,7 @@ do ms=1, n_gauss
           ! --- damping J would MAGNIFY dx by 1/dfac, the opposite of what a trust region is for.
           ! --- Bounding F alone caps the step at rmax*j_sat and is exact Newton near the solution.
           if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) )                    &
-            tr_F(i,j) = tr_F(i,j) + v * wk_res * ws * dl / BigR
+            tr_F(i,j) = tr_F(i,j) + v * wk_res * wk_wgt * ws * dl / BigR
 
           ! --- Surface term of the current definition (zj = Delta*psi). REFUSED for the same
           ! --- reason as the w term above, and equally unnecessary: the frozen zj trace cancels
@@ -780,19 +775,19 @@ do ms=1, n_gauss
                 ! --- -d(zj_sh)/dx on the state columns, residual (zj_sh - zj) on the RHS.
                 if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
                   tr_J(i,j,k,l,var_zj ) = tr_J(i,j,k,l,var_zj )                        &
-                                        + v * psi * ws * dl / BigR
+                                        + v * psi * wk_wgt * ws * dl / BigR
                   tr_J(i,j,k,l,var_u  ) = tr_J(i,j,k,l,var_u  )                        &
-                                        - v * dzj_d1 * psi * ws * dl / BigR
+                                        - v * dzj_d1 * psi * wk_wgt * ws * dl / BigR
                   tr_J(i,j,k,l,var_rho) = tr_J(i,j,k,l,var_rho)                        &
-                                        - v * dzj_d2 * psi * ws * dl / BigR
+                                        - v * dzj_d2 * psi * wk_wgt * ws * dl / BigR
                   if ( with_TiTe ) then
                     tr_J(i,j,k,l,var_Ti) = tr_J(i,j,k,l,var_Ti)                        &
-                                         - v * dzj_d3 * psi * ws * dl / BigR
+                                         - v * dzj_d3 * psi * wk_wgt * ws * dl / BigR
                     tr_J(i,j,k,l,var_Te) = tr_J(i,j,k,l,var_Te)                        &
-                                         - v * dzj_d4 * psi * ws * dl / BigR
+                                         - v * dzj_d4 * psi * wk_wgt * ws * dl / BigR
                   else
                     tr_J(i,j,k,l,var_T ) = tr_J(i,j,k,l,var_T )                        &
-                                         - v * 0.5d0*(dzj_d3+dzj_d4) * psi * ws * dl / BigR
+                                         - v * 0.5d0*(dzj_d3+dzj_d4) * psi * wk_wgt * ws * dl / BigR
                   endif
                 endif
 
