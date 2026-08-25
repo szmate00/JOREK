@@ -32,7 +32,7 @@ use constants, only : PI, MU_ZERO, ATOMIC_MASS_UNIT, EL_CHG
 use mod_assembly, only : boundary_conditions_add_one_entry, boundary_conditions_add_RHS
 use data_structure
 use vacuum, ONLY: is_freebound
-use corr_neg, only: corr_neg_temp
+use corr_neg, only: corr_neg_temp, corr_neg_dens, dcorr_neg_dens_drho1
 use mod_sheath_bc, only: sheath_get_lambda, sheath_current, sheath_V_wall_at, sheath_temp_floor
 use mod_sheath_diag, only: sheath_psi0, sheath_store_psi0, sheath_diag_add_nodal
 use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_cos_dR, dpsi_RMP_cos_dZ, &
@@ -1146,8 +1146,13 @@ do i=1, n_local_elms !=== do elements
 
             szj_g = direction * factor            ! Chodura-Riemann g(b_n), signed, as for Mach1
 
+            ! --- corr_neg_dens, NOT a bare max(): the Gauss-point path uses r0_corr, and the
+            ! --- node/Gauss residual comparison is only meaningful if both evaluate the SAME
+            ! --- characteristic from the same corrected state. Numerically almost identical here
+            ! --- (target densities sit well above rho_min_neg) but the inconsistency made the two
+            ! --- diagnostics measure subtly different things.
             call sheath_current( u0,                                                  &
-                                 max(node_list%node(inode)%values(1,1,var_rho), 1.d-10), &
+                                 corr_neg_dens(node_list%node(inode)%values(1,1,var_rho)), &
                                  sheath_temp_floor(Ti0), sheath_temp_floor(Te0),      &
                                  szj_g, sign(1.d0, bn), Btot,                         &
                                  szj_sh, szj_du, szj_drho, szj_dTi, szj_dTe,          &
@@ -1197,6 +1202,9 @@ do i=1, n_local_elms !=== do elements
             szj_coef            = 0.d0
             szj_coef(var_zj )   =   1.d0
             szj_coef(var_u  )   = - szj_du
+            ! --- chain the density correction through, now that sheath_current is given the
+            ! --- corrected density: szj_drho is d/d(rho_corr), the row needs d/d(rho)
+            szj_drho = szj_drho * dcorr_neg_dens_drho1(node_list%node(inode)%values(1,1,var_rho))
             szj_coef(var_rho)   = - szj_drho
             if ( with_TiTe ) then
               szj_coef(var_Ti)  = - szj_dTi
