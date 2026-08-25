@@ -120,6 +120,7 @@ subroutine preset_parameters
   sheath_stiff_max   =  0.d0  ! 0 = no cap; 1.0 keeps the sheath term comparable to the polarisation term
   sheath_init_u      = .false.
   sheath_weak_rmax   =  2.d0  ! bound the weak sheath residual at 2*j_sat; <= 0 = unbounded
+  sheath_weak_relax  =  1.d0  ! 1 = full Newton step on the weak sheath row; 0.5-0.7 damps period-2 alternation
   sheath_weak_beta   =  0.d0  ! DEPRECATED, superseded by the mod_sheath_trace row replacement
   T_min_sheath       = -1.d0  ! < 0 = use the global T_min_neg for the sheath too
   sheath_diag_R_split=  0.d0  ! 0 = do not split the SHEATH diagnostic by target

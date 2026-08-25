@@ -86,6 +86,7 @@ real*8     :: wk_res            ! bounded sheath residual driving the weak term
 real*8     :: wk_dfac           ! d(bounded)/d(raw), the factor every Jacobian column carries
 real*8     :: wk_cap, wk_den   ! the cap itself and the saturating denominator
 real*8     :: wk_wgt, wk_rat  ! validity weight and the ratio it is built from
+real*8     :: wk_wrx          ! wk_wgt * sheath_weak_relax, for the under-relaxed columns
 ! --- Galerkin trace diagnostics: D_a = int N_a N_a dS, F_a = int N_a (zj - zj_sh) dS,
 ! --- S_a = int N_a zj_sat dS. Purely diagnostic - see sheath_diag_add_weak.
 real*8     :: wk_D(2,2,n_tor), wk_F(2,2,n_tor), wk_S(2,2,n_tor)
@@ -518,7 +519,7 @@ do ms=1, n_gauss
     ! --- filled when the nodal/diagnostic branch runs. A hard zero makes the term vanish rather
     ! --- than pick up whatever the previous Gauss point left behind.
     dzj_sh = 0.d0; dzj_d1 = 0.d0; dzj_d2 = 0.d0; dzj_d3 = 0.d0; dzj_d4 = 0.d0
-    dzj_sat = 0.d0; wk_res = 0.d0; wk_dfac = 0.d0; wk_wgt = 0.d0
+    dzj_sat = 0.d0; wk_res = 0.d0; wk_dfac = 0.d0; wk_wgt = 0.d0; wk_wrx = 0.d0
 
     if ( diag_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
       call sheath_current(u0, r0_corr, Ti0_sh, Te0_sh, g_bn, normal_sign, Btot, &
@@ -560,6 +561,16 @@ do ms=1, n_gauss
         if ( abs(dzj_sat) .gt. 1.d-30 ) wk_rat = abs( zj0 / dzj_sat )
         wk_wgt = 1.d0 / ( 1.d0 + (wk_rat/sheath_zj_ratio_max)**4 )
       endif
+
+      ! --- Under-relaxation. The replacement row is M*d(zj) - sum_x C_x*d(x) = F, which asks for
+      ! --- the FULL step onto the linearised characteristic every time. Scaling C_x and F - but
+      ! --- NOT M, and not the D_a that normalises the row - turns it into
+      ! --- zj_new = zj_old + relax*(zj_sh_lin - zj_old), the same structure as the nodal szj_rel.
+      ! --- Needed because the relation is stiff and the linearisation is deliberately incomplete
+      ! --- (no psi column, so |B| and g_bn are frozen within an iteration): the effective gain can
+      ! --- exceed 1 and the state alternates between two branches on successive steps. relax = 1
+      ! --- reproduces the un-relaxed row exactly.
+      wk_wrx = wk_wgt * sheath_weak_relax
 
       wk_res  = dzj_sh - zj0
       wk_dfac = 1.d0
@@ -630,7 +641,7 @@ do ms=1, n_gauss
           ! --- damping J would MAGNIFY dx by 1/dfac, the opposite of what a trust region is for.
           ! --- Bounding F alone caps the step at rmax*j_sat and is exact Newton near the solution.
           if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) )                    &
-            tr_F(i,j) = tr_F(i,j) + v * wk_res * wk_wgt * ws * dl / BigR
+            tr_F(i,j) = tr_F(i,j) + v * wk_res * wk_wrx * ws * dl / BigR
 
           ! --- Surface term of the current definition (zj = Delta*psi). REFUSED for the same
           ! --- reason as the w term above, and equally unnecessary: the frozen zj trace cancels
@@ -777,17 +788,17 @@ do ms=1, n_gauss
                   tr_J(i,j,k,l,var_zj ) = tr_J(i,j,k,l,var_zj )                        &
                                         + v * psi * wk_wgt * ws * dl / BigR
                   tr_J(i,j,k,l,var_u  ) = tr_J(i,j,k,l,var_u  )                        &
-                                        - v * dzj_d1 * psi * wk_wgt * ws * dl / BigR
+                                        - v * dzj_d1 * psi * wk_wrx * ws * dl / BigR
                   tr_J(i,j,k,l,var_rho) = tr_J(i,j,k,l,var_rho)                        &
-                                        - v * dzj_d2 * psi * wk_wgt * ws * dl / BigR
+                                        - v * dzj_d2 * psi * wk_wrx * ws * dl / BigR
                   if ( with_TiTe ) then
                     tr_J(i,j,k,l,var_Ti) = tr_J(i,j,k,l,var_Ti)                        &
-                                         - v * dzj_d3 * psi * wk_wgt * ws * dl / BigR
+                                         - v * dzj_d3 * psi * wk_wrx * ws * dl / BigR
                     tr_J(i,j,k,l,var_Te) = tr_J(i,j,k,l,var_Te)                        &
-                                         - v * dzj_d4 * psi * wk_wgt * ws * dl / BigR
+                                         - v * dzj_d4 * psi * wk_wrx * ws * dl / BigR
                   else
                     tr_J(i,j,k,l,var_T ) = tr_J(i,j,k,l,var_T )                        &
-                                         - v * 0.5d0*(dzj_d3+dzj_d4) * psi * wk_wgt * ws * dl / BigR
+                                         - v * 0.5d0*(dzj_d3+dzj_d4) * psi * wk_wrx * ws * dl / BigR
                   endif
                 endif
 

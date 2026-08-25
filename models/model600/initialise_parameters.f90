@@ -74,6 +74,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 sheath_stiff_max, sheath_init_u, sheath_flux_sign,  &
                 sheath_init_u_all, sheath_diag_R_split,             &
                 T_min_sheath, sheath_weak_beta, sheath_weak_rmax,   &
+                sheath_weak_relax,                                  &
                 deuterium_adas, deuterium_adas_1e20,                &
                 old_deuterium_atomic,                               &
                 density_reflection,                                 &
@@ -439,6 +440,13 @@ if (my_id .eq. 0) then
           write(*,*) '       coefficient wrecks the conditioning (beta = 1e9 died in one step).'
           write(*,*) '       Row normalisation by the trace mass diagonal replaces it. Remove the'
           write(*,*) '       parameter from the namelist.'
+          stop
+        endif
+        if ( sheath_weak_relax .le. 0.d0 .or. sheath_weak_relax .gt. 1.d0 ) then
+          write(*,*) 'ERROR: sheath_weak_relax must lie in (0,1]. It is the fraction of the'
+          write(*,*) '       sheath mismatch the replacement row closes per step. <= 0 would'
+          write(*,*) '       leave the row as M*d(zj) = 0, i.e. zj FROZEN on the boundary, and'
+          write(*,*) '       > 1 over-corrects, which is the instability it exists to damp.'
           stop
         endif
         if ( .not. bcs(i)%mach1 ) then

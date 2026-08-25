@@ -872,6 +872,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,REAL_FMT) 'T_min_sheath          ', T_min_sheath
     write(*,REAL_FMT) 'sheath_weak_beta      ', sheath_weak_beta
     write(*,REAL_FMT) 'sheath_weak_rmax      ', sheath_weak_rmax
+    write(*,REAL_FMT) 'sheath_weak_relax     ', sheath_weak_relax
     write(*,REAL_FMT) 'sheath_wall_vel       ', sheath_wall_vel
     write(*,REAL_FMT) 'sheath_stiff_max      ', sheath_stiff_max
     write(*,REAL_FMT) 'sheath_flux_sign      ', sheath_flux_sign
