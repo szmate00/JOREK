@@ -449,6 +449,34 @@ if (my_id .eq. 0) then
           write(*,*) '       penalty can act on it.'
           stop
         endif
+        if ( bcs(i)%dirichlet%u ) then
+          write(*,*) 'ERROR: bcs(', i, ')%sheath_zj_weak with dirichlet%u = .true. (the DEFAULT).'
+          write(*,*) '       u is then frozen at this boundary, so the sheath characteristic is'
+          write(*,*) '       evaluated at a fixed potential and there is no j-V feedback at all -'
+          write(*,*) '       the whole point of the boundary condition. Set dirichlet%u = .false.'
+          write(*,*) '       and keep a Dirichlet on u on at least one other type as the gauge.'
+          stop
+        endif
+        if ( sheath_min_bn .le. 0.d0 ) then
+          write(*,*) 'WARNING: bcs(', i, ')%sheath_zj_weak with sheath_min_bn = 0 (the DEFAULT).'
+          write(*,*) '         sheath_current then puts no floor on the obliqueness factor, so'
+          write(*,*) '         zj_sat -> 0 where the field grazes the wall and the penalty drives'
+          write(*,*) '         zj toward a vanishing target there. ~0.005 keeps the target plate'
+          write(*,*) '         in the pass band while still killing true tangency.'
+        endif
+        if ( sheath_sat_slope .le. 0.d0 ) then
+          write(*,*) 'WARNING: bcs(', i, ')%sheath_zj_weak with sheath_sat_slope = 0 (the'
+          write(*,*) '         DEFAULT). The ion branch then saturates exactly, so df/dX -> 0 and'
+          write(*,*) '         the characteristic carries no information about u wherever the'
+          write(*,*) '         plasma is overdriving the sheath. Measured: 0.02 -> 0.3 took mean'
+          write(*,*) '         ePhi/kTe from 5.5 to 3.2 and max from 17.9 to 7.2.'
+        endif
+        if ( sheath_diag_R_split .le. 0.d0 ) then
+          write(*,*) 'NOTE: bcs(', i, ')%sheath_zj_weak with sheath_diag_R_split = 0. The SHEATH'
+          write(*,*) '      output then reports both targets summed, and an inner-outer'
+          write(*,*) '      difference - which is what this boundary condition exists to produce'
+          write(*,*) '      - cancels in that sum. Set it to about the X-point major radius.'
+        endif
         if ( bcs(i)%natural%u ) then
           write(*,*) 'ERROR: bcs(', i, ')%sheath_zj_weak with natural%u = .true. The sheath'
           write(*,*) '       current is then already imposed through the u surface term, and the'
