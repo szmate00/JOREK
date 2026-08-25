@@ -424,7 +424,7 @@ subroutine sheath_init_potential(node_list, my_id)
     do i = 1, node_list%n_nodes
       ib = node_list%node(i)%boundary
       if ( ib .lt. 1 .or. ib .gt. max_bnd_types ) cycle
-      if ( .not. (bcs(ib)%natural%u .or. bcs(ib)%sheath_zj) ) cycle
+      if ( .not. (bcs(ib)%natural%u .or. bcs(ib)%sheath_zj .or. bcs(ib)%sheath_zj_weak) ) cycle
       if ( with_TiTe ) then
         Ti0 = node_list%node(i)%values(1,1,var_Ti)
         Te0 = node_list%node(i)%values(1,1,var_Te)
@@ -460,7 +460,7 @@ subroutine sheath_init_potential(node_list, my_id)
     ! --- offset would be arbitrary, but the sheath characteristic depends on ABSOLUTE Phi
     ! --- (X = e*Phi/kTe - Lambda), so once a sheath BC exists the gauge is fixed by physics.
     ! --- Dirichlet still freezes these nodes - it freezes them at a physical value instead of 0.
-    is_sheath_type = bcs(ib)%natural%u .or. bcs(ib)%sheath_zj
+    is_sheath_type = bcs(ib)%natural%u .or. bcs(ib)%sheath_zj .or. bcs(ib)%sheath_zj_weak
     if ( .not. is_sheath_type ) then
       if ( .not. sheath_init_u_all ) cycle
     endif

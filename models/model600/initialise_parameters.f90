@@ -479,6 +479,17 @@ if (my_id .eq. 0) then
           write(*,*) '         plasma is overdriving the sheath. Measured: 0.02 -> 0.3 took mean'
           write(*,*) '         ePhi/kTe from 5.5 to 3.2 and max from 17.9 to 7.2.'
         endif
+        if ( (.not. sheath_init_u) .and. (sheath_ramp_time .le. 0.d0) ) then
+          write(*,*) 'WARNING: bcs(', i, ')%sheath_zj_weak with neither sheath_init_u nor'
+          write(*,*) '         sheath_ramp_time. The characteristic is UNBOUNDED on the electron'
+          write(*,*) '         side: if the restart has u ~ 0 then X = -Lambda and'
+          write(*,*) '         f = 1-exp(Lambda) ~ -19, so the penalty is asked on the very first'
+          write(*,*) '         step to drag zj to 19*j_sat of electron current. Observed doing'
+          write(*,*) '         exactly that: e-limited 100%, I_sheath -12 kA against I_Ampere'
+          write(*,*) '         +1 kA, blow-up in four steps. Either restart from a state whose'
+          write(*,*) '         wall is already near the floating potential, or set'
+          write(*,*) '         sheath_init_u = .true., or ramp the penalty in.'
+        endif
         if ( sheath_diag_R_split .le. 0.d0 ) then
           write(*,*) 'NOTE: bcs(', i, ')%sheath_zj_weak with sheath_diag_R_split = 0. The SHEATH'
           write(*,*) '      output then reports both targets summed, and an inner-outer'
