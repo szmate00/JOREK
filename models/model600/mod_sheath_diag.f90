@@ -311,7 +311,11 @@ subroutine sheath_diag_report(my_id)
   loc_sum(ns+19) = sd_wk_ref2
   loc_sum(ns+20) = sd_wk_n
   loc_max(6) = sd_wk_dmax
-  loc_min(3) = -sd_wk_dmin        ! MIN via a MAX reduction on the negated value
+  ! --- loc_min goes through MPI_MIN, so the raw value is already the global minimum. Negating it
+  ! --- (as a "MIN via MAX" trick) was wrong twice over: the reduction is MIN, not MAX, and a rank
+  ! --- with no sheath boundary carries the 1.d30 sentinel whose negation then WINS the MIN,
+  ! --- reporting 1.d30. Ranks with no data lose a plain MIN, which is the behaviour wanted.
+  loc_min(3) = sd_wk_dmin
   loc_max(4) = sd_io_max(1)
   loc_max(5) = sd_io_max(2)
   loc_min(1) = sd_phi_min
@@ -390,7 +394,7 @@ subroutine sheath_diag_report(my_id)
     if ( glo_sum(ns+19) .gt. 0.d0 ) wk_eps = sqrt( glo_sum(ns+18) / glo_sum(ns+19) )
     write(*,'(A,es10.3,A,i0,A,es9.2,A,es9.2)')                                       &
       '         weak |F_a/D_a|/|S_a/D_a|=', wk_eps, '  over ', nint(glo_sum(ns+20)), &
-      ' trace rows;  D min=', -glo_min(3), ' max=', glo_max(6)
+      ' trace samples;  D min=', glo_min(3), ' max=', glo_max(6)
   endif
 
   ! --- How hard the nodal constraint is actually being pushed. mean(szj_rel) well below 1 means
