@@ -74,6 +74,15 @@ module mod_sheath_diag
   real*8,  save :: sd_worst_ratio             = -1.d0
   real*8,  save :: sd_worst_RZ(2)             = 0.d0
 
+  !> Acceptance metric for the constraint itself: how far zj is from the characteristic, as a
+  !! fraction of the current the sheath can actually pass. Reported separately at NODES (where the
+  !! constraint is imposed) and at GAUSS points (where the currents are integrated), because the
+  !! two failing differently means different things - node small / Gauss large is an interpolation
+  !! or derivative-DOF problem, both large means the row is not being satisfied at all.
+  !!     eps = sqrt(sum (zj - zj_sh)^2 / sum zj_sat^2)
+  real*8,  save :: sd_res_node(2)             = 0.d0  !< 1: sum (zj-zj_sh)^2   2: sum zj_sat^2
+  real*8,  save :: sd_res_gauss(2)            = 0.d0  !< same, weighted by dS
+
 contains
 
 !> Zero the accumulators. Called once per matrix construction, before the element loop.
@@ -92,6 +101,7 @@ subroutine sheath_diag_reset()
   sd_io_max   = 0.d0
   sd_worst_ratio = -1.d0
   sd_worst_RZ    = 0.d0
+  sd_res_gauss   = 0.d0
   sd_lim_area = 0.d0
 end subroutine sheath_diag_reset
 
@@ -168,6 +178,8 @@ subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, 
     sd_phi_max_act = max(sd_phi_max_act, phi_over_te)
   endif
   sd_ratio_max           = max(sd_ratio_max, ratio)
+  sd_res_gauss(1)        = sd_res_gauss(1) + (zj0 - zj_sh)**2 * dS
+  sd_res_gauss(2)        = sd_res_gauss(2) + zj_sat**2        * dS
   ! --- inner/outer split; ratio here is already gate-masked, so it reports where the term is live
   if ( present(R_loc) .and. (sheath_diag_R_split .gt. 0.d0) ) then
     io = 1
@@ -193,16 +205,21 @@ end subroutine sheath_diag_add
 !!
 !! @param szj_rel   effective row strength, 1 = constraint imposed fully, 0 = zj left frozen
 !! @param zj_ratio  |zj/zj_sat| the interior is demanding at this node
-subroutine sheath_diag_add_nodal(szj_rel, zj_ratio, R_node, Z_node)
+subroutine sheath_diag_add_nodal(szj_rel, zj_ratio, R_node, Z_node, zj_resid, zj_sat)
 
   implicit none
   real*8, intent(in) :: szj_rel, zj_ratio
   real*8, intent(in), optional :: R_node, Z_node   !< position, to locate the worst node
+  real*8, intent(in), optional :: zj_resid         !< zj_sheath - zj at this node
+  real*8, intent(in), optional :: zj_sat           !< ion saturation current, to normalise it
 
   sd_zjrel_sum   = sd_zjrel_sum   + szj_rel
   sd_zjrel_min   = min(sd_zjrel_min, szj_rel)
   sd_zjrel_n     = sd_zjrel_n     + 1.d0
   sd_zjratio_sum = sd_zjratio_sum + zj_ratio
+
+  if ( present(zj_resid) ) sd_res_node(1) = sd_res_node(1) + zj_resid**2
+  if ( present(zj_sat)   ) sd_res_node(2) = sd_res_node(2) + zj_sat**2
 
   if ( zj_ratio .gt. sd_worst_ratio ) then
     sd_worst_ratio = zj_ratio
@@ -225,10 +242,10 @@ subroutine sheath_diag_report(my_id)
   integer, intent(in) :: my_id
 
   integer, parameter :: ns = 3*max_bnd_types + 2
-  integer, parameter :: nx = ns + 13                 ! ns+1 gate-off, ns+2..5 nodal, ns+6..13 in/out
+  integer, parameter :: nx = ns + 17                 ! +1 gate-off, +2..5 nodal, +6..13 in/out, +14..17 residuals
   real*8  :: loc_sum(nx), glo_sum(nx), loc_max(5), glo_max(5), loc_min(2), glo_min(2)
   real*8  :: area_tot, I_sh_tot, I_am_tot, phi_mean, lim_frac, zjrel_mean, zjratio_mean
-  real*8  :: wr_loc(1), wr_glo(1)
+  real*8  :: wr_loc(1), wr_glo(1), eps_node, eps_gauss
   integer :: io, ib0
   character(len=5), parameter :: io_name(2) = (/ 'INNER', 'OUTER' /)
   integer :: ierr, i, i0, i1, i2
@@ -253,6 +270,8 @@ subroutine sheath_diag_report(my_id)
   loc_sum(ns+5) = 0.d0
   loc_sum(ns+6 :ns+9 ) = sd_io_sum(1,:)
   loc_sum(ns+10:ns+13) = sd_io_sum(2,:)
+  loc_sum(ns+14:ns+15) = sd_res_node
+  loc_sum(ns+16:ns+17) = sd_res_gauss
   loc_max(4) = sd_io_max(1)
   loc_max(5) = sd_io_max(2)
   loc_min(1) = sd_phi_min
@@ -274,7 +293,7 @@ subroutine sheath_diag_report(my_id)
   ! --- zero the nodal block here, not in sheath_diag_reset: boundary_conditions runs AFTER this
   ! --- report within one matrix construction, so zeroing at reset would wipe the pass we want.
   sd_zjrel_sum = 0.d0; sd_zjrel_n = 0.d0; sd_zjratio_sum = 0.d0; sd_zjrel_min = 1.d30
-  sd_worst_ratio = -1.d0; sd_worst_RZ = 0.d0
+  sd_worst_ratio = -1.d0; sd_worst_RZ = 0.d0; sd_res_node = 0.d0
 
   if ( my_id .ne. 0 ) return
 
@@ -296,6 +315,19 @@ subroutine sheath_diag_report(my_id)
   write(*,'(A,f8.2,A,f5.1,A)')                                                     &
     '         ePhi/kTe max where the sheath is ACTIVE=', glo_max(3),               &
     '   gated-off area ', 1.d2*glo_sum(ns+1)/max(area_tot,1.d-30), ' %'
+
+  ! --- Acceptance metric: is zj actually ON the characteristic? eps = ||zj - zj_sh|| / ||zj_sat||,
+  ! --- at nodes (where the row is imposed) and at Gauss points (where the currents are
+  ! --- integrated). Small at nodes but large at Gauss points would mean the constraint holds
+  ! --- pointwise and the interpolation between nodes does not; both large means the row itself is
+  ! --- not being satisfied, which is what a flat characteristic (small df/dX) produces.
+  eps_node  = -1.d0
+  eps_gauss = -1.d0
+  if ( glo_sum(ns+15) .gt. 0.d0 ) eps_node  = sqrt( glo_sum(ns+14) / glo_sum(ns+15) )
+  if ( glo_sum(ns+17) .gt. 0.d0 ) eps_gauss = sqrt( glo_sum(ns+16) / glo_sum(ns+17) )
+  if ( (eps_node .ge. 0.d0) .or. (eps_gauss .ge. 0.d0) )                             &
+    write(*,'(A,es10.3,A,es10.3)')                                                   &
+      '         |zj-zj_sh|/|zj_sat|  nodes=', eps_node, '  gauss=', eps_gauss
 
   ! --- How hard the nodal constraint is actually being pushed. mean(szj_rel) well below 1 means
   ! --- the row is mostly the Dirichlet freeze, so zj is under no obligation to match zj_sheath and

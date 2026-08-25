@@ -1189,7 +1189,9 @@ do i=1, n_local_elms !=== do elements
             ! --- gate visible in the SHEATH output is the obliqueness one, and a small szj_rel
             ! --- silently degrades the constraint to the Dirichlet freeze it is meant to replace.
             call sheath_diag_add_nodal(szj_rel, szj_ratio, BigR,                &
-                                       node_list%node(inode)%x(1,1,2))
+                                       node_list%node(inode)%x(1,1,2),          &
+                                       szj_sh - node_list%node(inode)%values(1,1,var_zj), &
+                                       szj_sat)
 
             ! --- Row:  d(zj) - sum_k (d zj_sh / d x_k) d x_k = zj_sh - zj0
             szj_coef            = 0.d0
