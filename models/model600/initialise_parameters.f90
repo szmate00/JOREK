@@ -73,7 +73,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 sheath_min_bn, sheath_ramp_time,                    &
                 sheath_stiff_max, sheath_init_u, sheath_flux_sign,  &
                 sheath_init_u_all, sheath_diag_R_split,             &
-                T_min_sheath,                                       &
+                T_min_sheath, sheath_weak_beta,                     &
                 deuterium_adas, deuterium_adas_1e20,                &
                 old_deuterium_atomic,                               &
                 density_reflection,                                 &
@@ -427,6 +427,44 @@ if (my_id .eq. 0) then
       ! --- Nodal sheath current on the zj row. This is the route that puts the sheath where it
       ! --- belongs: the u equation is assembled in STRONG form, so it has no boundary flux a
       ! --- surface term could replace, and adding one injects a spurious source at the wall.
+      if ( bcs(i)%sheath_zj_weak ) then
+        if ( sheath_weak_beta .le. 0.d0 ) then
+          write(*,*) 'WARNING: bcs(', i, ')%sheath_zj_weak with sheath_weak_beta <= 0. The weak'
+          write(*,*) '         sheath term is inactive. beta scales as 1/h: the boundary term'
+          write(*,*) '         goes as h while the zj equation diagonal goes as h^2, so beta must'
+          write(*,*) '         grow as the mesh refines. Scan it and check the answer is stable.'
+        endif
+        if ( bcs(i)%sheath_zj ) then
+          write(*,*) 'ERROR: bcs(', i, ')%sheath_zj and %sheath_zj_weak are both set. They are'
+          write(*,*) '       two ways to impose the SAME characteristic - one as a nodal row'
+          write(*,*) '       replacement, one as a boundary penalty - and together the nodal row'
+          write(*,*) '       overwrites zj after the penalty has been assembled, so the penalty'
+          write(*,*) '       is silently discarded. Choose one.'
+          stop
+        endif
+        if ( bcs(i)%dirichlet%zj ) then
+          write(*,*) 'ERROR: bcs(', i, ')%sheath_zj_weak with dirichlet%zj = .true. The Dirichlet'
+          write(*,*) '       freezes zj at these nodes, which overrides the penalty completely.'
+          write(*,*) '       Set dirichlet%zj = .false. so the zj equation is assembled and the'
+          write(*,*) '       penalty can act on it.'
+          stop
+        endif
+        if ( bcs(i)%natural%u ) then
+          write(*,*) 'ERROR: bcs(', i, ')%sheath_zj_weak with natural%u = .true. The sheath'
+          write(*,*) '       current is then already imposed through the u surface term, and the'
+          write(*,*) '       Gauss-point characteristic the penalty needs is not evaluated on'
+          write(*,*) '       that path. Use one route or the other.'
+          stop
+        endif
+        write(*,*) 'NOTE: bcs(', i, ')%sheath_zj_weak imposes the sheath characteristic as a'
+        write(*,*) '      boundary penalty at the GAUSS POINTS rather than as a nodal row.'
+        write(*,*) '      Motivation, measured: the nodal route gives |zj-zj_sh|/|zj_sat| ='
+        write(*,*) '      1.8e-2 at the nodes and 3.9 at the Gauss points - the row is satisfied'
+        write(*,*) '      where it is imposed and violated where the currents are integrated,'
+        write(*,*) '      which is why I_Ampere and I_sheath never closed. Watch that ratio and'
+        write(*,*) '      the per-target currents to confirm the penalty is doing its job.'
+      endif
+
       if ( bcs(i)%sheath_zj ) then
         if ( bcs(i)%natural%u ) then
           write(*,*) 'ERROR: bcs(', i, ')%sheath_zj and %natural%u are two different routes for the'

@@ -80,6 +80,8 @@ real*8     :: sh_ramp_t, sh_act
 ! --- evaluated here instead where dS is available and correctly weighted. Contributes nothing to
 ! --- rhs_ij or amat.
 logical    :: diag_sheath_zj
+logical    :: weak_sheath_zj   ! penalty enforcement of the characteristic at the Gauss points
+logical    :: wk_here          ! ... and whether it is active at THIS Gauss point
 real*8     :: dzj_sh, dzj_sat, dzj_x, dzj_d1, dzj_d2, dzj_d3, dzj_d4, dzj_wgt
 real*8     :: sh_duf_dTi, sh_duf_dTe
 real*8     :: gradu0dotn, gradps0dotn, gradudotn, gradpsidotn
@@ -156,12 +158,16 @@ normal_direction = (/R_mid - R_cnt, Z_mid - Z_cnt /) / norm2((/R_mid - R_cnt, Z_
 
 apply_natural_bc(:) = .false.
 diag_sheath_zj      = .false.
+weak_sheath_zj      = .false.
 
 bnd_type1 = nodes(1)%boundary 
 bnd_type2 = nodes(2)%boundary 
 
 ! --- If one of the nodes has a boundary type where natural BCs are applied, apply boundary integral for the full bnd element
 diag_sheath_zj = bcs(bnd_type1)%sheath_zj .or. bcs(bnd_type2)%sheath_zj
+weak_sheath_zj = ( bcs(bnd_type1)%sheath_zj_weak .or. bcs(bnd_type2)%sheath_zj_weak )   &
+                 .and. ( sheath_weak_beta .gt. 0.d0 )
+diag_sheath_zj = diag_sheath_zj .or. weak_sheath_zj
 
 do i_var=1, n_var
   if ( (i_var==var_rho ) .and. (bcs(bnd_type1)%natural%rho  .or. bcs(bnd_type2)%natural%rho ))  apply_natural_bc(i_var)=.true.
@@ -492,6 +498,12 @@ do ms=1, n_gauss
     ! --- state used here (u0, r0_corr, Ti0_corr, Te0_corr, g_bn, Btot) is the same, so the numbers
     ! --- describe the same characteristic. The obliqueness weight matches the one the nodal block
     ! --- applies, so max|j/jsat| is reported only where the constraint is actually active.
+    ! --- Zeroed unconditionally: the weak sheath term below reads these, and they are only
+    ! --- filled when the nodal/diagnostic branch runs. A hard zero makes the term vanish rather
+    ! --- than pick up whatever the previous Gauss point left behind.
+    dzj_sh = 0.d0; dzj_d1 = 0.d0; dzj_d2 = 0.d0; dzj_d3 = 0.d0; dzj_d4 = 0.d0
+    wk_here = weak_sheath_zj .and. (.not. apply_natural_bc(var_u))
+
     if ( diag_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
       call sheath_current(u0, r0_corr, Ti0_sh, Te0_sh, g_bn, normal_sign, Btot, &
                           dzj_sh, dzj_d1, dzj_d2, dzj_d3, dzj_d4, dzj_sat, dzj_x,      &
@@ -502,6 +514,12 @@ do ms=1, n_gauss
       call sheath_diag_add(bnd_type1, dzj_sh, zj0, dzj_sat, dzj_x, u0, Te0_corr, sh_Bn, &
                            ws * dl * BigR * TWOPI / dble(n_plane), dzj_wgt,             &
                            sheath_V_wall_at(BigR), BigR)
+
+      ! --- sheath_current differentiates w.r.t. the FLOORED state, so chain the floors through
+      ! --- before these are used as Jacobian entries against the solution variables.
+      dzj_d2 = dzj_d2 * dcorr_neg_dens_drho1(r0)
+      dzj_d3 = dzj_d3 * dsheath_temp_floor_dT(Ti0)
+      dzj_d4 = dzj_d4 * dsheath_temp_floor_dT(Te0)
     endif
 
     do i=1,2                ! loop over nodes
@@ -536,6 +554,19 @@ do ms=1, n_gauss
           ! --- Kept as the starting point for a correct implementation, see mod_sheath_bc.f90.
           if ( apply_natural_bc(var_w) ) &
             rhs_ij(var_w)  = + v * BigR * gradu0dotn * dl
+
+          ! --- WEAK sheath characteristic: integral(beta * v * (zj_sh - zj)) over the boundary,
+          ! --- added to the zj equation instead of replacing its rows. The nodal route satisfies
+          ! --- the characteristic at the nodes (measured |zj-zj_sh|/|zj_sat| = 1.8e-2) and misses
+          ! --- it by 3.9 at the Gauss points where the currents are integrated - so I_Ampere and
+          ! --- I_sheath cannot close no matter how the characteristic or the gates are tuned.
+          ! --- Enforcing it at the Gauss points closes that gap by construction, and zj_sh is
+          ! --- evaluated there with the LOCAL g_bn, |B| and R, so the incomplete chain rule of
+          ! --- the nodal tangential-derivative row (which treats |B| and R as constant along the
+          ! --- boundary) does not arise either. Algebraic equation: no theta, no tstep.
+          if ( wk_here ) &
+            rhs_ij(var_zj) = rhs_ij(var_zj)                                             &
+                           + v * sheath_weak_beta * ( dzj_sh - zj0 ) * BigR * dl
 
           ! --- Surface term of the current definition (zj = Delta*psi). REFUSED for the same
           ! --- reason as the w term above, and equally unnecessary: the frozen zj trace cancels
@@ -583,7 +614,12 @@ do ms=1, n_gauss
           index_ij = n_tor_local*n_var*n_degrees*(vertex(i)-1) + n_tor_local * n_var * (j2-1) + im - i_tor_min +1  ! index in the ELM matrix
 
           do i_var = 1, n_var
-            if ( .not. apply_natural_bc(i_var) ) cycle
+            ! --- var_zj is carried when the weak sheath term is on even though natural%zj is
+            ! --- .false. - that flag selects the zj = Delta*psi surface term, a different thing
+            ! --- which is refused because its Jacobian needs normal-derivative columns. The
+            ! --- penalty below needs only value columns, so it is assemblable here.
+            if ( .not. ( apply_natural_bc(i_var) .or.                                  &
+                         ( wk_here .and. (i_var .eq. var_zj) ) ) ) cycle
             RHS(index_ij+(i_var-1)*(n_tor_local)) = RHS(index_ij+(i_var-1)*(n_tor_local)) + rhs_ij(i_var) * ws
           enddo
 
@@ -668,6 +704,29 @@ do ms=1, n_gauss
                 if ( apply_natural_bc(var_zj) ) then
                   amat  (var_zj,var_psi) = - v * gpn_s * psi_s / BigR * dl
                   amat_p(var_zj,var_psi) = - v * gpn_t * psi_t / BigR * dl
+                endif
+
+                ! --- Jacobian of the weak sheath term. amat = -d(rhs)/dx, and rhs carries
+                ! --- +beta*(zj_sh - zj), so the zj column is POSITIVE (it damps) and the state
+                ! --- columns carry -d(zj_sh)/dx. Value columns only - psi, never psi_t - which is
+                ! --- why this assembles where the zj = Delta*psi surface term above cannot.
+                if ( wk_here ) then
+                  amat(var_zj,var_zj ) = amat(var_zj,var_zj )                          &
+                                       + v * sheath_weak_beta * psi * BigR * dl
+                  amat(var_zj,var_u  ) = amat(var_zj,var_u  )                          &
+                                       - v * sheath_weak_beta * dzj_d1 * psi * BigR * dl
+                  amat(var_zj,var_rho) = amat(var_zj,var_rho)                          &
+                                       - v * sheath_weak_beta * dzj_d2 * psi * BigR * dl
+                  if ( with_TiTe ) then
+                    amat(var_zj,var_Ti) = amat(var_zj,var_Ti)                          &
+                                        - v * sheath_weak_beta * dzj_d3 * psi * BigR * dl
+                    amat(var_zj,var_Te) = amat(var_zj,var_Te)                          &
+                                        - v * sheath_weak_beta * dzj_d4 * psi * BigR * dl
+                  else
+                    amat(var_zj,var_T ) = amat(var_zj,var_T )                          &
+                                        - v * sheath_weak_beta * 0.5d0*(dzj_d3+dzj_d4) &
+                                            * psi * BigR * dl
+                  endif
                 endif
 
                 cs_T   = gamma * T  / (2.d0 * cs0)

@@ -870,6 +870,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,LOGI_FMT) 'sheath_init_u_all     ', sheath_init_u_all
     write(*,REAL_FMT) 'sheath_diag_R_split   ', sheath_diag_R_split
     write(*,REAL_FMT) 'T_min_sheath          ', T_min_sheath
+    write(*,REAL_FMT) 'sheath_weak_beta      ', sheath_weak_beta
     write(*,REAL_FMT) 'sheath_wall_vel       ', sheath_wall_vel
     write(*,REAL_FMT) 'sheath_stiff_max      ', sheath_stiff_max
     write(*,REAL_FMT) 'sheath_flux_sign      ', sheath_flux_sign
