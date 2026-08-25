@@ -20,6 +20,7 @@ use diffusivities, only: get_dperp, get_zkperp
 use mod_sheath_bc, only: sheath_current, sheath_norm, sheath_get_lambda, sheath_V_wall_at, &
                          sheath_temp_floor, dsheath_temp_floor_dT
 use mod_sheath_diag, only: sheath_diag_add, sheath_diag_add_weak
+use mod_sheath_trace, only: sheath_trace_add
 
 implicit none
 
@@ -81,7 +82,6 @@ real*8     :: sh_ramp_t, sh_act
 ! --- rhs_ij or amat.
 logical    :: diag_sheath_zj
 logical    :: weak_sheath_zj   ! penalty enforcement of the characteristic at the Gauss points
-logical    :: wk_here          ! ... and whether it is active at THIS Gauss point
 real*8     :: wk_res            ! bounded sheath residual driving the weak term
 real*8     :: wk_dfac           ! d(bounded)/d(raw), the factor every Jacobian column carries
 real*8     :: wk_cap, wk_den   ! the cap itself and the saturating denominator
@@ -90,6 +90,12 @@ real*8     :: wk_cap, wk_den   ! the cap itself and the saturating denominator
 real*8     :: wk_D(2,2,n_tor), wk_F(2,2,n_tor), wk_S(2,2,n_tor)
 real*8     :: wk_dl, wk_R, wk_vv, wk_esz
 integer    :: wk_i, wk_j, wk_m
+! --- Galerkin trace block for the WEAK sheath row: J(a,b,var) = int N_a * dres/dvar * N_b dS,
+! --- with a = (i,j) the test trace DOF and b = (k,l) the trial one. Axisymmetric only, so no
+! --- toroidal index - initialise_parameters refuses n_tor_local > 1 with sheath_zj_weak.
+real*8     :: tr_J(2,2,2,2,n_var), tr_F(2,2)
+integer    :: tr_col(4), tr_var(4), tr_k, tr_l, tr_nc
+real*8     :: tr_vals(4)
 real*8     :: dzj_sh, dzj_sat, dzj_x, dzj_d1, dzj_d2, dzj_d3, dzj_d4, dzj_wgt
 real*8     :: sh_duf_dTi, sh_duf_dTe
 real*8     :: gradu0dotn, gradps0dotn, gradudotn, gradpsidotn
@@ -173,8 +179,7 @@ bnd_type2 = nodes(2)%boundary
 
 ! --- If one of the nodes has a boundary type where natural BCs are applied, apply boundary integral for the full bnd element
 diag_sheath_zj = bcs(bnd_type1)%sheath_zj .or. bcs(bnd_type2)%sheath_zj
-weak_sheath_zj = ( bcs(bnd_type1)%sheath_zj_weak .or. bcs(bnd_type2)%sheath_zj_weak )   &
-                 .and. ( sheath_weak_beta .gt. 0.d0 )
+weak_sheath_zj = ( bcs(bnd_type1)%sheath_zj_weak .or. bcs(bnd_type2)%sheath_zj_weak )
 diag_sheath_zj = diag_sheath_zj .or. weak_sheath_zj
 
 do i_var=1, n_var
@@ -245,7 +250,7 @@ n_tor_local = i_tor_max - i_tor_min +1
 ! --- Trace mass diagonals for the weak sheath diagnostic. Done here because x_s, y_s and x_g are
 ! --- complete after the field loop above but the main loop writes RHS inside its own quadrature,
 ! --- so a row-normalising factor has to exist before that loop starts.
-wk_D = 0.d0; wk_F = 0.d0; wk_S = 0.d0
+wk_D = 0.d0; wk_F = 0.d0; wk_S = 0.d0; tr_J = 0.d0; tr_F = 0.d0
 if ( diag_sheath_zj ) then
   do ms = 1, n_gauss
     wk_dl = sqrt(x_s(ms)**2 + y_s(ms)**2)
@@ -536,7 +541,6 @@ do ms=1, n_gauss
     ! --- than pick up whatever the previous Gauss point left behind.
     dzj_sh = 0.d0; dzj_d1 = 0.d0; dzj_d2 = 0.d0; dzj_d3 = 0.d0; dzj_d4 = 0.d0
     dzj_sat = 0.d0; wk_res = 0.d0; wk_dfac = 0.d0
-    wk_here = weak_sheath_zj .and. (.not. apply_natural_bc(var_u))
 
     if ( diag_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
       call sheath_current(u0, r0_corr, Ti0_sh, Te0_sh, g_bn, normal_sign, Btot, &
@@ -626,17 +630,12 @@ do ms=1, n_gauss
                                      + v * abs(dzj_sat)     * ws * dl / BigR
           endif
 
-          ! --- sheath_ramp_time ramps the penalty in, exactly as it ramps the nodal route. This
-          ! --- matters because the characteristic is unbounded on the electron side: starting
-          ! --- from u = 0 gives X = -Lambda and f = 1 - exp(Lambda) ~ -19, so the penalty is
-          ! --- asked to drag zj to 19*j_sat of electron current on the first step. Observed:
-          ! --- e-limited 100%, I_sheath -12 kA against I_Ampere +1 kA, blow-up in four steps.
-          ! --- /BigR, matching the zj equation this is added to:
-          ! ---   rhs_ij(var_zj) = -( v_x*ps0_x + v_y*ps0_y + v*zj0 ) / BigR * xjac
-          ! --- so the penalty carries the same geometric weight as the term it competes with.
-          if ( wk_here ) &
-            rhs_ij(var_zj) = rhs_ij(var_zj)                                             &
-                           + v * sheath_weak_beta * sh_ramp_t * wk_res / BigR * dl
+          ! --- Residual driving the replacement row, using the TRUST-REGION-bounded value. The
+          ! --- Jacobian is deliberately left unbounded: the Newton step solves J dx = F, so
+          ! --- damping J would MAGNIFY dx by 1/dfac, the opposite of what a trust region is for.
+          ! --- Bounding F alone caps the step at rmax*j_sat and is exact Newton near the solution.
+          if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) )                    &
+            tr_F(i,j) = tr_F(i,j) + v * wk_res * ws * dl / BigR
 
           ! --- Surface term of the current definition (zj = Delta*psi). REFUSED for the same
           ! --- reason as the w term above, and equally unnecessary: the frozen zj trace cancels
@@ -688,8 +687,7 @@ do ms=1, n_gauss
             ! --- .false. - that flag selects the zj = Delta*psi surface term, a different thing
             ! --- which is refused because its Jacobian needs normal-derivative columns. The
             ! --- penalty below needs only value columns, so it is assemblable here.
-            if ( .not. ( apply_natural_bc(i_var) .or.                                  &
-                         ( wk_here .and. (i_var .eq. var_zj) ) ) ) cycle
+            if ( .not. apply_natural_bc(i_var) ) cycle
             RHS(index_ij+(i_var-1)*(n_tor_local)) = RHS(index_ij+(i_var-1)*(n_tor_local)) + rhs_ij(i_var) * ws
           enddo
 
@@ -776,26 +774,25 @@ do ms=1, n_gauss
                   amat_p(var_zj,var_psi) = - v * gpn_t * psi_t / BigR * dl
                 endif
 
-                ! --- Jacobian of the weak sheath term. amat = -d(rhs)/dx, and rhs carries
-                ! --- +beta*(zj_sh - zj), so the zj column is POSITIVE (it damps) and the state
-                ! --- columns carry -d(zj_sh)/dx. Value columns only - psi, never psi_t - which is
-                ! --- why this assembles where the zj = Delta*psi surface term above cannot.
-                if ( wk_here ) then
-                  amat(var_zj,var_zj ) = amat(var_zj,var_zj )                          &
-                                       + v * sheath_weak_beta * sh_ramp_t * wk_dfac * psi / BigR * dl
-                  amat(var_zj,var_u  ) = amat(var_zj,var_u  )                          &
-                                       - v * sheath_weak_beta * sh_ramp_t * wk_dfac * dzj_d1 * psi / BigR * dl
-                  amat(var_zj,var_rho) = amat(var_zj,var_rho)                          &
-                                       - v * sheath_weak_beta * sh_ramp_t * wk_dfac * dzj_d2 * psi / BigR * dl
+                ! --- Galerkin trace block. Same measure and test/trial functions as the rows
+                ! --- the matrix uses, so the projection is consistent with the discretisation it
+                ! --- will replace. Sign convention matches the nodal route: +1 on the zj column,
+                ! --- -d(zj_sh)/dx on the state columns, residual (zj_sh - zj) on the RHS.
+                if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
+                  tr_J(i,j,k,l,var_zj ) = tr_J(i,j,k,l,var_zj )                        &
+                                        + v * psi * ws * dl / BigR
+                  tr_J(i,j,k,l,var_u  ) = tr_J(i,j,k,l,var_u  )                        &
+                                        - v * dzj_d1 * psi * ws * dl / BigR
+                  tr_J(i,j,k,l,var_rho) = tr_J(i,j,k,l,var_rho)                        &
+                                        - v * dzj_d2 * psi * ws * dl / BigR
                   if ( with_TiTe ) then
-                    amat(var_zj,var_Ti) = amat(var_zj,var_Ti)                          &
-                                        - v * sheath_weak_beta * sh_ramp_t * wk_dfac * dzj_d3 * psi / BigR * dl
-                    amat(var_zj,var_Te) = amat(var_zj,var_Te)                          &
-                                        - v * sheath_weak_beta * sh_ramp_t * wk_dfac * dzj_d4 * psi / BigR * dl
+                    tr_J(i,j,k,l,var_Ti) = tr_J(i,j,k,l,var_Ti)                        &
+                                         - v * dzj_d3 * psi * ws * dl / BigR
+                    tr_J(i,j,k,l,var_Te) = tr_J(i,j,k,l,var_Te)                        &
+                                         - v * dzj_d4 * psi * ws * dl / BigR
                   else
-                    amat(var_zj,var_T ) = amat(var_zj,var_T )                          &
-                                        - v * sheath_weak_beta * sh_ramp_t * wk_dfac      &
-                                            * 0.5d0*(dzj_d3+dzj_d4) * psi / BigR * dl
+                    tr_J(i,j,k,l,var_T ) = tr_J(i,j,k,l,var_T )                        &
+                                         - v * 0.5d0*(dzj_d3+dzj_d4) * psi * ws * dl / BigR
                   endif
                 endif
 
@@ -929,6 +926,49 @@ if ( diag_sheath_zj ) then
           call sheath_diag_add_weak( wk_F(wk_i,wk_j,wk_m) / wk_D(wk_i,wk_j,wk_m),      &
                                      wk_S(wk_i,wk_j,wk_m) / wk_D(wk_i,wk_j,wk_m),      &
                                      wk_D(wk_i,wk_j,wk_m) )
+      enddo
+    enddo
+  enddo
+endif
+
+! --- Hand this element's trace rows to the weak-sheath accumulator, which sums them with the
+! --- adjacent edges' contributions, normalises by D_a and writes them with zbig in
+! --- boundary_conditions. Global DOF indices come from nodes(i)%index(dof) - the same map the
+! --- nodal route uses. Axisymmetric only: one toroidal index, checked at setup.
+if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
+  do wk_i = 1, 2
+    do wk_j = 1, 2
+      if ( wk_D(wk_i,wk_j,1) .le. 0.d0 ) cycle
+      tr_nc = 0
+      do tr_k = 1, 2
+        do tr_l = 1, 2
+          tr_nc = tr_nc + 1
+          tr_col(tr_nc) = nodes(tr_k)%index(direction(tr_l))
+        enddo
+      enddo
+      ! --- one variable at a time: the column list is the same four trace DOFs for each
+      do tr_k = 1, n_var
+        if ( (tr_k .ne. var_zj) .and. (tr_k .ne. var_u) .and. (tr_k .ne. var_rho) .and.  &
+             (tr_k .ne. var_Ti) .and. (tr_k .ne. var_Te) .and. (tr_k .ne. var_T) ) cycle
+        if ( tr_k .eq. 0 ) cycle
+        tr_nc = 0
+        do tr_l = 1, 2
+          do wk_m = 1, 2
+            tr_nc = tr_nc + 1
+            tr_col(tr_nc)  = nodes(tr_l)%index(direction(wk_m))
+            tr_var(tr_nc)  = tr_k
+            tr_vals(tr_nc) = tr_J(wk_i,wk_j,tr_l,wk_m,tr_k)
+          enddo
+        enddo
+        if ( tr_k .eq. var_zj ) then
+          call sheath_trace_add( nodes(wk_i)%index(direction(wk_j)),                     &
+                                 wk_D(wk_i,wk_j,1), tr_F(wk_i,wk_j),                 &
+                                 tr_nc, tr_col, tr_var, tr_vals )
+        else
+          call sheath_trace_add( nodes(wk_i)%index(direction(wk_j)),                     &
+                                 0.d0, 0.d0,                                            &
+                                 tr_nc, tr_col, tr_var, tr_vals )
+        endif
       enddo
     enddo
   enddo

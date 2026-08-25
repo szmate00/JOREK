@@ -428,19 +428,26 @@ if (my_id .eq. 0) then
       ! --- belongs: the u equation is assembled in STRONG form, so it has no boundary flux a
       ! --- surface term could replace, and adding one injects a spurious source at the wall.
       if ( bcs(i)%sheath_zj_weak ) then
-        if ( sheath_weak_beta .gt. 1.d0 ) then
-          write(*,*) 'WARNING: sheath_weak_beta =', sheath_weak_beta, ' is very large. The penalty'
-          write(*,*) '         exceeds the zj equation''s own diagonal by ~beta*R^2/h, which for a'
-          write(*,*) '         3 mm boundary mesh at R = 1.4 m is ~650*beta. Above ~1 that is a'
-          write(*,*) '         Gauss-point Dirichlet with an effective zbig of 1e3 or more, and'
-          write(*,*) '         it will wreck the conditioning. Parity is at beta ~ 1.5e-3.'
+        if ( sheath_weak_beta .gt. 0.d0 ) then
+          write(*,*) 'ERROR: sheath_weak_beta > 0, but the penalty route it controlled has been'
+          write(*,*) '       replaced by a Galerkin ROW REPLACEMENT and no longer exists. A'
+          write(*,*) '       penalty could not work here at any coefficient: the zj equation is'
+          write(*,*) '       missing its surface term once dirichlet%zj is released, so adding to'
+          write(*,*) '       it cannot repair it (beta = 1e-2 left the wrong equation dominant,'
+          write(*,*) '       beta = 1 gave period-2 divergence), and a Galerkin trace block spans'
+          write(*,*) '       ~1e6 internally between value and derivative rows so a uniform large'
+          write(*,*) '       coefficient wrecks the conditioning (beta = 1e9 died in one step).'
+          write(*,*) '       Row normalisation by the trace mass diagonal replaces it. Remove the'
+          write(*,*) '       parameter from the namelist.'
+          stop
         endif
-        if ( sheath_weak_beta .le. 0.d0 ) then
-          write(*,*) 'WARNING: bcs(', i, ')%sheath_zj_weak with sheath_weak_beta <= 0. The weak'
-          write(*,*) '         sheath term is inactive. Parity with the zj equation is at'
-          write(*,*) '         beta ~ h/R^2 (about 1.5e-3 for a 3 mm boundary mesh at R = 1.4 m);'
-          write(*,*) '         useful enforcement is one to three decades above that, so ~1e-2 is'
-          write(*,*) '         a sensible start. Scan it and check the answer does not move.'
+        if ( n_tor .gt. 1 ) then
+          write(*,*) 'ERROR: bcs(', i, ')%sheath_zj_weak with n_tor > 1. The trace accumulator'
+          write(*,*) '       stores one toroidal index per row. The sheath characteristic is'
+          write(*,*) '       nonlinear, so a correct 3D form has to be evaluated in real toroidal'
+          write(*,*) '       planes and transformed back, coupling harmonics through the row -'
+          write(*,*) '       which this does not yet do. Verify axisymmetric first.'
+          stop
         endif
         if ( bcs(i)%sheath_zj ) then
           write(*,*) 'ERROR: bcs(', i, ')%sheath_zj and %sheath_zj_weak are both set. They are'

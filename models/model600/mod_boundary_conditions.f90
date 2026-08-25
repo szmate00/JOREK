@@ -35,6 +35,7 @@ use vacuum, ONLY: is_freebound
 use corr_neg, only: corr_neg_temp, corr_neg_dens, dcorr_neg_dens_drho1
 use mod_sheath_bc, only: sheath_get_lambda, sheath_current, sheath_V_wall_at, sheath_temp_floor
 use mod_sheath_diag, only: sheath_psi0, sheath_store_psi0, sheath_diag_add_nodal
+use mod_sheath_trace, only: sheath_trace_apply, sheath_trace_report
 use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_cos_dR, dpsi_RMP_cos_dZ, &
        psi_RMP_sin, dpsi_RMP_sin_dR, dpsi_RMP_sin_dZ, t_now, RMP_growth_rate, RMP_ramp_up_time,            &
        RMP_start_time, tstep, RMP_har_cos, RMP_har_sin, T_min,                                             &
@@ -1354,6 +1355,19 @@ do i=1, n_local_elms !=== do elements
   enddo         !=== enddo vertex
  
 enddo           !=== do elements
+
+! --- Weak sheath: replace the boundary zj rows with the Galerkin projection accumulated over the
+! --- boundary Gauss points during the element assembly. Done here, after the element loop, for
+! --- two reasons: the rows need contributions from BOTH adjacent edges before they can be
+! --- normalised by their own diagonal, and this is where a_mat and RHS_loc are available.
+! --- Writing with zbig annihilates the assembled zj row, which is necessary rather than merely
+! --- convenient - that row is missing its surface term once dirichlet%zj is released.
+if ( any(bcs(:)%sheath_zj_weak) ) then
+  do in = a_mat%i_tor_min, a_mat%i_tor_max
+    call sheath_trace_apply(in, zbig, index_min, index_max, a_mat, RHS_loc)
+  enddo
+  call sheath_trace_report(my_id)
+endif
 
 if (RMP_on) then
   if (allocated(psi_RMP_cos1))         call tr_deallocate(psi_RMP_cos1,"psi_RMP_cos1",CAT_UNKNOWN)
