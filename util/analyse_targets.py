@@ -127,11 +127,31 @@ def contiguous_runs(mask):
 class Target:
     """One divertor target, in boundary-path order, s=0 at the strike point."""
 
-    def __init__(self, name, d, sl, mass_amu, pfr_toward_larger_R):
-        self.name, self.valid = name, False
+    def __init__(self, name, d, sl, mass_amu, pfr_toward_larger_R,
+                 half_width=0.12, smooth=9):
+        self.name, self.valid, self.edge_warn = name, False, False
         g = {k: v[sl] for k, v in d.items()}
         if len(g["R"]) < 5:
             return
+
+        # STRIKE POINT = the minimum of psi_N along the surface. psi_N exceeds 1
+        # on both sides of the leg and equals 1 at the separatrix, so its minimum
+        # IS the strike point. This is geometric: unlike the j_sat peak it does
+        # not wander when the target detaches and j_sat goes flat.
+        i0 = int(np.nanargmin(g["Psi_N"]))
+        if i0 < 3 or i0 > len(g["R"]) - 4:
+            self.edge_warn = True
+
+        # Trim to +-half_width of path length around it, so the target is the
+        # target and not the baffle above it. Z-cuts alone cannot do this: the
+        # surface runs continuously from the strike point up the vessel wall.
+        RR, ZZ = g["R"], g["Z"]
+        sfull = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(RR), np.diff(ZZ)))])
+        keep = np.abs(sfull - sfull[i0]) <= half_width
+        g = {k: v[keep] for k, v in g.items()}
+        if len(g["R"]) < 5:
+            return
+        self.istrike = int(np.nanargmin(g["Psi_N"]))
         self.valid = True
 
         self.R, self.Z, self.psin = g["R"], g["Z"], g["Psi_N"]
@@ -146,11 +166,9 @@ class Target:
         self.jsat = E_CHG * self.ne * cs * np.abs(self.bnorm) / \
             max(np.nanmax(np.abs(self.bnorm)), 1e-30)
 
-        # Arc length in PATH order (never sorted), zeroed at the strike point,
-        # which is taken as the peak of j_sat.
+        # Arc length in PATH order (never sorted), zeroed at the strike point.
         ds = np.hypot(np.diff(self.R), np.diff(self.Z))
         s = np.concatenate([[0.0], np.cumsum(ds)])
-        self.istrike = int(np.nanargmax(self.jsat))
         s = s - s[self.istrike]
 
         # Orient so that positive s points into the PFR on BOTH targets, making
@@ -162,11 +180,18 @@ class Target:
         self.s = s
 
         # E_t = -dPhi/ds. Guard repeated abscissa values, which would give inf.
+        # Phi is smoothed first: nsub_bnd sub-sampling puts several points inside
+        # one element, and differentiating the raw trace gives 1e4 V/m spikes that
+        # are element-scale noise, not a field.
         good = np.concatenate([[True], np.abs(np.diff(self.s)) > 1e-12])
         self.et = np.full_like(self.s, np.nan)
         if good.sum() > 2:
             o = np.argsort(self.s[good])
             ss, pp = self.s[good][o], self.phi[good][o]
+            if smooth > 1 and pp.size > smooth:
+                k = np.ones(int(smooth)) / float(int(smooth))
+                pp = np.convolve(np.pad(pp, int(smooth) // 2, mode="edge"), k,
+                                 mode="valid")[:pp.size]
             self.et[good] = np.interp(self.s[good], ss, -np.gradient(pp, ss))
 
     def at_strike(self, a):
@@ -184,7 +209,8 @@ class Target:
         return np.nanmean(a[m]) if m.any() else np.nan
 
 
-def split_targets(d, rsplit, zmax, bnfrac, mass_amu, verbose=False):
+def split_targets(d, rsplit, zmax, bnfrac, mass_amu, half_width, smooth,
+                  verbose=False):
     div = d["Z"] < zmax
     if not div.any():
         sys.exit(f"no boundary points with Z < {zmax}; adjust --zmax")
@@ -211,9 +237,11 @@ def split_targets(d, rsplit, zmax, bnfrac, mass_amu, verbose=False):
     for side, name, pfr_larger_R in ((True, "INNER", True), (False, "OUTER", False)):
         ab = best(side)
         if ab is None:
-            out.append(Target(name, d, slice(0, 0), mass_amu, pfr_larger_R))
+            out.append(Target(name, d, slice(0, 0), mass_amu, pfr_larger_R,
+                              half_width, smooth))
         else:
-            out.append(Target(name, d, slice(*ab), mass_amu, pfr_larger_R))
+            out.append(Target(name, d, slice(*ab), mass_amu, pfr_larger_R,
+                              half_width, smooth))
     return out
 
 
@@ -226,6 +254,12 @@ def report(label, step, t_now, inner, outer, pfr_width):
               "--rsplit / --zmax / --bnfrac")
         return None
 
+    for t in (inner, outer):
+        if t.edge_warn:
+            print(f"  WARNING: {t.name} strike point (min psi_N) sits at the edge of "
+                  f"the selected run.\n           The real one is probably outside it - "
+                  f"check --zmax / --bnfrac / --rsplit.")
+
     print(f"{'':24s}{'INNER':>15s}{'OUTER':>15s}{'in/out':>11s}")
 
     def row(nm, a, b):
@@ -237,9 +271,10 @@ def report(label, step, t_now, inner, outer, pfr_width):
                      ti=t.at_strike(t.ti), ne=t.at_strike(t.ne),
                      R=t.R[t.istrike], Z=t.Z[t.istrike])
 
-    print("\n  -- strike point (peak j_sat) --")
+    print("\n  -- strike point (min psi_N) --")
     row("R [m]", inner._sp["R"], outer._sp["R"])
     row("Z [m]", inner._sp["Z"], outer._sp["Z"])
+    row("psi_N", inner.psin[inner.istrike], outer.psin[outer.istrike])
     row("Phi [V]", inner._sp["phi"], outer._sp["phi"])
     row("T_e [eV]", inner._sp["te"], outer._sp["te"])
     row("T_i [eV]", inner._sp["ti"], outer._sp["ti"])
@@ -325,7 +360,14 @@ def main():
                          "of its divertor maximum; rejects the wall (default 0.10)")
     ap.add_argument("--pfr-width", type=float, default=0.05,
                     help="PFR averaging window in m from the strike point")
-    ap.add_argument("--smax", type=float, default=0.30, help="plot range in m")
+    ap.add_argument("--half-width", type=float, default=0.12,
+                    help="keep +-this many m of path around the strike point; the "
+                         "boundary runs continuously from the target up the vessel "
+                         "wall, so a Z cut alone cannot isolate the plate (default 0.12)")
+    ap.add_argument("--smooth", type=int, default=9,
+                    help="points to average Phi over before differentiating for "
+                         "E_t (default 9); 1 disables")
+    ap.add_argument("--smax", type=float, default=0.15, help="plot range in m")
     ap.add_argument("--mass", type=float, default=2.0141)
     ap.add_argument("-o", "--out", default="target_profiles.png")
     ap.add_argument("--verbose", action="store_true",
@@ -343,7 +385,8 @@ def main():
         check_units(d, path)
         if a.verbose:
             print(f"\n{label}: {len(d['R'])} boundary points")
-        inner, outer = split_targets(d, a.rsplit, a.zmax, a.bnfrac, a.mass, a.verbose)
+        inner, outer = split_targets(d, a.rsplit, a.zmax, a.bnfrac, a.mass,
+                                     a.half_width, a.smooth, a.verbose)
         r = report(label, step, t_now, inner, outer, a.pfr_width)
         cases.append((label, step, t_now, inner, outer))
         if r:
