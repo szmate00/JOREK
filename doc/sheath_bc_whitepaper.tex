@@ -1,0 +1,791 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=2.6cm]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{microtype}
+\usepackage[hidelinks]{hyperref}
+\usepackage{caption}
+
+\definecolor{codegray}{gray}{0.96}
+\definecolor{keywordblue}{rgb}{0.1,0.2,0.6}
+\definecolor{commentgreen}{rgb}{0.15,0.45,0.25}
+
+\lstset{
+  language=[90]Fortran,
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{keywordblue}\bfseries,
+  commentstyle=\color{commentgreen}\itshape,
+  backgroundcolor=\color{codegray},
+  frame=single,
+  rulecolor=\color{gray!40},
+  breaklines=true,
+  columns=fullflexible,
+  showstringspaces=false,
+  captionpos=b,
+  xleftmargin=0.5em,
+  framexleftmargin=0.5em,
+}
+
+\newcommand{\zj}{z_j}
+\newcommand{\jsat}{j_{\mathrm{sat}}}
+\newcommand{\zjsat}{\zj^{\mathrm{sat}}}
+\newcommand{\zjsh}{\zj^{\mathrm{sh}}}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\Gam}{\Gamma_{\mathrm{sh}}}
+\newcommand{\code}[1]{\texttt{\small #1}}
+
+\title{\bf A Charge-Conserving Sheath Boundary Condition for JOREK\\[2mm]
+\large Weak Galerkin Imposition of the Langmuir Characteristic\\
+on the Boundary Trace Space of \texttt{model600}}
+\author{M\'at\'e Sz\H{u}cs}
+\date{26 August 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+The scrape-off layer (SOL) electric field is set by the Debye sheath at the divertor targets, and
+the resulting $\bm{E}\times\bm{B}$ drift through the private flux region is a leading candidate
+mechanism for the in--out divertor density asymmetry (high-field-side high-density, HFSHD). JOREK's
+reduced-MHD \code{model600} previously carried a Dirichlet condition on the electrostatic potential
+at the wall, which forbids exactly this physics. This paper documents a boundary condition that
+instead closes charge continuity at the wall through the Langmuir current--voltage characteristic,
+allowing the wall potential to be determined self-consistently by the plasma.
+
+The central difficulty is not the physics but the discretisation. Imposing the characteristic
+\emph{pointwise at boundary nodes} was found to satisfy it there to a relative accuracy of
+$1.8\times10^{-4}$ while still leaving a $33$--$48\,\%$ discrepancy between the current the sheath
+passes and the current the plasma delivers, because in a $C^1$ bicubic finite-element basis the
+currents are integrated \emph{between} the nodes. The resolution is to impose the characteristic
+where the currents are measured: as a Galerkin projection onto the boundary trace space, replacing
+the boundary rows of the current-definition equation. Three ingredients proved individually
+necessary --- row \emph{replacement} rather than penalisation, row normalisation by the trace mass
+diagonal (whose entries span $2.6\times 10^{10}$ on this mesh), and a trust region applied to the
+residual but deliberately \emph{not} to the Jacobian.
+
+The resulting condition closes the wall current budget to four significant figures on both targets
+($I_{\mathrm{sheath}}=I_{\mathrm{Amp\grave{e}re}}$ to $0.00\,\%$), reduces the weak residual to
+$6.5\times10^{-4}$ of the ion saturation current, requires no tuning parameter, and has run
+$\sim\!3900$ time steps to wall-clock timeout without incident on an ASDEX~Upgrade X-point geometry.
+\end{abstract}
+
+\tableofcontents
+
+\section{Introduction and motivation}
+
+\subsection{Why the wall potential must be free}
+
+In a diverted tokamak the plasma terminates on material surfaces. Because electrons are far more
+mobile than ions, a surface immersed in plasma charges negatively until the electron flux is
+retarded enough to match the ion flux; the resulting non-neutral layer is the Debye sheath, and the
+potential drop across it is of order $3\,kT_e/e$. The sheath is thinner than any mesh cell in an MHD
+code by many orders of magnitude, so it cannot be resolved --- it must be represented as a boundary
+condition relating the current through the surface to the potential at the surface.
+
+That relation matters for more than the current budget. The floating potential
+$\Phi_f = \Lambda kT_e/e$ is proportional to the local electron temperature, so a target with a
+radially varying $T_e$ profile carries a radially varying potential, hence a radial electric field
+$E_r$ at the target, hence an $\bm{E}\times\bm{B}$ drift. In a divertor this drift runs through the
+private flux region (PFR) and transports particles between the inner and outer targets. It is one of
+the standard explanations for the observed high-field-side high-density (HFSHD) asymmetry, and it is
+the physics this work exists to enable.
+
+A Dirichlet condition $u = 0$ on the wall states $\Phi = 0$ everywhere on it. That is not a gauge
+choice once a sheath is present --- it asserts a specific, and wrong, physical state (deep electron
+saturation, $X = -\Lambda$), it eliminates $E_r$ at the target by construction, and it therefore
+makes the HFSHD drift mechanism structurally inaccessible. Replacing it is a prerequisite for any
+study of divertor asymmetries, detachment onset, or target biasing in this model.
+
+\subsection{Scope}
+
+This paper documents the implementation for \code{model600} (reduced MHD with separate ion and
+electron temperatures, optional neutrals and kinetic impurities) at toroidal mode number
+$n_{\mathrm{tor}} = 1$, i.e.\ axisymmetric. Section~\ref{sec:physics} sets out the sheath physics and
+its expression in JOREK's normalised variables. Section~\ref{sec:bvp} identifies which discrete
+equation the condition belongs in --- a question with a non-obvious answer that cost several
+failed attempts. Section~\ref{sec:numerics} is the core: why the natural pointwise implementation
+fails despite appearing to succeed, and how a weak formulation repairs it.
+Section~\ref{sec:implementation} describes the code. Section~\ref{sec:results} reports verification.
+
+\section{Sheath physics}
+\label{sec:physics}
+
+\subsection{The current--voltage characteristic}
+
+For a Maxwellian plasma at a wall, the ion current is saturated at the Bohm value while the electron
+current is retarded by the sheath potential according to a Boltzmann factor. The net current density
+along the field, referenced to the wall, is the Langmuir probe characteristic
+(Stangeby~\cite{stangeby}, eq.~2.68):
+\begin{equation}
+  j_\parallel = \jsat\left(1 - e^{-X}\right),
+  \qquad
+  X \equiv \frac{e\Phi}{kT_e} - \Lambda,
+  \qquad
+  \Phi = V_{\mathrm{sheath}} - V_{\mathrm{wall}} .
+  \label{eq:char}
+\end{equation}
+Here $\Lambda$ is the floating-potential coefficient. Its Maxwellian value is
+\begin{equation}
+  \Lambda_0 = \ln\sqrt{\frac{m_i}{2\pi m_e}} \;\simeq\; 3.19 \quad\text{(deuterium)} ,
+  \label{eq:lambda0}
+\end{equation}
+and an optional local correction accounting for the ion contribution to the sound speed is available:
+\begin{equation}
+  \Lambda = \Lambda_0 - \tfrac12\ln\!\left(\frac{\gamma\,(T_i+T_e)}{T_e}\right),
+  \qquad
+  \frac{\partial\Lambda}{\partial T_i} = -\frac{1}{2(T_i+T_e)},
+  \qquad
+  \frac{\partial\Lambda}{\partial T_e} = \frac{T_i}{2T_e(T_i+T_e)} .
+\end{equation}
+Equation~\eqref{eq:char} has $j_\parallel = 0$ at $X=0$, i.e.\ $\Phi = \Lambda kT_e/e$: the floating
+potential. At $\Phi = 0$ (a grounded wall, $X = -\Lambda$) the sheath is in electron saturation and
+passes $j_\parallel = \jsat(1-e^{\Lambda}) \approx -19\,\jsat$.
+
+The ion saturation current density follows the Bohm condition,
+\begin{equation}
+  \jsat = e\, n\, c_s\, g(b_n), \qquad c_s = \sqrt{\gamma\,(T_i+T_e)/m_i},
+\end{equation}
+where $g(b_n)$ is the Chodura--Riemann obliqueness function --- the same factor the Mach-1 boundary
+condition uses for the parallel outflow velocity --- carrying the sign of $\bm{B}\!\cdot\!\bm{n}$.
+Using the same $g$ in both places is what makes the current and the particle flux mutually
+consistent at the same surface, and it is why \code{bcs\%mach1} must be enabled on any boundary type
+carrying this condition.
+
+\subsection{Forward versus inverse form: a decisive choice}
+\label{sec:forward}
+
+Equation~\eqref{eq:char} may be used in either direction. The \emph{inverse} form, solving for the
+potential given the current,
+\begin{equation}
+  \frac{e\Phi}{kT_e} = \Lambda - \ln\!\left(1 - \frac{j_\parallel}{\jsat}\right),
+\end{equation}
+is the more intuitive statement --- ``the wall floats to whatever potential passes the delivered
+current'' --- and it was how the first implementation was written. It is also singular precisely
+where divertor plasmas live: as $j_\parallel \to \jsat$ the logarithm diverges, and for
+$j_\parallel > \jsat$ there is \emph{no solution at all}. A restart equilibrium constructed without
+this boundary condition has no reason to respect $|j_\parallel| \le \jsat$, and in practice does not.
+
+The forward form used here, $j_\parallel = j_\parallel(\Phi)$, is single-valued for all $\Phi$, and
+its derivative
+\begin{equation}
+  \frac{\partial j_\parallel}{\partial \Phi} \propto e^{-X}
+\end{equation}
+tends smoothly to zero on the ion side. No clipping is needed there, and the linearisation never
+becomes singular. This choice is the reason the boundary condition is robust from an arbitrary
+restart state, and it is worth stating explicitly because the two forms are mathematically
+equivalent and numerically utterly different.
+
+\subsection{Finite conductance at ion saturation}
+
+The forward characteristic saturates \emph{exactly} at $\jsat$: no potential, however large, passes
+more ion current. A plasma delivering even a few percent more than $\jsat$ therefore has no
+consistent boundary state, and the residual settles at a small constant that drives $u$ linearly
+forever. This is not hypothetical --- it is the observed failure mode of the first working
+configuration.
+
+The remedy is to give the ion branch a finite differential conductance by adding a softplus term,
+\begin{equation}
+  f(X) = \left(1 - e^{-X}\right) + s\,\ln\!\left(1 + e^{X}\right),
+  \qquad
+  \zjsh = \zjsat\, f(X),
+  \label{eq:fchar}
+\end{equation}
+with $s$ = \code{sheath\_sat\_slope}. Because $\ln(1+e^X)$ is exponentially small for $X \ll 0$, the
+electron branch and the floating potential are essentially untouched, while $f$ becomes unbounded
+above so that every demanded current is reachable at a finite $X$. The function is $C^\infty$ and is
+applied to $f$ and $\dd f/\dd X$ together.
+
+On the electron side the exponential is instead bounded by a smooth limiter,
+\begin{equation}
+  X_{\mathrm{lim}} = X_{\min} + \delta X \ln\!\left(1 + e^{(X - X_{\min})/\delta X}\right),
+\end{equation}
+which is $C^1$, monotone, has $\dd X_{\mathrm{lim}}/\dd X \in (0,1)$, and tends to the identity for
+$X \gg X_{\min}$. The ion side needs no such limiter, which is the whole point of
+Section~\ref{sec:forward}.
+
+Two numerical details are worth recording. First, $1-e^{-X}$ cancels catastrophically near $X=0$ ---
+which is the floating condition, i.e.\ the regime of interest rather than a corner case. Fortran has
+no \code{expm1} intrinsic, so a four-term Taylor series is used below $|X| < 10^{-4}$, giving a
+relative error of $\sim\!10^{-18}$. Second, all exponentials are evaluated only within
+$|X| \le 30$; outside, the asymptotic branch is taken, which keeps a debug build with
+\code{-ffpe-trap=overflow,denormal} alive for any state the nonlinear solver passes through.
+
+\subsection{JOREK normalisation and the sign convention}
+
+JOREK's reduced-MHD variables are normalised; the sheath must be expressed in them. The
+electrostatic potential enters through the stream function $u$. The JOREK reference paper
+(H\"olzl \emph{et al.}~\cite{hoelzl2021}, eq.~26) defines $u = \Phi/F_0$ with a velocity ansatz
+$\bm{v}_{\mathrm{pol}} = -R\,\nabla u \times \bm{e}_\phi$, whereas the \code{model600} element matrix
+implements $\bm{v}_{\mathrm{pol}} = +R\,\nabla u \times \bm{e}_\phi$. The code's $u$ is therefore
+\emph{minus} the paper's, and
+\begin{equation}
+  \boxed{\;\Phi = -F_0\,u\;}
+\end{equation}
+The same sign inversion applies to $\psi$ and to the current variable: the code's
+$\zj = \Delta^{*}\psi$ is minus the paper's $j$. Getting this wrong inverts the entire boundary
+condition, so it is stated here explicitly and derived once, in one module, used by all three
+consumers (assembly, diagnostic, and the legacy nodal route) so that they cannot drift apart.
+
+With $n_0$ the central density, $\rho_0 = n_0 m_i$, and $m_i = A\,u_{\mathrm{amu}}$:
+\begin{align}
+  \frac{e\Phi}{kT_e} &= \frac{\tfrac12 a_n u - v_w}{T_e},
+  &
+  a_n &= -\,\frac{2 e F_0 \sqrt{\mu_0 \rho_0}}{m_i},
+  \label{eq:an}\\[1mm]
+  v_w &= e\,V_{\mathrm{wall}}\,\mu_0\,n_0,
+  &
+  c_{\mathrm{sat}} &= -\tfrac12 a_n,
+\end{align}
+and the saturation current in code variables (Artola \emph{et al.}~\cite{artola}, eqs.~5 and 16,
+in the code's sign) is
+\begin{equation}
+  \zjsat = c_{\mathrm{sat}}\,\rho\,g(b_n)\,\frac{c_s}{|\bm{B}|},
+  \qquad c_s = \sqrt{\gamma\,(T_i + T_e)} .
+  \label{eq:zjsat}
+\end{equation}
+This corresponds to a force-free, field-aligned SOL current, $J_\parallel = -j\bm{B}/F_0$ in the
+paper's variables, which is the physically appropriate interpretation in the scrape-off layer.
+
+\subsection{Temperature floors}
+
+The characteristic divides by $T_e$ and is therefore sensitive to the positivity floor applied to
+the temperature. JOREK's global floor \code{T\_min\_neg} exists to keep every other term
+well-behaved and is normally set well \emph{above} divertor temperatures: with
+\code{T\_min\_neg}~$=3\times10^{-5}$ the knee sits at $1.93$~eV, so a real target profile running
+$0.3 \to 1.5$~eV is delivered to the sheath as $1.14 \to 1.58$~eV. Since $\Phi_f = \Lambda kT_e/e$
+inherits that compression, the target's \emph{radial potential gradient} --- precisely the $E_r$ that
+drives the PFR drift --- is flattened by a factor $\sim\!3.5$ before the boundary condition ever sees
+it. A separate floor \code{T\_min\_sheath}, with the same functional form, is therefore provided so
+that the sheath can see a colder plasma than the rest of the model. This is a physics-relevant knob,
+not a numerical convenience.
+
+\section{Where the condition belongs in the discrete system}
+\label{sec:bvp}
+
+\subsection{Two candidate equations}
+
+The sheath supplies one scalar relation per boundary point. It can be attached either to the
+vorticity (charge continuity) equation, as a surface flux, or to the current-definition equation
+$\zj = \Delta^{*}\psi$, as an algebraic constraint. Both were implemented; the distinction is not
+cosmetic.
+
+In \code{model600} the vorticity equation is assembled in \emph{strong} form. It therefore has no
+boundary flux for a surface term to replace, and adding one injects a spurious source at the wall
+rather than supplying a missing one. This route (\code{natural\%u}) works, but it is a Robin-type
+penalty whose strength must be capped against the row's own polarisation diagonal to prevent $u$
+from being slaved pointwise.
+
+The route pursued here attaches the characteristic to the current definition instead: the boundary
+rows of the $\zj$ equation are replaced by the statement $\zj = \zjsh$. This is an algebraic
+constraint --- no $\theta$-scheme, no time step --- and it puts the condition on the variable the
+characteristic actually predicts.
+
+\subsection{Why \texttt{natural\%zj} is required: the open loop}
+
+A subtlety here falsified an earlier assumption and is worth recording. It was originally believed
+that \code{dirichlet\%zj} could remain enabled, on the grounds that the frozen $\zj$ trace cancels
+exactly between the strong-form volume term and the added surface flux. This is \emph{false}, and
+the diagnostic falsified it directly: with \code{dirichlet\%zj = .true.}, the Amp\`ere current
+$I_{\mathrm{Amp}} = \oint \zj\,(\bm{B}\!\cdot\!\bm{n})\,\dd S$ stayed constant to four digits for an
+entire run while the sheath current ran from $-15540$~A to $-23$~A. The sheath adapted all the way to
+floating, the plasma current could not move at all, and $u$ diverged trying to reconcile them.
+
+The $j$--$V$ loop is \emph{open} whenever $\zj$ at the wall is pinned: the boundary condition can
+then only move the potential, and if the delivered current exceeds $\jsat$ no potential satisfies the
+characteristic. The current-definition surface term must therefore be restored
+(\code{natural\%zj = .true.}, \code{dirichlet\%zj = .false.}), coupling $\zj$ at the boundary to
+$\nabla\psi\!\cdot\!\bm{n}$ --- the \emph{normal} derivative of $\psi$, which \code{dirichlet\%psi}
+does not pin, since that fixes the value and the tangential derivative only. That normal derivative
+is the degree of freedom through which the wall current responds to the sheath.
+
+\subsection{Required namelist configuration}
+
+\begin{lstlisting}[caption={Enabling the weak sheath condition on the boundary types carrying the strike points.}]
+  bcs(1)%sheath_zj_weak = .true.    ! the weak Galerkin route (this work)
+  bcs(1)%natural%zj     = .true.    ! REQUIRED - without it the j-V loop is open
+  bcs(1)%dirichlet%zj   = .false.   ! ... and its Dirichlet has to come off
+  bcs(1)%dirichlet%u    = .false.   ! u is free, set by charge continuity at the wall
+  bcs(1)%dirichlet%w    = .true.    ! KEEP; leave natural%w = .false.
+  bcs(1)%mach1          = .true.    ! j_sat assumes Mach 1 at the same wall (default for type 1)
+  bc_natural_open       = .true.    ! the boundary integrals live in that branch
+\end{lstlisting}
+
+At least one boundary type must retain \code{dirichlet\%u = .true.} --- typically the main chamber
+wall. The reason is that $u$ enters the vorticity equation only through its gradient, and the sheath
+term loses its grip on $u$ in ion saturation; without a gauge somewhere, the constant mode of $u$ is
+undetermined.
+
+\section{Numerics: from pointwise to weak}
+\label{sec:numerics}
+
+\subsection{The discretisation and its trace space}
+
+JOREK uses $C^1$-continuous bicubic B\'ezier finite elements. Each node carries four degrees of
+freedom per variable --- value, $\partial_s$, $\partial_t$, and the mixed $\partial_s\partial_t$ ---
+so a boundary edge of an element sees, in principle, all of them.
+
+The key structural fact is that on a boundary edge the \emph{trace} of a bicubic is determined by
+the value and \emph{tangential}-derivative degrees of freedom at the two endpoints only. The
+normal-derivative and mixed degrees of freedom have vanishing basis functions on the edge. The trace
+space of a boundary segment is therefore spanned by four functions per element edge: two nodes
+$\times$ two trace DOFs. This is what makes a boundary projection tractable, and it defines the
+column set of everything that follows.
+
+\subsection{The pointwise route, and why it deceives}
+\label{sec:nodalfail}
+
+The natural implementation imposes $\zj = \zjsh$ at each boundary \emph{node}, as a linearised
+constraint row
+\begin{equation}
+  \dd \zj - \sigma \sum_k \frac{\partial \zjsh}{\partial x_k}\,\dd x_k = \sigma\,\left(\zjsh - \zj\right),
+\end{equation}
+with the diagonal left unscaled so that $\sigma$ is the per-step closure fraction.
+
+Measured, this works extremely well \emph{on its own terms}. The pointwise residual
+\begin{equation}
+  \varepsilon_{\mathrm{node}}
+  = \sqrt{\frac{\sum_{\mathrm{nodes}} (\zj - \zjsh)^2}{\sum_{\mathrm{nodes}} (\zjsat)^2}}
+\end{equation}
+falls to $1.8\times10^{-4}$. And yet the physical acceptance test --- that the current the sheath
+passes equals the current the plasma delivers,
+\begin{equation}
+  I_{\mathrm{sheath}} = \oint_{\Gam} \frac{\zjsh\,(\bm{B}\!\cdot\!\bm{n})}{F_0\mu_0}\,\dd S
+  \;\stackrel{!}{=}\;
+  I_{\mathrm{Amp}} = \oint_{\Gam} \frac{\zj\,(\bm{B}\!\cdot\!\bm{n})}{F_0\mu_0}\,\dd S
+  \label{eq:closure}
+\end{equation}
+--- failed by $33$--$48\,\%$ on the inner target, run after run, under every variation of the
+characteristic, the gates and the relaxation.
+
+The explanation is that the two statements are simply different. The constraint is imposed at nodes;
+the currents in~\eqref{eq:closure} are integrated at Gauss points \emph{between} the nodes, where the
+cubic trace is unconstrained. A cubic passing exactly through the right values at its endpoints can
+still integrate to something quite different. The corresponding Gauss-point residual
+$\varepsilon_{\mathrm{gauss}}$ (same definition, weighted by $\dd S$) was measured at $\approx 2$ ---
+four orders of magnitude larger than the nodal one.
+
+This was confirmed decisively by instrumenting the \emph{weak} residual as a pure diagnostic before
+changing anything: as $\varepsilon_{\mathrm{node}}$ fell $1.11 \to 0.08 \to 1.8\times10^{-4}$, the
+Galerkin residual stayed at $\mathcal{O}(1)$. The constraint was being satisfied where it was
+imposed and nowhere else.
+
+\subsection{The weak formulation}
+
+Let $\{N_a\}$ span the boundary trace space and $\Gam$ be the sheath boundary. Define the Galerkin
+residual and the trace mass diagonal
+\begin{equation}
+  F_a = \int_{\Gam} N_a \left(\zjsh - \zj\right) \dd S,
+  \qquad
+  D_a = \int_{\Gam} N_a N_a \,\dd S .
+  \label{eq:FaDa}
+\end{equation}
+The condition imposed is $F_a = 0$ for every trace DOF $a$ --- the orthogonal projection of the
+sheath mismatch onto the trace space. Because this is enforced exactly where the currents are
+integrated, the closure~\eqref{eq:closure} follows by construction rather than by convergence.
+
+Linearising about the current state, the replacement row for trace DOF $a$ is
+\begin{equation}
+  \underbrace{\int_{\Gam} N_a N_b \,\dd S}_{\text{$\zj$ column}} \dd z_{j,b}
+  \;-\;
+  \sum_{x \in \{u,\rho,T_i,T_e\}} \underbrace{\int_{\Gam} N_a \frac{\partial \zjsh}{\partial x} N_b \,\dd S}_{\text{state columns}} \dd x_b
+  \;=\; F_a .
+  \label{eq:row}
+\end{equation}
+Note that no $\theta$ and no time step appear: this is an algebraic constraint on the state, not a
+discretised evolution equation.
+
+\subsection{Ingredient 1: replacement, not penalisation}
+
+The obvious way to impose~\eqref{eq:row} is as a penalty, adding $\beta F_a$ to the existing $\zj$
+equation. This cannot work here, and understanding why is the crux.
+
+The volume equation $\zj = \Delta^{*}\psi$ is integrated by parts, and its boundary surface term is
+\emph{refused} by the assembly: the term's Jacobian requires columns at the normal-derivative DOFs,
+which the trial-function loop cannot produce (it emits columns only at the tangential DOFs). This is
+harmless while \code{dirichlet\%zj} freezes the trace, because those rows are overwritten anyway ---
+and the code says exactly this in its comments. But the weak route \emph{must} release that
+Dirichlet (Section~\ref{sec:bvp}), and the boundary equation is then \emph{incomplete}. Adding a
+penalty to an incomplete equation cannot repair it. Measured: $\beta=10^{-2}$ left the wrong
+equation dominant; $\beta=1$ produced a period-2 divergence.
+
+Writing the row with the code's \code{zbig}~$=10^{12}$ multiplier annihilates the incomplete
+equation instead of adding to it --- exactly as every Dirichlet condition in JOREK already does.
+
+It is worth noting explicitly that JOREK's ``Dirichlet'' is itself a penalty: \code{mod\_assembly}
+sets a single matrix entry to \code{zbig} rather than clearing the row. The remaining entries survive
+but are $10^{18}$ times smaller. The same mechanism is reused here, applied to a full row rather than
+one entry.
+
+\subsection{Ingredient 2: row normalisation}
+\label{sec:normalisation}
+
+A Galerkin trace block has internal scale structure that a pointwise Dirichlet does not. Its mass
+matrix entries scale as
+\begin{equation}
+  \int N_a N_b \,\dd S \sim
+  \begin{cases}
+    h & \text{value} \times \text{value},\\
+    h^2 & \text{value} \times \text{derivative},\\
+    h^3 & \text{derivative} \times \text{derivative},
+  \end{cases}
+\end{equation}
+so at $h \sim 1$~mm the block spans several orders of magnitude \emph{internally}. The measured
+spread on this mesh is
+\begin{equation}
+  \frac{D_{\max}}{D_{\min}} = \frac{1.62\times10^{-3}}{6.34\times10^{-14}} = 2.6\times10^{10},
+\end{equation}
+four orders beyond the $10^6$ estimated from the $h$-scaling alone (the true scaling involves
+\code{element\_size}$^2$, not $h^2$). No uniform coefficient can work across such a range:
+$\beta = 10^{9}$ died in a single step.
+
+Dividing each row by its own diagonal,
+\begin{equation}
+  \frac{1}{D_a}\left[\int N_a N_b \dd S\,\dd z_{j,b} - \sum_x \int N_a \frac{\partial \zjsh}{\partial x} N_b \dd S\,\dd x_b\right]
+  = \frac{F_a}{D_a},
+\end{equation}
+makes every row $\mathcal{O}(1)$, after which a single \code{zbig} makes them all uniformly dominant
+and \emph{no penalty parameter is required}. This is the reason the final scheme is tuning-free.
+
+A degeneracy floor at $10^{-14}D_{\max}$ guards against a row that received essentially no boundary
+support, where $1/D_a$ would manufacture an enormous row out of numerical noise. In production runs
+this floor is never triggered: the diagnostic reports \code{204 accumulated, 204 replaced, 0 below
+the floor} at every step.
+
+\subsection{Ingredient 3: a trust region on the residual only}
+
+The residual $\zjsh - \zj$ is unbounded on the electron branch. At $u = 0$ the characteristic sits at
+$X = -\Lambda$ with $f = 1 - e^{\Lambda} \approx -19$, so a restart whose wall is not already near
+the floating potential asks the constraint for $\sim\!20\,\jsat$ of driving force on the very first
+step. Measured doing exactly that: $e\Phi/kT_e$ collapsed to $0.00/0.01/0.03$,
+$100\,\%$ of the area electron-limited, $I_{\mathrm{sheath}} = -12$~kA against
+$I_{\mathrm{Amp}} = +1$~kA, and blow-up in four steps.
+
+The residual is therefore passed through
+\begin{equation}
+  r \;\longmapsto\; \frac{r}{1 + |r| / (r_{\max}\,\zjsat)},
+  \label{eq:trust}
+\end{equation}
+with $r_{\max}$ = \code{sheath\_weak\_rmax} (default 2). This map is the \emph{identity} for
+$|r| \ll r_{\max}\zjsat$, so the fixed point and the local convergence rate are untouched, and it
+saturates at $r_{\max}\zjsat$ however far off the characteristic the state starts. An algebraic
+rather than a $\tanh$ clip is used deliberately: the derivative of~\eqref{eq:trust} decays only
+algebraically, whereas a $\tanh$'s exponential decay would leave the row effectively explicit during
+the approach.
+
+\paragraph{The Jacobian is deliberately \emph{not} bounded.} This is a trap worth flagging. The
+Newton step solves $J\,\dd x = F$; damping $J$ by a factor $\alpha$ \emph{magnifies} $\dd x$ by
+$1/\alpha$, which is the opposite of what a trust region is for. Bounding $F$ alone caps the step at
+$r_{\max}\jsat$ and is exact Newton near the solution.
+
+\subsection{Ingredient 4: the validity weight}
+
+Where the plasma demands $|\zj/\zjsat|$ far outside what the characteristic can deliver, the relation
+carries no information, and driving $\zj$ toward it is actively destructive. Measured: a local
+$\jsat$ collapse took the inner target from $\max|j/\jsat| = 13 \to 18.7 \to 354$ in three steps and
+ended an otherwise healthy 550-step run.
+
+The trust region cannot cover this case, because it bounds the residual by $r_{\max}z^{\mathrm{sat}}_{j,\mathrm{loc}}$,
+which vanishes together with $\zjsat$ itself. A separate smooth validity weight is therefore applied,
+\begin{equation}
+  w = \left[1 + \left(\frac{|\zj/\zjsat|}{\mathcal{R}_{\max}}\right)^{4}\right]^{-1},
+  \label{eq:weight}
+\end{equation}
+with $\mathcal{R}_{\max}$ = \code{sheath\_zj\_ratio\_max}. It is monotone, equals 1 to within
+$6\,\%$ for ratios below $\tfrac12\mathcal{R}_{\max}$, and --- critically --- is applied to $F_a$,
+$D_a$ \emph{and} the Jacobian columns alike, so the normalised row remains a consistent weighted
+residual and simply fades out at pathological points, leaving those Gauss points to the assembled
+equation.
+
+\subsection{The column set: a deliberate quasi-Newton}
+\label{sec:columns}
+
+The sheath current is a function
+$\zjsh(u, \rho, T_i, T_e; g_{b_n}, |\bm{B}|, R)$. The Jacobian columns emitted are therefore $\zj$
+(the unit diagonal), $u$, $\rho$ and $T_i, T_e$ --- or $T$ without \code{WITH\_TiTe}. Two omissions
+are worth stating:
+
+\begin{itemize}
+  \item $v_\parallel$ and $w$ appear \emph{not at all}, because \code{sheath\_current} takes neither
+        as an argument; their derivatives are identically zero. This is exact, not an approximation.
+  \item $\psi$ is omitted \emph{by choice}. Both $\zjsat \propto 1/|\bm{B}|$ and $g(b_n)$ do depend on
+        the magnetic field, but \code{sheath\_current} returns no $\partial\zjsh/\partial\psi$, so the
+        boundary geometry is frozen within a Newton iteration. This makes the scheme quasi-Newton
+        rather than full Newton. It converges perfectly well in practice; it is recorded here because
+        it is the most plausible source of any residual stiffness.
+\end{itemize}
+
+For a shared trace DOF the accumulator collects columns from \emph{both} adjacent edges:
+3 distinct nodes $\times$ 2 trace DOFs $\times$ 5 variables = 30 columns, rising to 40 at a junction
+where three boundary segments meet.
+
+\subsection{On under-relaxation}
+\label{sec:relax}
+
+An under-relaxation parameter \code{sheath\_weak\_relax}~$=\theta$ is provided, which scales the
+state columns and the residual in~\eqref{eq:row} while leaving the $\zj$ column (and hence the $D_a$
+normalisation) untouched, so that the row reads
+\begin{equation}
+  \zj^{\,\mathrm{new}} = \zj^{\,\mathrm{old}} + \theta\left(z_{j,\mathrm{lin}}^{\mathrm{sh}} - \zj^{\,\mathrm{old}}\right).
+\end{equation}
+It was added to damp a period-2 step-to-step alternation observed around step 568.
+
+\textbf{It should be left at $\theta = 1$.} The alternation proved to be a transient of the
+relaxation phase, not an instability: it disappeared on its own at $\theta=1$ by step 3900. Measured
+head-to-head at timeout, $\theta = 0.5$ was worse on every metric (Table~\ref{tab:relax}).
+Under-relaxation makes the constraint row \emph{lag} a state that is still slowly evolving, so it
+never catches up. The parameter is retained only as insurance against a genuine over-correction, and
+its documentation in \code{phys\_module} records this measurement so the experiment is not repeated.
+
+\section{Implementation}
+\label{sec:implementation}
+
+\subsection{Module map and call ordering}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lp{9.6cm}@{}}
+\toprule
+\textbf{File} & \textbf{Role} \\
+\midrule
+\code{model600/mod\_sheath\_bc.f90}          & All sheath physics: normalisation constants, $\Lambda$, the $X$-limiter, and \code{sheath\_current}, which returns $\zjsh$, $\zjsat$, $X$ and the four derivatives. Stateless by design. \\
+\code{model600/mod\_boundary\_matrix\_open.f90} & Boundary element assembly. Evaluates the characteristic at each boundary Gauss point, forms $D_a$, $F_a$ and the Jacobian blocks, and hands them to the accumulator. \\
+\code{model600/mod\_sheath\_trace.f90}       & The accumulator: sums contributions across adjacent edges, normalises by $D_a$, writes the rows with \code{zbig}. \\
+\code{model600/mod\_boundary\_conditions.f90}& Owns \code{a\_mat} and \code{RHS\_loc}; calls \code{sheath\_trace\_apply}. Also hosts the legacy nodal route. \\
+\code{model600/mod\_sheath\_diag.f90}        & Diagnostics: $I_{\mathrm{sheath}}$, $I_{\mathrm{Amp}}$, $e\Phi/kT_e$ statistics, inner/outer split, nodal and weak residuals. \\
+\code{matrix/construct\_matrix\_mod.f90}     & Resets the accumulators before the element loop; reports afterwards. \\
+\bottomrule
+\end{tabular}
+\caption{Files involved in the weak sheath boundary condition.}
+\end{table}
+
+The ordering within one matrix construction is essential and is worth stating, because two of the
+accumulators must be zeroed at different points for this reason:
+\begin{enumerate}\itemsep2pt
+  \item \code{sheath\_diag\_reset}, \code{sheath\_trace\_reset};
+  \item the (OpenMP-threaded) element loop, which calls \code{boundary\_matrix\_open} $\rightarrow$
+        \code{sheath\_trace\_add};
+  \item \code{sheath\_diag\_report};
+  \item \code{boundary\_conditions} $\rightarrow$ \code{sheath\_trace\_apply} $\rightarrow$
+        \code{sheath\_trace\_report}.
+\end{enumerate}
+
+\subsection{The accumulator}
+
+Rows cannot be written during the element loop, because a trace DOF receives contributions from two
+adjacent boundary edges belonging to different elements, and normalisation by $D_a$ requires the
+\emph{completed} sum. The accumulator is therefore keyed by global DOF index
+(\code{nodes(i)\%index(direction(j))} --- the same map the nodal route uses):
+
+\begin{lstlisting}[caption={The accumulator state (\texttt{mod\_sheath\_trace.f90}).}]
+  integer, parameter :: st_max_row = 4000  ! trace DOFs per rank; 204 observed
+  integer, parameter :: st_max_col = 64    ! 3 nodes x 2 trace DOFs x 5 vars = 30; junction 40
+
+  integer, save :: st_n, st_row(st_max_row), st_nc(st_max_row)
+  real*8,  save :: st_D(st_max_row), st_F(st_max_row)
+  integer, save :: st_col(st_max_col, st_max_row), st_var(st_max_col, st_max_row)
+  real*8,  save :: st_val(st_max_col, st_max_row)
+\end{lstlisting}
+
+Slot lookup is a backwards linear search, which is effectively $\mathcal{O}(1)$ because adjacent
+boundary edges share DOFs and are visited consecutively. Overflow of either dimension is a
+\emph{fatal} error rather than a silent truncation, on the grounds that a truncated row is a wrong
+equation rather than a missing one.
+
+The application step is then simply
+\begin{lstlisting}[caption={Normalisation and row writing (\texttt{sheath\_trace\_apply}).}]
+    sc = 1.d0 / st_D(is)
+
+    do ic = 1, st_nc(is)
+      call boundary_conditions_add_one_entry(                          &
+             st_row(is), var_zj, in, st_col(ic,is), st_var(ic,is), in, &
+             zbig * st_val(ic,is) * sc, index_min, index_max, a_mat)
+    enddo
+
+    call boundary_conditions_add_RHS(                                  &
+             st_row(is), var_zj, in, index_min, index_max, RHS_loc,    &
+             zbig * st_F(is) * sc, a_mat%i_tor_min, a_mat%i_tor_max)
+\end{lstlisting}
+
+\subsection{Thread safety}
+
+The element loop in \code{construct\_matrix\_mod} is OpenMP-threaded. Every \code{st\_*} array is
+module-level shared state that \code{sheath\_trace\_add} both searches and extends, so without
+protection two threads race on \code{st\_n} and write past each other --- producing corrupted row
+indices, which is a crash rather than a wrong answer. The routine body is wrapped in
+\code{!\$omp critical (sheath\_trace\_accumulate)}. Boundary elements are a small fraction of the
+mesh, so the serialisation cost is negligible. (\code{sheath\_diag\_add} has always been protected
+the same way; the omission here cost one queue run.)
+
+\subsection{Diagnostics}
+
+Because the failure mode of Section~\ref{sec:nodalfail} was invisible in every quantity being
+measured at the time, the diagnostic set was deliberately extended before the implementation was
+changed. Per time step the code reports:
+
+\begin{itemize}\itemsep1pt
+  \item $I_{\mathrm{sheath}}$ and $I_{\mathrm{Amp}}$ per boundary type, and split by inner/outer
+        target on a major-radius threshold \code{sheath\_diag\_R\_split}. The split matters because
+        boundary type 1 carries \emph{both} targets, so any total averages them and opposite errors
+        cancel --- useless for HFSHD, which \emph{is} an in--out difference.
+  \item $e\Phi/kT_e$ min / mean / max, and separately the max \emph{where the sheath term is active},
+        which distinguishes ``the plasma is overdriving the sheath'' from ``$u$ has no boundary
+        condition at all here and the null space is running away''.
+  \item $\max|j/\jsat|$, globally and per target: the solvability ratio. Values above 1 mean no
+        potential satisfies the characteristic at that point.
+  \item The fraction of wetted area sitting on the electron-side limiter.
+  \item Both residuals, $\varepsilon_{\mathrm{node}}$ and $\varepsilon_{\mathrm{gauss}}$, and the weak
+        residual $|F_a/D_a| / |S_a/D_a|$ with $S_a = \int N_a \zjsat \dd S$ as the reference scale.
+  \item Row bookkeeping: rows accumulated, rows replaced, rows below the degeneracy floor,
+        $D_{\min}$ and $D_{\max}$.
+\end{itemize}
+
+Reporting $\varepsilon_{\mathrm{node}}$ and $\varepsilon_{\mathrm{gauss}}$ \emph{separately} is what
+made the diagnosis possible: node-small with Gauss-large is an interpolation problem, whereas both
+large means the row is not being satisfied at all. No single pointwise number can distinguish them.
+
+\subsection{Known limitation: MPI}
+\label{sec:mpi}
+
+Rows are written only by the rank that owns them, so a trace DOF whose two adjacent boundary edges
+live on different ranks is assembled from the local edge only. Both $F_a$ and $D_a$ lose the same
+contribution, so the \emph{normalised} row remains a valid weighted-residual statement --- simply
+tested against a function supported on one edge rather than two. A full fix requires a halo exchange
+of the accumulator.
+
+Empirically the effect is not measurable at production sizes: runs on 16 and 32 ranks gave identical
+output to four significant figures with the same 204 trace rows. This is a useful, if unplanned,
+decomposition-independence check, but it is not a proof, and the limitation should be removed before
+using strongly refined boundary meshes or much larger rank counts.
+
+\section{Verification and results}
+\label{sec:results}
+
+All results are for an ASDEX Upgrade X-point geometry (shot 38773), \code{model600},
+$n_{\mathrm{tor}} = 1$, boundary type 1, with kinetic impurities disabled.
+
+\subsection{Convergence of the constraint}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Step & $\varepsilon_{\mathrm{weak}}$ & $\varepsilon_{\mathrm{gauss}}$ & INNER closure & OUTER closure & $I_{\mathrm{wall}}$ \\
+\midrule
+0      & 1.759                 & 1.990                 & ---       & ---       & --- \\
+9      & 0.049                 & 0.071                 & 4.1\,\%   & 0.05\,\%  & --- \\
+30     & $9.9\times10^{-4}$    & $9.7\times10^{-3}$    & 0.014\,\% & 0.012\,\% & $-136$~A \\
+568    & $2.0\times10^{-2}$    & $3.9\times10^{-2}$    & 0.6--1.6\,\% & 0.2--0.3\,\% & $-2950$~A \\
+$\sim$3900 & $\bm{6.5\times10^{-4}}$ & $\bm{9.0\times10^{-3}}$ & $\bm{0.00\,\%}$ & $\bm{0.00\,\%}$ & $-684$~A \\
+\bottomrule
+\end{tabular}
+\caption{Convergence of the weak sheath condition. ``Closure'' is
+$|I_{\mathrm{sheath}} - I_{\mathrm{Amp}}| / |I_{\mathrm{sheath}}|$ on each target. The excursion at
+step 568 is the plasma relaxing on a transport timescale, not a degradation of the constraint; it
+recovers without intervention. The run terminated on wall-clock timeout, not instability.}
+\label{tab:conv}
+\end{table}
+
+At the final state $I_{\mathrm{sheath}}$ and $I_{\mathrm{Amp}}$ agree to four significant figures on
+both targets (inner $-281.7 / -281.7$~A, outer $-402.2 / -402.2$~A) and on the wall total
+($-683.9 / -683.9$~A). For comparison, the converged \emph{nodal} route left $48\,\%$ on the inner
+target and $4.1\,\%$ on the outer.
+
+That $\varepsilon_{\mathrm{gauss}}$ collapses along with the weak residual (from 1.99 to
+$9.0\times10^{-3}$) was better than expected: a Galerkin projection only has to remove the component
+of the mismatch \emph{lying in} the trace space, and is under no obligation to reduce the pointwise
+error. That it does so anyway indicates the trace space represents $\zjsh$ well on this mesh.
+
+\subsection{Under-relaxation comparison}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Metric at timeout & $\theta = 1.0$ & $\theta = 0.5$ \\
+\midrule
+$\varepsilon_{\mathrm{weak}}$        & $\bm{6.5\times10^{-4}}$ & $6.3\times10^{-3}$ \\
+$\varepsilon_{\mathrm{gauss}}$       & $\bm{9.0\times10^{-3}}$ & $1.5\times10^{-2}$ \\
+Target closure                       & $\bm{0.00\,\%}$         & 0.05--0.12\,\% \\
+Boundary type 3 closure              & $\bm{0.14\,\%}$         & 2.9\,\% \\
+$e\Phi/kT_e$ max                     & $\bm{6.56}$ (falling)   & 7.32 (rising) \\
+\code{construct\_matrix} time        & $\bm{0.276}$~s          & 0.334~s \\
+\bottomrule
+\end{tabular}
+\caption{Under-relaxation of the trace row is counterproductive; see Section~\ref{sec:relax}.
+Both configurations ran to timeout without crashing.}
+\label{tab:relax}
+\end{table}
+
+\subsection{Physical state}
+
+At the converged state the wall carries a net current of $-684$~A, with the inner target drawing
+$-281.7$~A and the outer $-402.2$~A. The mean normalised sheath drop is $e\Phi/kT_e = 2.46$ against
+$\Lambda = 3.19$, with an inner/outer contrast of $2.52$ versus $2.38$. Some $8.3\,\%$ of the wetted
+area sits on the electron-side limiter, with $\max|j/\jsat| = 13.1$, steady.
+
+Two cautions attach to these numbers. First, the large in--out asymmetries seen during the transient
+(a factor 3.5 at step 30, and a reversed contrast at step 568) are \emph{not} representative of the
+converged state and should not be quoted. Second, a small contrast in $e\Phi/kT_e$ does not imply a
+small potential difference: $\Phi = (e\Phi/kT_e)\cdot kT_e/e$, so at steady state the asymmetry
+resides in the target $T_e$ contrast rather than in the normalised drop. Assessing the HFSHD
+mechanism requires the radial profile of $\Phi$ along each target --- and hence $E_r$ --- which is
+not visible in any scalar reported here.
+
+\section{Limitations and outlook}
+
+\paragraph{Axisymmetric only.} The accumulator handles a single toroidal index, checked at setup.
+Extending to $n_{\mathrm{tor}} > 1$ requires a toroidal index dimension on the accumulator and, more
+substantially, thought about whether the trace projection should couple harmonics.
+
+\paragraph{MPI halo.} See Section~\ref{sec:mpi}. Measurably harmless at 16--32 ranks; should be
+fixed before boundary-refined meshes.
+
+\paragraph{Quasi-Newton.} The omission of the $\psi$ column (Section~\ref{sec:columns}) freezes the
+boundary geometry within an iteration. This is the most plausible remaining source of stiffness and
+would be the first thing to add if convergence ever degrades.
+
+\paragraph{Missing physics elsewhere in the model.} Two gaps identified in the course of this work
+are independent of the boundary condition but bear on divertor asymmetry studies: \code{model600}
+lacks the $\nabla B$ terms in the energy equations, and it lacks the thermoelectric heat-flux
+divergence $\nabla\!\cdot\!(0.71\,T_e j_\parallel / e)$. Both appear in SOLPS and both act in the
+inner/outer asymmetry channel.
+
+\paragraph{Next steps.} With the electrical closure established, the physics questions become
+accessible: extracting $\Phi(R)$ and hence $E_r$ along each target; comparing the in--out density
+ratio against an otherwise identical run without the sheath condition; and the differential target
+biasing scan (\code{sheath\_V\_wall\_asym}), which is now unblocked since a uniform bias is a pure
+gauge and only a \emph{difference} between targets creates a potential drop across the private flux
+region.
+
+\section*{Acknowledgement of method}
+
+The failure recorded in Section~\ref{sec:nodalfail} is the substantive lesson of this work: a
+constraint can be satisfied to four decimal places in the norm one is measuring and still be wrong by
+tens of percent in the quantity one cares about. The diagnostic that resolved it --- instrumenting
+the weak residual as a pure observable, before changing any code --- cost far less than the
+sequence of tuning experiments it made unnecessary.
+
+\begin{thebibliography}{9}
+\bibitem{stangeby} P.~C. Stangeby, \emph{The Plasma Boundary of Magnetic Fusion Devices},
+  IOP Publishing, 2000. (Sheath characteristic, eq.~2.68.)
+\bibitem{hoelzl2021} M.~H\"olzl \emph{et al.}, ``The JOREK non-linear extended MHD code and
+  applications to large-scale instabilities and their control in magnetically confined fusion
+  plasmas'', \emph{Nucl.\ Fusion} \textbf{61} 065001 (2021).
+\bibitem{artola} F.~J. Artola \emph{et al.}, on sheath boundary conditions for the electrostatic
+  potential in JOREK. (Saturation current, eqs.~5 and 16.)
+\bibitem{chodura} R.~Chodura, ``Plasma--wall transition in an oblique magnetic field'',
+  \emph{Phys.\ Fluids} \textbf{25} 1628 (1982).
+\end{thebibliography}
+
+\end{document}
