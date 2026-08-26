@@ -301,12 +301,21 @@ def report(label, step, t_now, inner, outer, pfr_width):
         print(f"  {'':22s}{'s=' + format(sa, '+.3f'):>15s}"
               f"{'s=' + format(sb, '+.3f'):>15s}")
 
+    # The PFR-side average difference is the meaningful drive, not the value at
+    # the strike point: the potential hill sits a few cm INTO the PFR, so the two
+    # strike points can agree while a large gradient exists between them. The
+    # mean E_t is a poor proxy too - it averages sign changes to near zero.
+    dphi_pfr = (inner.pfr_mean(inner.phi, pfr_width)
+                - outer.pfr_mean(outer.phi, pfr_width))
+    print(f"\n  ** PFR-side potential difference (0 < s < {pfr_width} m) = "
+          f"{dphi_pfr:+.2f} V **")
+
     dphi = inner._sp["phi"] - outer._sp["phi"]
     nr = inner._sp["ne"] / outer._sp["ne"]
-    print(f"\n  ** PFR potential difference  Phi_in - Phi_out = {dphi:+.3f} V **")
+    print(f"     (at the strike points themselves: {dphi:+.3f} V)")
     print(f"     n_e(in)/n_e(out) at the strike point = {nr:.3f}"
           "     (> 1 is the HFSHD direction)")
-    return dphi, nr
+    return dphi_pfr, nr
 
 
 # ---------------------------------------------------------------------------
@@ -395,7 +404,7 @@ def main():
     if len(summ) == 2:
         (l0, d0, n0), (l1, d1, n1) = summ
         print(f"\n{'=' * 76}\n  {l0}  ->  {l1}")
-        print(f"    PFR drive  Phi_in - Phi_out : {d0:+.3f} V  ->  {d1:+.3f} V"
+        print(f"    PFR drive (PFR-side mean)   : {d0:+.3f} V  ->  {d1:+.3f} V"
               f"   ({d1 - d0:+.3f} V)")
         print(f"    density ratio  n_in/n_out   : {n0:.3f}      ->  {n1:.3f}"
               f"       ({n1 - n0:+.3f})")
