@@ -91,6 +91,7 @@ real*8     :: wk_wrx          ! wk_wgt * sheath_weak_relax, for the under-relaxe
 ! --- S_a = int N_a zj_sat dS. Purely diagnostic - see sheath_diag_add_weak.
 real*8     :: wk_D(2,2,n_tor), wk_F(2,2,n_tor), wk_S(2,2,n_tor)
 integer    :: wk_i, wk_j, wk_m
+integer    :: wk_bt          ! boundary type of the node a trace row would be written for
 ! --- Galerkin trace block for the WEAK sheath row: J(a,b,var) = int N_a * dres/dvar * N_b dS,
 ! --- with a = (i,j) the test trace DOF and b = (k,l) the trial one. Axisymmetric only, so no
 ! --- toroidal index - initialise_parameters refuses n_tor_local > 1 with sheath_zj_weak.
@@ -943,6 +944,22 @@ endif
 ! --- nodal route uses. Axisymmetric only: one toroidal index, checked at setup.
 if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
   do wk_i = 1, 2
+
+    ! --- weak_sheath_zj is an .OR. over the edge's two nodes, so an edge with ONE sheath node is
+    ! --- integrated in full - which is right, the Gauss points on it belong to the sheath surface.
+    ! --- But the loop below then writes a replacement row for BOTH nodes, including one whose own
+    ! --- type has no sheath and therefore still carries dirichlet%u. Constraining zj = zj_sh(u) at
+    ! --- a node where u is frozen is not a boundary condition: u cannot respond, so the row simply
+    ! --- injects whatever current the characteristic returns at the gauge potential. With u = 0
+    ! --- that is Phi = 0, X = -Lambda, f = 1-exp(Lambda) ~ -19, i.e. ~19*j_sat of electron current
+    ! --- forced in at the seam. Measured with bcs(1)+bcs(4): I_wall went +91 A -> -5921 A in one
+    ! --- step with the potential moving the WRONG WAY, and the run died in 7.
+    ! --- The row belongs to the node's own type. Skip the others; they keep their Dirichlet, which
+    ! --- is the same treatment every non-sheath boundary type already gets.
+    wk_bt = nodes(wk_i)%boundary
+    if ( wk_bt .lt. 1 ) cycle
+    if ( .not. bcs(wk_bt)%sheath_zj_weak ) cycle
+
     do wk_j = 1, 2
       if ( wk_D(wk_i,wk_j,1) .le. 0.d0 ) cycle
       tr_nc = 0
