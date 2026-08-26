@@ -40,6 +40,8 @@ import sys
 
 import numpy as np
 
+_trapz = getattr(np, "trapezoid", None) or np.trapz
+
 E_CHG = 1.602176634e-19
 M_U = 1.66053906660e-27
 GAMMA = 5.0 / 3.0
@@ -248,7 +250,11 @@ class Target:
         # s decreases with index on a flipped target, which would make trapz
         # return a negative line integral. Integrate along increasing s.
         o = np.argsort(self.s[m])
-        return float(np.trapz(a[m][o], self.s[m][o]))
+        return float(_trapz(a[m][o], self.s[m][o]))
+
+    def reach(self):
+        """Largest half-width over which this target is symmetric about s=0."""
+        return min(abs(self.s.min()), abs(self.s.max()))
 
     def pfr_mean(self, a, width):
         m = (self.s > 0) & (self.s < width) & np.isfinite(a)
@@ -347,10 +353,16 @@ def report(label, step, t_now, inner, outer, pfr_width):
         print(f"  {'':22s}{'s=' + format(sa, '+.3f'):>15s}"
               f"{'s=' + format(sb, '+.3f'):>15s}")
 
-    # Extensive comparison: line-integrated density over each target.
-    li, lo = inner.integral(inner.ne), outer.integral(outer.ne)
-    ji, jo = inner.integral(inner.jsat), outer.integral(outer.jsat)
-    print("\n  -- integrated over the target (extensive) --")
+    # Extensive comparison. Both targets MUST be integrated over the same
+    # window: the selected runs are not equally long about their strike points
+    # (the outer one is routinely cut short), and integrating each over
+    # whatever it happens to span turns a length ratio into a density ratio.
+    hw = min(inner.reach(), outer.reach())
+    li, lo = inner.integral(inner.ne, hw), outer.integral(outer.ne, hw)
+    ji, jo = inner.integral(inner.jsat, hw), outer.integral(outer.jsat, hw)
+    print(f"\n  -- integrated over a COMMON window, |s| < {hw:.3f} m --")
+    print(f"  {'':22s}{'(inner reach ' + format(inner.reach(), '.3f'):>15s}"
+          f"{'  outer ' + format(outer.reach(), '.3f') + ')':>15s}")
     row("int n_e ds [1e20/m^2]", li / 1e20, lo / 1e20)
     row("int j_sat ds [a.u.]", ji, jo)
 
