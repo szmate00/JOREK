@@ -2,27 +2,36 @@
 """
 Divertor target profile analysis for the model600 sheath boundary condition.
 
-Reads a `boundary_quantities_*.dat` written by jorek2_postproc (see
-util/postproc_targets.in) and answers the question the SHEATH log cannot:
+Reads `boundary_quantities_*.dat` from jorek2_postproc (see
+util/postproc_targets.in) and reports what the SHEATH log cannot:
 
-  - What is Phi in VOLTS at each target, and what is the potential difference
-    across the private flux region?  The log reports ePhi/kTe, which hides the
-    Te contrast: a 6 % difference in ePhi/kTe was a factor ~4 in volts.
-  - What is the tangential electric field along each target, i.e. the E that
-    drives the ExB drift through the PFR?
-  - Do n_e and T_e separate the way HFSHD requires?  j_sat ~ n*sqrt(T), so the
-    currents alone cannot distinguish "inner detaching" (n up, T down) from
-    "inner starved" (n down, T flat).
+  - Phi in VOLTS at each target, and the potential difference across the
+    private flux region. The log reports ePhi/kTe, which divides out the Te
+    contrast that carries most of the asymmetry.
+  - The tangential electric field along the target, E_t = -dPhi/ds, which is
+    what drives an ExB flow across field lines through the PFR.
+  - n_e and T_e separately. j_sat ~ n*sqrt(T), so currents alone cannot tell
+    "inner detaching" (n up, T down) from "inner starved" (n down, T flat).
 
-Two sign/naming traps are handled here; see postproc_targets.in for the detail:
-  * the `Phi` expression is +F0*u, but model600 has Phi = -F0*u  -> negated
-  * `Te` is the mean temperature; the real ones are `T_e` and `T_i`
+GEOMETRY NOTES
+--------------
+* psi_N does NOT separate SOL from PFR: it exceeds 1 on BOTH sides of the
+  separatrix leg. The abscissa here is signed arc length from the strike point,
+  positive toward the PFR (i.e. toward the other target) on both targets.
+* Boundary points arrive in boundary-element order from bnd_pos(), so file
+  order is path order. Do not sort them - the target curves back on itself and
+  any sort by R or Z scrambles it.
+* Z < zmax alone also selects the extended wall (type 5 is ~50 m^2 here), so
+  points are additionally required to carry a significant normal field.
 
-Usage
------
-  ./analyse_targets.py run.dat
-  ./analyse_targets.py unpuffed.dat puffed.dat --labels baseline 10x-puff
-  ./analyse_targets.py run.dat --step 3900 --rsplit 1.42 --zmax -0.90
+UNIT / SIGN TRAPS
+-----------------
+* Use `set units 0` in the postproc script. With JOREK units n_e comes out
+  ~1e-2 and T_e ~1e-3; the script detects this and refuses rather than
+  reporting nonsense.
+* The `Phi` expression returns +F0*u (mod_expression.f90:1757, flagged
+  "### sign?"), but model600 has Phi = -F0*u. Negated here.
+* `Te` is (Ti+Te)/2, not the electron temperature. Use `T_e` and `T_i`.
 """
 
 import argparse
@@ -31,7 +40,6 @@ import sys
 
 import numpy as np
 
-# --- Physical constants (SI)
 E_CHG = 1.602176634e-19
 M_U = 1.66053906660e-27
 GAMMA = 5.0 / 3.0
@@ -40,22 +48,15 @@ BLOCK_RE = re.compile(r"time step #\s*(\d+).*?t_now\s*=\s*([-\dEe.+]+)")
 
 
 # ---------------------------------------------------------------------------
-# Reading
-# ---------------------------------------------------------------------------
 def read_boundary_file(path):
-    """Parse a boundary_quantities .dat into a list of (step, t, {name: array}).
-
-    Blocks are delimited by the '# time step #NNNNNN,  t_now = ...' comment
-    that write_ascii_1d emits, so blank-line conventions do not matter.
-    """
-    names, blocks = None, []
+    """Parse into [(step, t_now, {name: array})], preserving file order."""
+    names, blocks, rows = None, [], []
     step = t_now = None
-    rows = []
 
     def flush():
         if step is not None and rows:
-            arr = np.asarray(rows, dtype=float)
-            blocks.append((step, t_now, {n: arr[:, i] for i, n in enumerate(names)}))
+            a = np.asarray(rows, float)
+            blocks.append((step, t_now, {n: a[:, i] for i, n in enumerate(names)}))
 
     with open(path) as fh:
         for line in fh:
@@ -69,24 +70,22 @@ def read_boundary_file(path):
                     rows = []
                     step, t_now = int(m.group(1)), float(m.group(2))
                 else:
-                    # header line: expression names, no spaces inside a name
                     cand = s.lstrip("#").split()
-                    if cand and not _is_number(cand[0]):
+                    if cand and not _isnum(cand[0]):
                         names = cand
                 continue
             rows.append([float(v) for v in s.split()])
     flush()
-
     if names is None:
-        sys.exit(f"{path}: no header line found - was `header=.true.` written?")
+        sys.exit(f"{path}: no header line (need header=.true.)")
     if not blocks:
-        sys.exit(f"{path}: no data blocks found.")
+        sys.exit(f"{path}: no data blocks")
     return blocks
 
 
-def _is_number(tok):
+def _isnum(t):
     try:
-        float(tok)
+        float(t)
         return True
     except ValueError:
         return False
@@ -98,225 +97,269 @@ def pick_block(blocks, step):
     for b in blocks:
         if b[0] == step:
             return b
-    avail = ", ".join(str(b[0]) for b in blocks)
-    sys.exit(f"step {step} not in file. Available: {avail}")
+    sys.exit(f"step {step} not found. Have: {', '.join(str(b[0]) for b in blocks)}")
+
+
+def check_units(d, path):
+    """JOREK-unit output is off by ~1e20 in n and ~5e4 in T. Catch it early."""
+    n, t = np.nanmax(d["ne"]), np.nanmax(d["T_e"])
+    if n < 1e12 or t < 0.05:
+        sys.exit(
+            f"\n{path}: values look like JOREK units, not SI\n"
+            f"    max n_e = {n:.3g}  (expect ~1e18-1e21 m^-3)\n"
+            f"    max T_e = {t:.3g}  (expect ~1-100 eV)\n"
+            f"  Add `set units 0` to the postproc script and re-export.\n"
+            f"  (units defaults to 0=SI, so something in your session set it to 1.)\n")
 
 
 # ---------------------------------------------------------------------------
-# Target extraction
-# ---------------------------------------------------------------------------
+def contiguous_runs(mask):
+    """[(start, stop)] index ranges of True runs."""
+    idx = np.flatnonzero(mask)
+    if idx.size == 0:
+        return []
+    brk = np.flatnonzero(np.diff(idx) > 1)
+    starts = np.concatenate([[idx[0]], idx[brk + 1]])
+    stops = np.concatenate([idx[brk], [idx[-1]]])
+    return list(zip(starts, stops + 1))
+
+
 class Target:
-    """One divertor target, ordered by arc length from its strike point."""
+    """One divertor target, in boundary-path order, s=0 at the strike point."""
 
-    def __init__(self, name, d, mask, mass_amu):
-        self.name = name
-        self.n = int(mask.sum())
-        if self.n < 3:
-            self.valid = False
+    def __init__(self, name, d, sl, mass_amu, pfr_toward_larger_R):
+        self.name, self.valid = name, False
+        g = {k: v[sl] for k, v in d.items()}
+        if len(g["R"]) < 5:
             return
         self.valid = True
 
-        g = {k: v[mask] for k, v in d.items()}
-
-        # Order along the surface: monotonic in Z on a near-vertical plate,
-        # in R on a near-horizontal one. Pick whichever spans further.
-        R, Z = g["R"], g["Z"]
-        key = R if (R.max() - R.min()) >= (Z.max() - Z.min()) else Z
-        o = np.argsort(key)
-        g = {k: v[o] for k, v in g.items()}
-
-        self.R, self.Z = g["R"], g["Z"]
-        self.psin = g["Psi_N"]
+        self.R, self.Z, self.psin = g["R"], g["Z"], g["Psi_N"]
         self.bnorm = g.get("Bnorm", np.zeros_like(self.R))
-
-        # SIGN FIX: the postproc `Phi` expression returns +F0*u; model600 has
-        # Phi = -F0*u. Without this the ExB direction is inverted.
-        self.phi = -g["Phi"]
-
-        self.te = g["T_e"]
-        self.ti = g.get("T_i", g["T_e"])
-        self.ne = g["ne"]
+        self.phi = -g["Phi"]          # SIGN FIX: postproc returns +F0*u
+        self.te, self.ti, self.ne = g["T_e"], g.get("T_i", g["T_e"]), g["ne"]
         self.vr = g.get("V_ExB_R", np.zeros_like(self.R))
         self.vz = g.get("V_ExB_Z", np.zeros_like(self.R))
-
-        # Arc length along the target, zeroed at the strike point (Psi_N = 1).
-        ds = np.hypot(np.diff(self.R), np.diff(self.Z))
-        s = np.concatenate([[0.0], np.cumsum(ds)])
-        self.s = s - self._strike_value(s)
-
-        # Tangential electric field, E_t = -dPhi/ds. This is the component that
-        # drives an ExB flow ACROSS field lines, i.e. through the PFR.
-        self.et = -np.gradient(self.phi, self.s)
-
-        # Ion saturation current density, j_sat = e * n * c_s * |b.n|.
-        cs = np.sqrt(GAMMA * (self.ti + self.te) * E_CHG / (mass_amu * M_U))
-        self.jsat = E_CHG * self.ne * cs * np.abs(self.bnorm) if np.any(self.bnorm) \
-            else E_CHG * self.ne * cs
         self.vexb = np.hypot(self.vr, self.vz)
 
-    def _strike_value(self, arr):
-        """Value of `arr` where Psi_N crosses 1, by linear interpolation."""
-        p = self.psin
-        i = np.argmin(np.abs(p - 1.0))
-        for j in range(len(p) - 1):
-            if (p[j] - 1.0) * (p[j + 1] - 1.0) <= 0 and p[j] != p[j + 1]:
-                w = (1.0 - p[j]) / (p[j + 1] - p[j])
-                return arr[j] + w * (arr[j + 1] - arr[j])
-        return arr[i]
+        cs = np.sqrt(GAMMA * (self.ti + self.te) * E_CHG / (mass_amu * M_U))
+        self.jsat = E_CHG * self.ne * cs * np.abs(self.bnorm) / \
+            max(np.nanmax(np.abs(self.bnorm)), 1e-30)
 
-    def at_strike(self, arr):
-        return self._strike_value(arr)
+        # Arc length in PATH order (never sorted), zeroed at the strike point,
+        # which is taken as the peak of j_sat.
+        ds = np.hypot(np.diff(self.R), np.diff(self.Z))
+        s = np.concatenate([[0.0], np.cumsum(ds)])
+        self.istrike = int(np.nanargmax(self.jsat))
+        s = s - s[self.istrike]
 
-    def peak(self, arr):
-        i = int(np.argmax(np.abs(arr)))
-        return arr[i], self.s[i], self.psin[i]
+        # Orient so that positive s points into the PFR on BOTH targets, making
+        # the two directly comparable. psi_N cannot do this: it is > 1 on both
+        # sides of the leg.
+        span = self.R[-1] - self.R[0]
+        if (span > 0) != pfr_toward_larger_R:
+            s = -s
+        self.s = s
+
+        # E_t = -dPhi/ds. Guard repeated abscissa values, which would give inf.
+        good = np.concatenate([[True], np.abs(np.diff(self.s)) > 1e-12])
+        self.et = np.full_like(self.s, np.nan)
+        if good.sum() > 2:
+            o = np.argsort(self.s[good])
+            ss, pp = self.s[good][o], self.phi[good][o]
+            self.et[good] = np.interp(self.s[good], ss, -np.gradient(pp, ss))
+
+    def at_strike(self, a):
+        return a[self.istrike]
+
+    def peak(self, a):
+        m = np.isfinite(a)
+        if not m.any():
+            return np.nan, np.nan
+        i = np.flatnonzero(m)[int(np.nanargmax(np.abs(a[m])))]
+        return a[i], self.s[i]
+
+    def pfr_mean(self, a, width):
+        m = (self.s > 0) & (self.s < width) & np.isfinite(a)
+        return np.nanmean(a[m]) if m.any() else np.nan
 
 
-def split_targets(d, rsplit, zmax, mass_amu):
-    """Divertor points only (Z < zmax), split inner/outer on major radius."""
+def split_targets(d, rsplit, zmax, bnfrac, mass_amu, verbose=False):
     div = d["Z"] < zmax
     if not div.any():
-        sys.exit(f"no boundary points with Z < {zmax}. Adjust --zmax.")
-    inner = div & (d["R"] < rsplit)
-    outer = div & (d["R"] >= rsplit)
-    return (Target("INNER", d, inner, mass_amu),
-            Target("OUTER", d, outer, mass_amu))
+        sys.exit(f"no boundary points with Z < {zmax}; adjust --zmax")
+
+    bn = np.abs(d.get("Bnorm", np.ones_like(d["R"])))
+    thr = bnfrac * np.nanmax(bn[div])
+    sel = div & (bn > thr)
+
+    runs = contiguous_runs(sel)
+    if verbose:
+        print(f"  {len(runs)} contiguous boundary runs with Z<{zmax}, "
+              f"|Bnorm|>{thr:.4g}:")
+        for a, b in runs:
+            print(f"    idx {a:5d}-{b:5d}  n={b-a:4d}  "
+                  f"R {d['R'][a:b].min():.3f}-{d['R'][a:b].max():.3f}  "
+                  f"Z {d['Z'][a:b].min():.3f}-{d['Z'][a:b].max():.3f}")
+
+    def best(side):
+        cand = [(a, b) for a, b in runs
+                if (np.mean(d["R"][a:b]) < rsplit) == side]
+        return max(cand, key=lambda ab: ab[1] - ab[0]) if cand else None
+
+    out = []
+    for side, name, pfr_larger_R in ((True, "INNER", True), (False, "OUTER", False)):
+        ab = best(side)
+        if ab is None:
+            out.append(Target(name, d, slice(0, 0), mass_amu, pfr_larger_R))
+        else:
+            out.append(Target(name, d, slice(*ab), mass_amu, pfr_larger_R))
+    return out
 
 
 # ---------------------------------------------------------------------------
-# Reporting
-# ---------------------------------------------------------------------------
-def report(label, step, t_now, inner, outer):
-    print(f"\n{'=' * 74}\n{label}   step {step}   t = {t_now:.6g} s\n{'=' * 74}")
-
+def report(label, step, t_now, inner, outer, pfr_width):
+    print(f"\n{'=' * 76}\n{label}   step {step}   t_now = {t_now:.6g} (JOREK units)"
+          f"\n{'=' * 76}")
     if not (inner.valid and outer.valid):
-        print("  one target has too few points - check --rsplit / --zmax")
+        print("  a target has too few points - rerun with --verbose and check "
+              "--rsplit / --zmax / --bnfrac")
         return None
 
-    print(f"{'':22s}{'INNER':>16s}{'OUTER':>16s}{'in/out':>12s}")
+    print(f"{'':24s}{'INNER':>15s}{'OUTER':>15s}{'in/out':>11s}")
 
-    def row(name, a, b, fmt="{:16.4g}", ratio=True):
-        r = f"{a / b:12.3f}" if (ratio and b != 0) else " " * 12
-        print(f"  {name:20s}{fmt.format(a)}{fmt.format(b)}{r}")
+    def row(nm, a, b):
+        r = f"{a / b:11.3f}" if (b and np.isfinite(a / b)) else " " * 11
+        print(f"  {nm:22s}{a:15.4g}{b:15.4g}{r}")
 
-    pi, po = inner.at_strike(inner.phi), outer.at_strike(outer.phi)
-    tei, teo = inner.at_strike(inner.te), outer.at_strike(outer.te)
-    nei, neo = inner.at_strike(inner.ne), outer.at_strike(outer.ne)
+    for t in (inner, outer):
+        t._sp = dict(phi=t.at_strike(t.phi), te=t.at_strike(t.te),
+                     ti=t.at_strike(t.ti), ne=t.at_strike(t.ne),
+                     R=t.R[t.istrike], Z=t.Z[t.istrike])
 
-    print("\n  -- at the strike point (Psi_N = 1) --")
-    row("Phi [V]", pi, po)
-    row("T_e [eV]", tei, teo)
-    row("T_i [eV]", inner.at_strike(inner.ti), outer.at_strike(outer.ti))
-    row("n_e [1e20 m^-3]", nei / 1e20, neo / 1e20)
-    row("j_sat [kA/m^2]", inner.at_strike(inner.jsat) / 1e3,
-        outer.at_strike(outer.jsat) / 1e3)
+    print("\n  -- strike point (peak j_sat) --")
+    row("R [m]", inner._sp["R"], outer._sp["R"])
+    row("Z [m]", inner._sp["Z"], outer._sp["Z"])
+    row("Phi [V]", inner._sp["phi"], outer._sp["phi"])
+    row("T_e [eV]", inner._sp["te"], outer._sp["te"])
+    row("T_i [eV]", inner._sp["ti"], outer._sp["ti"])
+    row("n_e [1e20 m^-3]", inner._sp["ne"] / 1e20, outer._sp["ne"] / 1e20)
+
+    print(f"\n  -- averaged over the PFR side, 0 < s < {pfr_width} m --")
+    row("Phi [V]", inner.pfr_mean(inner.phi, pfr_width),
+        outer.pfr_mean(outer.phi, pfr_width))
+    row("T_e [eV]", inner.pfr_mean(inner.te, pfr_width),
+        outer.pfr_mean(outer.te, pfr_width))
+    row("n_e [1e20 m^-3]", inner.pfr_mean(inner.ne, pfr_width) / 1e20,
+        outer.pfr_mean(outer.ne, pfr_width) / 1e20)
+    row("E_t [V/m]", inner.pfr_mean(inner.et, pfr_width),
+        outer.pfr_mean(outer.et, pfr_width))
+    row("|v_ExB| [m/s]", inner.pfr_mean(inner.vexb, pfr_width),
+        outer.pfr_mean(outer.vexb, pfr_width))
 
     print("\n  -- peak over the target --")
-    # E_t is reported SIGNED at the point of largest magnitude: the sign is the
-    # direction of the drive, which is the whole question for HFSHD.
-    for nm, attr, sc, unit in [("n_e", "ne", 1e20, "1e20 m^-3"),
-                               ("T_e", "te", 1.0, "eV"),
-                               ("E_t at max|E_t|", "et", 1.0, "V/m"),
-                               ("|v_ExB|", "vexb", 1.0, "m/s")]:
-        a, sa, _ = inner.peak(getattr(inner, attr))
-        b, sb, _ = outer.peak(getattr(outer, attr))
-        row(f"{nm} [{unit}]", a / sc, b / sc)
-        print(f"  {'':20s}{'at s=' + format(sa, '.3f') + ' m':>16s}"
-              f"{'at s=' + format(sb, '.3f') + ' m':>16s}")
+    for nm, at, sc in (("n_e [1e20 m^-3]", "ne", 1e20), ("T_e [eV]", "te", 1.0),
+                       ("E_t [V/m]", "et", 1.0), ("|v_ExB| [m/s]", "vexb", 1.0)):
+        a, sa = inner.peak(getattr(inner, at))
+        b, sb = outer.peak(getattr(outer, at))
+        row(nm, a / sc, b / sc)
+        print(f"  {'':22s}{'s=' + format(sa, '+.3f'):>15s}"
+              f"{'s=' + format(sb, '+.3f'):>15s}")
 
-    dphi = pi - po
-    print(f"\n  ** PFR potential difference  Phi_in - Phi_out = {dphi:+.2f} V **")
-    print(f"     ePhi/kTe would report {pi / max(tei, 1e-12):.2f} vs "
-          f"{po / max(teo, 1e-12):.2f} - a {abs(pi / max(tei,1e-12) - po / max(teo,1e-12)) / max(pi / max(tei,1e-12), 1e-12) * 100:.0f} % contrast "
-          f"for a factor {abs(pi / po) if po else float('nan'):.2f} in volts.")
-    print(f"     n_e(in)/n_e(out) at the strike point = {nei / neo:.3f}"
-          "   (> 1 is the HFSHD direction)")
-    return dphi
+    dphi = inner._sp["phi"] - outer._sp["phi"]
+    nr = inner._sp["ne"] / outer._sp["ne"]
+    print(f"\n  ** PFR potential difference  Phi_in - Phi_out = {dphi:+.3f} V **")
+    print(f"     n_e(in)/n_e(out) at the strike point = {nr:.3f}"
+          "     (> 1 is the HFSHD direction)")
+    return dphi, nr
 
 
 # ---------------------------------------------------------------------------
-# Plot
-# ---------------------------------------------------------------------------
-def plot(cases, outfile):
+def plot(cases, outfile, smax):
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
-        print("\nmatplotlib not available - text report only "
-              "(pip install matplotlib for the figure).")
+        print("\nmatplotlib not available - text report only.")
         return
 
-    panels = [("phi", r"$\Phi$  [V]", 1.0),
-              ("te", r"$T_e$  [eV]", 1.0),
+    panels = [("phi", r"$\Phi$  [V]", 1.0), ("te", r"$T_e$  [eV]", 1.0),
               ("ne", r"$n_e$  [$10^{20}$ m$^{-3}$]", 1e20),
-              ("jsat", r"$j_{sat}$  [kA m$^{-2}$]", 1e3),
-              ("et", r"$E_t = -\partial\Phi/\partial s$  [V/m]", 1.0),
+              ("jsat", r"$j_{sat}$  [a.u.]", 1.0),
+              ("et", r"$E_t=-\partial\Phi/\partial s$  [V/m]", 1.0),
               ("vexb", r"$|v_{E\times B}|$  [m/s]", 1.0)]
-
     fig, axes = plt.subplots(2, 3, figsize=(15, 8), sharex=True)
     colors = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd"]
 
     for ax, (attr, ylab, sc) in zip(axes.ravel(), panels):
         for ci, (label, _, _, inner, outer) in enumerate(cases):
             c = colors[ci % len(colors)]
-            for tgt, ls in ((inner, "-"), (outer, "--")):
-                if tgt.valid:
-                    ax.plot(tgt.psin, getattr(tgt, attr) / sc, ls, color=c, lw=1.6,
-                            label=f"{label} {tgt.name}")
+            for t, ls in ((inner, "-"), (outer, "--")):
+                if t.valid:
+                    m = np.abs(t.s) <= smax
+                    ax.plot(t.s[m] * 100, getattr(t, attr)[m] / sc, ls, color=c,
+                            lw=1.6, label=f"{label} {t.name}")
         ax.set_ylabel(ylab)
-        ax.axvline(1.0, color="k", lw=0.8, ls=":")
+        ax.axvline(0.0, color="k", lw=0.8, ls=":")
         ax.grid(alpha=0.3)
-
     for ax in axes[1]:
-        ax.set_xlabel(r"$\psi_N$      (< 1 = PFR,  > 1 = SOL)")
-    axes[0, 0].legend(fontsize=7, ncol=1)
+        ax.set_xlabel("s from strike point [cm]      (s > 0 = toward the PFR)")
+    axes[0, 0].legend(fontsize=7)
     fig.suptitle("Divertor target profiles  -  solid = inner, dashed = outer", y=0.99)
     fig.tight_layout()
     fig.savefig(outfile, dpi=140)
     print(f"\nwrote {outfile}")
 
 
-# ---------------------------------------------------------------------------
 def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("files", nargs="+", help="boundary_quantities_*.dat")
-    ap.add_argument("--labels", nargs="*", default=None)
-    ap.add_argument("--step", type=int, default=None,
-                    help="time step to analyse (default: last in file)")
-    ap.add_argument("--rsplit", type=float, default=1.42,
-                    help="major radius dividing inner/outer, matching "
-                         "sheath_diag_R_split (default 1.42)")
-    ap.add_argument("--zmax", type=float, default=-0.90,
-                    help="only boundary points below this Z are divertor "
-                         "targets (default -0.90)")
-    ap.add_argument("--mass", type=float, default=2.0141,
-                    help="main ion mass in amu (default deuterium)")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("files", nargs="+")
+    ap.add_argument("--labels", nargs="*")
+    ap.add_argument("--step", type=int)
+    ap.add_argument("--rsplit", type=float, default=1.42)
+    ap.add_argument("--zmax", type=float, default=-0.90)
+    ap.add_argument("--bnfrac", type=float, default=0.10,
+                    help="keep boundary points with |Bnorm| above this fraction "
+                         "of its divertor maximum; rejects the wall (default 0.10)")
+    ap.add_argument("--pfr-width", type=float, default=0.05,
+                    help="PFR averaging window in m from the strike point")
+    ap.add_argument("--smax", type=float, default=0.30, help="plot range in m")
+    ap.add_argument("--mass", type=float, default=2.0141)
     ap.add_argument("-o", "--out", default="target_profiles.png")
-    ap.add_argument("--no-plot", action="store_true", help="text report only")
-    args = ap.parse_args()
+    ap.add_argument("--verbose", action="store_true",
+                    help="list the boundary runs found (use if selection looks wrong)")
+    ap.add_argument("--no-plot", action="store_true")
+    a = ap.parse_args()
 
-    labels = args.labels or [f.split("/")[-1] for f in args.files]
-    if len(labels) != len(args.files):
-        sys.exit("--labels must have one entry per file")
+    labels = a.labels or [f.split("/")[-1] for f in a.files]
+    if len(labels) != len(a.files):
+        sys.exit("--labels needs one entry per file")
 
-    cases, dphis = [], []
-    for path, label in zip(args.files, labels):
-        step, t_now, d = pick_block(read_boundary_file(path), args.step)
-        inner, outer = split_targets(d, args.rsplit, args.zmax, args.mass)
-        dphi = report(label, step, t_now, inner, outer)
+    cases, summ = [], []
+    for path, label in zip(a.files, labels):
+        step, t_now, d = pick_block(read_boundary_file(path), a.step)
+        check_units(d, path)
+        if a.verbose:
+            print(f"\n{label}: {len(d['R'])} boundary points")
+        inner, outer = split_targets(d, a.rsplit, a.zmax, a.bnfrac, a.mass, a.verbose)
+        r = report(label, step, t_now, inner, outer, a.pfr_width)
         cases.append((label, step, t_now, inner, outer))
-        if dphi is not None:
-            dphis.append((label, dphi))
+        if r:
+            summ.append((label, *r))
 
-    if len(dphis) == 2:
-        (l0, d0), (l1, d1) = dphis
-        print(f"\n{'=' * 74}\n  PFR drive, {l0} -> {l1}: "
-              f"{d0:+.2f} V -> {d1:+.2f} V   (change {d1 - d0:+.2f} V)\n{'=' * 74}")
+    if len(summ) == 2:
+        (l0, d0, n0), (l1, d1, n1) = summ
+        print(f"\n{'=' * 76}\n  {l0}  ->  {l1}")
+        print(f"    PFR drive  Phi_in - Phi_out : {d0:+.3f} V  ->  {d1:+.3f} V"
+              f"   ({d1 - d0:+.3f} V)")
+        print(f"    density ratio  n_in/n_out   : {n0:.3f}      ->  {n1:.3f}"
+              f"       ({n1 - n0:+.3f})")
+        print(f"{'=' * 76}")
 
-    if not args.no_plot:
-        plot(cases, args.out)
+    if not a.no_plot:
+        plot(cases, a.out, a.smax)
 
 
 if __name__ == "__main__":

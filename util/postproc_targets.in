@@ -22,11 +22,18 @@
 !
 !  * V_ExB_R/V_ExB_Z ARE consistent with model600 (-R*u_Z, +R*u_R). Safe.
 !
-! units defaults to 0 = SI: Phi in V, T in eV, n in m^-3, v in m/s.
+!  * `set units 0` is written explicitly above. The default IS 0, but a
+!    session that has set it to 1 gives n_e ~ 1e-2 and T_e ~ 1e-3; the analysis
+!    script detects that and refuses rather than reporting nonsense.
+!
+!  * psi_N is exported for reference only. It does NOT separate SOL from PFR -
+!    it exceeds 1 on BOTH sides of a separatrix leg. The script uses signed arc
+!    length from the strike point instead.
 ! -----------------------------------------------------------------------------
 
 namelist input
 
+set units 0        ! 0 = SI (Phi in V, T in eV, n in m^-3). REQUIRED - see note below.
 set nsub_bnd 4
 
 for step 3800 to 3900 do
