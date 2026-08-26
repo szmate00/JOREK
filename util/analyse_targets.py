@@ -245,7 +245,10 @@ class Target:
         m = np.isfinite(a) if half is None else (np.abs(self.s) <= half) & np.isfinite(a)
         if m.sum() < 2:
             return np.nan
-        return np.trapz(a[m], self.s[m])
+        # s decreases with index on a flipped target, which would make trapz
+        # return a negative line integral. Integrate along increasing s.
+        o = np.argsort(self.s[m])
+        return float(np.trapz(a[m][o], self.s[m][o]))
 
     def pfr_mean(self, a, width):
         m = (self.s > 0) & (self.s < width) & np.isfinite(a)
@@ -344,6 +347,13 @@ def report(label, step, t_now, inner, outer, pfr_width):
         print(f"  {'':22s}{'s=' + format(sa, '+.3f'):>15s}"
               f"{'s=' + format(sb, '+.3f'):>15s}")
 
+    # Extensive comparison: line-integrated density over each target.
+    li, lo = inner.integral(inner.ne), outer.integral(outer.ne)
+    ji, jo = inner.integral(inner.jsat), outer.integral(outer.jsat)
+    print("\n  -- integrated over the target (extensive) --")
+    row("int n_e ds [1e20/m^2]", li / 1e20, lo / 1e20)
+    row("int j_sat ds [a.u.]", ji, jo)
+
     # The PFR-side average difference is the meaningful drive, not the value at
     # the strike point: the potential hill sits a few cm INTO the PFR, so the two
     # strike points can agree while a large gradient exists between them. The
@@ -352,13 +362,6 @@ def report(label, step, t_now, inner, outer, pfr_width):
                 - outer.pfr_mean(outer.phi, pfr_width))
     print(f"\n  ** PFR-side potential difference (0 < s < {pfr_width} m) = "
           f"{dphi_pfr:+.2f} V **")
-
-    # Extensive comparison: line-integrated density over each target.
-    li, lo = inner.integral(inner.ne), outer.integral(outer.ne)
-    ji, jo = inner.integral(inner.jsat), outer.integral(outer.jsat)
-    print("\n  -- integrated over the target (extensive) --")
-    row("int n_e ds [1e20/m^2]", li / 1e20, lo / 1e20)
-    row("int j_sat ds [a.u.]", ji, jo)
 
     dphi = inner._sp["phi"] - outer._sp["phi"]
     nr = inner._sp["ne"] / outer._sp["ne"]
