@@ -108,12 +108,13 @@
 <header>
   <p class="eyebrow">JOREK · model600 · AUG 38773</p>
   <h1>Can the sheath drive HFSHD?</h1>
-  <p class="lede">The boundary condition works, and so does the mechanism: an imposed
-  target-to-target bias <strong>does</strong> redistribute density between the legs, in the
-  HFSHD direction, by 63&nbsp;% of the way to parity at 40&nbsp;V. The bottleneck is not
-  the transport chain — it is the <strong>magnitude</strong> of the potential the plasma
-  generates by itself, which is only <strong>−23&nbsp;V</strong>. What remains is to raise
-  that, and to reach the regime where recycling amplifies it.</p>
+  <p class="lede">The boundary condition works — closure to <strong>0.00&nbsp;%</strong>
+  over 3900 steps. The mechanism does not, at this drive: a 36&nbsp;V imposed
+  target-to-target bias rearranges plasma <em>along</em> the inner leg but moves its
+  line-integrated content by <strong>1.5&nbsp;%</strong>. The drift reshapes profiles; it
+  does not transfer plasma across the private flux region. What is left to test is whether
+  a recycling divertor amplifies that, because everything so far has been measured in one
+  that cannot.</p>
 </header>
 
 <section>
@@ -175,7 +176,7 @@ Phi = 3Te/e:  true dPhi +0.226 V   floored dPhi +0.055 V</pre>
   <p class="sec-intro">The one test that can return a trustworthy negative. Everything
   else is worth running only if this passes.</p>
   <div class="card decisive">
-    <div class="card-top"><span class="chip a">answered — PASS</span><h3>Differential wall bias scan</h3></div>
+    <div class="card-top"><span class="chip b">answered — NEGATIVE</span><h3>Differential wall bias scan</h3></div>
     <p><code>sheath_V_wall_at</code> applies an antisymmetric bias about R₀, so the
     targets differ by ≈ 2·V<sub>asym</sub> while the mean is unchanged — a uniform bias
     would be a pure gauge and nothing would respond.</p>
@@ -183,28 +184,30 @@ Phi = 3Te/e:  true dPhi +0.226 V   floored dPhi +0.055 V</pre>
 sheath_V_wall_R0   = 1.42d0
 sheath_V_wall_dR   = 0.10d0</pre>
     <div class="tw"><table>
-      <thead><tr><th>run</th><th>ΔΦ at strike points</th><th>n<sub>in</sub>/n<sub>out</sub></th><th>slope</th></tr></thead>
+      <thead><tr><th>metric at asym = 40</th><th>baseline</th><th>biased</th><th>change</th></tr></thead>
       <tbody>
-        <tr><td>baseline</td><td>−23.10 V</td><td>0.531</td><td>—</td></tr>
-        <tr><td>bias</td><td>−34.46 V</td><td>0.585</td><td>0.0048 /V</td></tr>
-        <tr><td>asym = 40</td><td>−59.30 V</td><td class="good">0.866</td><td>0.0093 /V</td></tr>
+        <tr><td>ΔΦ at the strike points</td><td>−23.10 V</td><td>−59.30 V</td><td>−36.2 V</td></tr>
+        <tr><td>n<sub>in</sub>/n<sub>out</sub> at the strike point</td><td>0.531</td><td>0.866</td><td class="hot">+63 %</td></tr>
+        <tr><td><strong>∫n ds ratio, common window</strong></td><td>1.171</td><td>1.189</td><td class="good">+1.5 %</td></tr>
       </tbody>
     </table></div>
-    <p>At 40 V the two legs move in <em>opposite</em> directions — inner
-    n&nbsp;+22&nbsp;%, outer n&nbsp;−25&nbsp;% — which is a transfer between them, not
-    noise. The response is <strong>superlinear</strong>, twice the slope over the second
-    interval, though two points cannot separate real feedback from the first point being
-    within noise.</p>
+    <p>The pointwise signal is a <strong>rearrangement, not a transfer</strong>. On the inner
+    leg the strike-point value rose 22&nbsp;% while the peak <em>fell</em> 12&nbsp;% and moved
+    1.2&nbsp;cm toward the strike point; integrated over the leg, content changed by
+    1.5&nbsp;%. Both legs gained ~16&nbsp;% together, so the divertor inflated symmetrically.
+    The probe sits exactly where plasma is being pushed <em>to</em>, which is why the
+    pointwise metric reads 40× larger than the extensive one.</p>
     <dl>
-      <dt>reading</dt><dd>The chain works. Extrapolating the higher slope, parity needs
-        <strong>~50 V</strong> more and a factor-2 asymmetry <strong>~160 V</strong> —
-        against the −23 V the plasma makes by itself.</dd>
-      <dt>caveats</dt><dd>T<sub>e</sub> is no longer flat at 40 V (inner 30.2 → 34.2 eV),
-        so part of the response is thermal; and the inner far-SOL Φ goes <em>negative</em>,
-        a state no machine reaches unbiased. Useful as a numerical experiment, not
-        quotable as physics.</dd>
-      <dt>still to do</dt><dd>the 10 V point, to settle linear vs superlinear; and the
-        integrated ratio rather than the strike-point value.</dd>
+      <dt>reading</dt><dd>Sensitivity is <strong>0.0005 per volt</strong> on the extensive
+        metric. Reaching a factor-2 asymmetry from 1.17 would need <strong>~1660 V</strong>
+        against the −23 V the plasma generates: an amplification of <strong>~70×</strong>.</dd>
+      <dt>consistent with</dt><dd>the direct estimate Γ<sub>E×B</sub>/Γ<sub>∥</sub> ≈ 12 %,
+        enough to reshape a profile and not to move bulk content; and with the boundary ExB
+        direction being unresolvable on the inner leg (coherence 0.023), because there is no
+        coherent inter-leg flow to find.</dd>
+      <dt>caveat</dt><dd>The common window is only ±5.5 cm, set by the outer target's reach,
+        so it excludes the inner leg's density peak at +5.6 cm. A well-posed total-content
+        comparison needs a volume measure, not target traces.</dd>
     </dl>
   </div>
 </section>
@@ -241,8 +244,9 @@ sheath_V_wall_dR   = 0.10d0</pre>
       <dt>measure</dt><dd>the same d(n<sub>in</sub>/n<sub>out</sub>)/dΔΦ, in a divertor
         that recycles</dd>
       <dt>the number that matters</dt><dd>how much <strong>larger</strong> the slope is.
-        If it rises by an order of magnitude, the −23 V the plasma generates is enough on
-        its own and HFSHD is reachable self-consistently.</dd>
+        It needs to rise by ~70× for the self-consistent −23 V to give a factor-2 asymmetry.
+        That is a lot, but a genuinely high-recycling divertor can have an ionisation gain in
+        that range — and the present measurement was taken where the gain is ≈ 1.</dd>
       <dt>if the slope is unchanged</dt><dd>the drift is simply too weak against parallel
         transport at any accessible drive, and the asymmetry has to come from the geometry
         (03) or the missing terms (04).</dd>
