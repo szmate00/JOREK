@@ -1,0 +1,40 @@
+! -----------------------------------------------------------------------------
+! Traverse ACROSS the private flux region, to resolve which way the ExB
+! circulation runs between the two divertor targets.
+!
+! Run:  jorek2_postproc < postproc_pfr_line.in
+! Then: util/analyse_pfr_line.py pol_line_*.dat
+!
+! WHY NOT THE BOUNDARY. util/analyse_targets.py measures Phi and n at the
+! targets, which is where the sheath sets the potential - but the transfer of
+! plasma between the legs happens in the PFR VOLUME. A boundary trace only sees
+! where field lines land. Measured on the real run, the ExB direction coherence
+! |mean(v)|/mean(|v|) on the inner leg was 0.26 (baseline) and 0.001 (puffed):
+! the direction rotates within the averaging window, so the boundary mean
+! carries no direction at all. The outer leg was fine (0.97), which is exactly
+! the trap - half the answer looks solid.
+!
+! GEOMETRY. Line 1 runs across the PFR just above the floor, from inside the
+! inner leg to inside the outer leg. Line 2 runs up the middle of the PFR
+! toward the X-point. Adjust the endpoints to your equilibrium: they should sit
+! INSIDE the PFR (psi_N > 1 with the separatrix on both sides), not on the legs.
+! Check the exported psi_N and R,Z before trusting the result.
+!
+! For AUG 38773 with the strike points at (1.256,-1.055) and (1.593,-1.150),
+! and the X-point near (1.43,-0.93):
+! -----------------------------------------------------------------------------
+
+namelist input
+
+set units 0          ! SI, as for the target export
+set linepoints 400
+
+for step 3800 to 3900 do
+  expressions R Z Psi_N Phi T_e T_i ne V_ExB_R V_ExB_Z
+
+  ! Line 1: across the PFR, inner leg -> outer leg
+  pol_line 1.29 -1.08 1.56 -1.13 0.
+
+  ! Line 2: up the middle of the PFR toward the X-point
+  pol_line 1.42 -1.14 1.42 -0.96 0.
+done

@@ -124,6 +124,14 @@ def contiguous_runs(mask):
     return list(zip(starts, stops + 1))
 
 
+def _smooth(a, w):
+    w = int(w)
+    if w <= 1 or a.size <= w:
+        return a
+    k = np.ones(w) / float(w)
+    return np.convolve(np.pad(a, w // 2, mode="edge"), k, mode="valid")[:a.size]
+
+
 class Target:
     """One divertor target, in boundary-path order, s=0 at the strike point."""
 
@@ -190,6 +198,11 @@ class Target:
         tn[tn == 0] = 1.0
         self.tR, self.tZ = tR / tn, tZ / tn
 
+        # v_ExB comes from grad(u); on a C1 bicubic that derivative is only C0, so
+        # with nsub_bnd sub-sampling it carries element-scale ripple. Smooth the
+        # components on the same window as Phi before taking directions.
+        self.vr = _smooth(self.vr, smooth)
+        self.vz = _smooth(self.vz, smooth)
         self.vt = self.vr * self.tR + self.vz * self.tZ     # + = toward the PFR
         nR = g.get("bnd_normal_R", np.zeros_like(self.R))
         nZ = g.get("bnd_normal_Z", np.zeros_like(self.R))
@@ -336,14 +349,33 @@ def report(label, step, t_now, inner, outer, pfr_width):
     # --- Which way does the PFR ExB run?
     vt_i = inner.pfr_mean(inner.vt, pfr_width)
     vt_o = outer.pfr_mean(outer.vt, pfr_width)
+
+    def coherence(t):
+        m = np.hypot(t.pfr_mean(t.vt, pfr_width), t.pfr_mean(t.vn, pfr_width))
+        return m / max(t.pfr_mean(t.vexb, pfr_width), 1e-30)
+
+    coh_i, coh_o = coherence(inner), coherence(outer)
     print(f"\n  -- ExB direction at the targets (v_t > 0 = toward the PFR) --")
     row("v_t [m/s]", vt_i, vt_o)
     row("n*v_t [1e22 m^-2 s^-1]", inner.pfr_mean(inner.gam_t, pfr_width) / 1e22,
         outer.pfr_mean(outer.gam_t, pfr_width) / 1e22)
     row("v_n [m/s] (+ into wall)", inner.pfr_mean(inner.vn, pfr_width),
         outer.pfr_mean(outer.vn, pfr_width))
+    # |mean(v)| / mean(|v|). 1 = the flow keeps one direction across the window;
+    # near 0 = it rotates, and the mean components carry no information.
+    row("direction coherence", coh_i, coh_o)
 
-    if np.isfinite(vt_i) and np.isfinite(vt_o):
+    COH_MIN = 0.5
+    if min(coh_i, coh_o) < COH_MIN:
+        bad = " and ".join(n for n, c in (("INNER", coh_i), ("OUTER", coh_o))
+                           if c < COH_MIN)
+        print(f"\n  ** DIRECTION NOT RESOLVED on {bad} (coherence < {COH_MIN}) **\n"
+              f"     The ExB direction rotates within the averaging window, so the\n"
+              f"     mean components are not a flow direction. The transfer between\n"
+              f"     the targets happens in the PFR VOLUME anyway - a boundary trace\n"
+              f"     only sees where field lines land. Use a pol_line traverse across\n"
+              f"     the PFR instead (see util/postproc_pfr_line.in).")
+    elif np.isfinite(vt_i) and np.isfinite(vt_o):
         if vt_i > 0 and vt_o < 0:
             verdict = ("enters the PFR at the INNER leg and leaves at the OUTER\n"
                        "     -> net PFR transport INNER -> OUTER, which OPPOSES HFSHD")
