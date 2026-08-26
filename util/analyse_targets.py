@@ -175,9 +175,26 @@ class Target:
         # the two directly comparable. psi_N cannot do this: it is > 1 on both
         # sides of the leg.
         span = self.R[-1] - self.R[0]
-        if (span > 0) != pfr_toward_larger_R:
-            s = -s
-        self.s = s
+        self.flip = 1.0 if ((span > 0) == pfr_toward_larger_R) else -1.0
+        self.s = self.flip * s
+
+        # --- ExB direction, decomposed on the surface.
+        # t_hat is the unit tangent pointing the same way as +s, i.e. TOWARD THE
+        # PFR on both targets, so v_t is directly comparable between them.
+        # n_hat is the outward normal as exported by the boundary expressions.
+        ds_path = np.gradient(s)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            tR = self.flip * np.gradient(self.R) / ds_path
+            tZ = self.flip * np.gradient(self.Z) / ds_path
+        tn = np.hypot(tR, tZ)
+        tn[tn == 0] = 1.0
+        self.tR, self.tZ = tR / tn, tZ / tn
+
+        self.vt = self.vr * self.tR + self.vz * self.tZ     # + = toward the PFR
+        nR = g.get("bnd_normal_R", np.zeros_like(self.R))
+        nZ = g.get("bnd_normal_Z", np.zeros_like(self.R))
+        self.vn = self.vr * nR + self.vz * nZ               # + = out of the plasma
+        self.gam_t = self.ne * self.vt                      # particle flux [m^-2 s^-1]
 
         # E_t = -dPhi/ds. Guard repeated abscissa values, which would give inf.
         # Phi is smoothed first: nsub_bnd sub-sampling puts several points inside
@@ -315,6 +332,32 @@ def report(label, step, t_now, inner, outer, pfr_width):
     print(f"     (at the strike points themselves: {dphi:+.3f} V)")
     print(f"     n_e(in)/n_e(out) at the strike point = {nr:.3f}"
           "     (> 1 is the HFSHD direction)")
+
+    # --- Which way does the PFR ExB run?
+    vt_i = inner.pfr_mean(inner.vt, pfr_width)
+    vt_o = outer.pfr_mean(outer.vt, pfr_width)
+    print(f"\n  -- ExB direction at the targets (v_t > 0 = toward the PFR) --")
+    row("v_t [m/s]", vt_i, vt_o)
+    row("n*v_t [1e22 m^-2 s^-1]", inner.pfr_mean(inner.gam_t, pfr_width) / 1e22,
+        outer.pfr_mean(outer.gam_t, pfr_width) / 1e22)
+    row("v_n [m/s] (+ into wall)", inner.pfr_mean(inner.vn, pfr_width),
+        outer.pfr_mean(outer.vn, pfr_width))
+
+    if np.isfinite(vt_i) and np.isfinite(vt_o):
+        if vt_i > 0 and vt_o < 0:
+            verdict = ("enters the PFR at the INNER leg and leaves at the OUTER\n"
+                       "     -> net PFR transport INNER -> OUTER, which OPPOSES HFSHD")
+        elif vt_i < 0 and vt_o > 0:
+            verdict = ("enters the PFR at the OUTER leg and leaves at the INNER\n"
+                       "     -> net PFR transport OUTER -> INNER, the HFSHD DIRECTION")
+        elif vt_i > 0 and vt_o > 0:
+            verdict = ("converges into the PFR from BOTH legs\n"
+                       "     -> no net inner/outer transfer; outflow must be elsewhere")
+        else:
+            verdict = ("diverges out of the PFR at BOTH legs\n"
+                       "     -> no net inner/outer transfer; inflow must be elsewhere")
+        print(f"\n  ** The ExB flow {verdict} **")
+
     return dphi_pfr, nr
 
 
@@ -332,8 +375,10 @@ def plot(cases, outfile, smax):
               ("ne", r"$n_e$  [$10^{20}$ m$^{-3}$]", 1e20),
               ("jsat", r"$j_{sat}$  [a.u.]", 1.0),
               ("et", r"$E_t=-\partial\Phi/\partial s$  [V/m]", 1.0),
-              ("vexb", r"$|v_{E\times B}|$  [m/s]", 1.0)]
-    fig, axes = plt.subplots(2, 3, figsize=(15, 8), sharex=True)
+              ("vexb", r"$|v_{E\times B}|$  [m/s]", 1.0),
+              ("vt", r"$v_t$  [m/s]   (+ = toward PFR)", 1.0),
+              ("gam_t", r"$n\,v_t$  [$10^{22}$ m$^{-2}$s$^{-1}$]", 1e22)]
+    fig, axes = plt.subplots(2, 4, figsize=(19, 8), sharex=True)
     colors = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd"]
 
     for ax, (attr, ylab, sc) in zip(axes.ravel(), panels):
@@ -346,6 +391,8 @@ def plot(cases, outfile, smax):
                             lw=1.6, label=f"{label} {t.name}")
         ax.set_ylabel(ylab)
         ax.axvline(0.0, color="k", lw=0.8, ls=":")
+        if attr in ("et", "vt", "gam_t"):
+            ax.axhline(0.0, color="k", lw=0.8, ls="-", alpha=0.4)
         ax.grid(alpha=0.3)
     for ax in axes[1]:
         ax.set_xlabel("s from strike point [cm]      (s > 0 = toward the PFR)")
