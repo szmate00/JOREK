@@ -657,6 +657,7 @@ subroutine preset_parameters
   keep_current_psin_cutoff   = 0.98d0
   keep_current_psin_sig      = 0.01d0
   keep_current_z_sig         = 0.02d0
+  keep_current_confine_strength = 1.d0    ! 1 = mask as before, 0 = no masking at all
   init_current_prof  = .false.
   current_prof_initialized = .false.
   

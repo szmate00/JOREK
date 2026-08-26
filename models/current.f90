@@ -65,7 +65,7 @@ zjz   = zFFprime - R*R * (zn * dT_dpsi + dn_dpsi * zT)
 !     by the wide tanh(Z) cutoffs), and the eta*(j-j0) drive is stiffest where the plasma is
 !     cold. Masks in psi_N towards the SOL and, more sharply than the profile routines, in Z
 !     beyond the X-point(s) towards the private flux region.
-if (keep_current_prof_confined) then
+if (keep_current_prof_confined .and. (keep_current_confine_strength .gt. 0.d0)) then
   mask = 0.5d0 * (1.d0 - tanh((psi_n - keep_current_psin_cutoff)/keep_current_psin_sig))
   if (xpoint2) then
     if (xcase2 .ne. UPPER_XPOINT) & ! mask below the lower X-point
@@ -73,6 +73,18 @@ if (keep_current_prof_confined) then
     if (xcase2 .ne. LOWER_XPOINT) & ! mask above the upper X-point
       mask = mask * 0.5d0 * (1.d0 - tanh((Z - Z_xpoint(2))/keep_current_z_sig))
   endif
+
+  ! --- Blend between no masking and the full mask, linearly in the strength:
+  ! ---     mask_eff = 1 - strength*(1 - mask)
+  ! --- so a fraction (1 - strength) of the UNMASKED source survives wherever the mask
+  ! --- would have removed it. strength = 1 reproduces the mask exactly, strength = 0 is
+  ! --- bit-identical to keep_current_prof_confined = .false. (and is short-circuited
+  ! --- above, so the tanh calls are not even evaluated).
+  ! --- Linear in the source amplitude, NOT an exponent on the mask: mask**strength would
+  ! --- only sharpen or soften the transition, leaving the source at exactly zero deep in
+  ! --- the SOL for every strength > 0, which is not a strength knob at all.
+  mask = 1.d0 - keep_current_confine_strength * (1.d0 - mask)
+
   zjz = zjz * mask
 endif
 

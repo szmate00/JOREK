@@ -649,6 +649,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   write(*,REAL_FMT) 'keep_current_psin_cutoff', keep_current_psin_cutoff
   write(*,REAL_FMT) 'keep_current_psin_sig ', keep_current_psin_sig
   write(*,REAL_FMT) 'keep_current_z_sig    ', keep_current_z_sig
+  write(*,REAL_FMT) 'keep_current_confine_strength', keep_current_confine_strength
   write(*,LOGI_FMT) 'init_current_prof     ', init_current_prof
   write(*,LOGI_FMT) 'current_prof_initialized', current_prof_initialized
   write(*,LOGI_FMT) 'linear_run            ', linear_run
