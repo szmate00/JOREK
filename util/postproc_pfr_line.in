@@ -14,11 +14,17 @@
 ! carries no direction at all. The outer leg was fine (0.97), which is exactly
 ! the trap - half the answer looks solid.
 !
-! GEOMETRY. Line 1 runs across the PFR just above the floor, from inside the
-! inner leg to inside the outer leg. Line 2 runs up the middle of the PFR
-! toward the X-point. Adjust the endpoints to your equilibrium: they should sit
-! INSIDE the PFR (psi_N > 1 with the separatrix on both sides), not on the legs.
-! Check the exported psi_N and R,Z before trusting the result.
+! GEOMETRY - THIS IS THE PART TO GET RIGHT. A flux is an integral through a
+! SURFACE, so the cut must be perpendicular to the transfer you want to measure
+! and the velocity must be projected on the cut's NORMAL, not its tangent. To
+! measure inner <-> outer transfer, the cut is therefore VERTICAL at about the
+! X-point major radius - it divides the two divertors - and the normal is R_hat.
+! A line drawn from one leg to the other runs PARALLEL to the transfer and its
+! flux integral means something else entirely.
+!
+! The script reports Gamma = 2*pi * int n (v.n_hat) R dl in particles/s, with
+! the 2*pi*R factor for the toroidal revolution. Check the printed n_hat and
+! psi_N range before trusting the sign.
 !
 ! For AUG 38773 with the strike points at (1.256,-1.055) and (1.593,-1.150),
 ! and the X-point near (1.43,-0.93):
@@ -32,9 +38,14 @@ set linepoints 400
 for step 3800 to 3900 do
   expressions R Z Psi_N Phi T_e T_i ne V_ExB_R V_ExB_Z
 
-  ! Line 1: across the PFR, inner leg -> outer leg
-  pol_line 1.29 -1.08 1.56 -1.13 0.
+  ! DIVIDING CUT: vertical, at the X-point major radius, from the floor up to
+  ! just below the X-point. This is the surface that SEPARATES the inner
+  ! divertor from the outer, so the flux through it IS the inter-leg transfer.
+  ! Its normal is +R_hat, so positive Gamma means inner -> outer.
+  pol_line 1.43 -1.16 1.43 -0.94 0.
 
-  ! Line 2: up the middle of the PFR toward the X-point
-  pol_line 1.42 -1.14 1.42 -0.96 0.
+  ! Secondary: across the PFR, inner leg -> outer leg. Useful for seeing the
+  ! potential and density structure, but its normal is roughly vertical, so the
+  ! flux through it is NOT the inter-leg transfer - do not read it as such.
+  pol_line 1.29 -1.08 1.56 -1.13 0.
 done

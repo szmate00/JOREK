@@ -25,7 +25,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from analyse_targets import read_boundary_file, pick_block, _smooth  # noqa: E402
+from analyse_targets import read_boundary_file, pick_block, _smooth, _trapz  # noqa: E402
 
 
 def analyse(label, path, step, smooth, psin_min):
@@ -35,12 +35,19 @@ def analyse(label, path, step, smooth, psin_min):
     vr, vz = _smooth(d["V_ExB_R"], smooth), _smooth(d["V_ExB_Z"], smooth)
     ne, psin = d["ne"], d["Psi_N"]
 
-    # Distance along the traverse, and its (constant) unit direction.
+    # Distance along the traverse, its unit tangent, and its poloidal NORMAL.
     l = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(R), np.diff(Z)))])
-    dirv = np.array([R[-1] - R[0], Z[-1] - Z[0]])
-    dirv = dirv / np.linalg.norm(dirv)
+    t = np.array([R[-1] - R[0], Z[-1] - Z[0]])
+    t = t / np.linalg.norm(t)
+    # Rotate the tangent by -90 deg in the poloidal plane. For a vertical cut
+    # (dZ only) this gives n_hat = +R_hat, so positive flux = outward in R.
+    nrm = np.array([t[1], -t[0]])
 
-    vl = vr * dirv[0] + vz * dirv[1]      # + = along the line, inner -> outer
+    # FLUX is through the surface the curve sweeps toroidally, so it takes the
+    # NORMAL component. v.t_hat is flow ALONG the curve and is not a flux
+    # through anything - it is kept only as a secondary diagnostic.
+    vn = vr * nrm[0] + vz * nrm[1]
+    vl = vr * t[0] + vz * t[1]
     vmag = np.hypot(vr, vz)
 
     # Keep the part of the line genuinely inside the PFR.
@@ -49,8 +56,13 @@ def analyse(label, path, step, smooth, psin_min):
         sys.exit(f"{path}: only {m.sum()} points with psi_N > {psin_min}; "
                  "the line is probably not inside the PFR - check its endpoints")
 
-    vl_m, flux_m = np.nanmean(vl[m]), np.nanmean((ne * vl)[m])
-    coh = abs(np.nanmean(vl[m])) / max(np.nanmean(vmag[m]), 1e-30)
+    vn_m, vl_m = np.nanmean(vn[m]), np.nanmean(vl[m])
+    # Gamma = 2*pi * int n (v.n_hat) R dl  [particles/s through the revolved surface]
+    integ = (ne * vn * R)[m]
+    ll = l[m]
+    o = np.argsort(ll)
+    gamma = 2.0 * np.pi * float(_trapz(integ[o], ll[o]))
+    coh = abs(np.nanmean(vn[m])) / max(np.nanmean(vmag[m]), 1e-30)
 
     print(f"\n{'=' * 72}\n{label}   step {step}\n{'=' * 72}")
     print(f"  line      ({R[0]:.3f}, {Z[0]:.3f})  ->  ({R[-1]:.3f}, {Z[-1]:.3f})"
@@ -61,21 +73,25 @@ def analyse(label, path, step, smooth, psin_min):
           f"   (drop across PFR {phi[m][0] - phi[m][-1]:+.3f} V)")
     print(f"  n_e            {np.nanmean(ne[m]) / 1e20:9.4f} x1e20 m^-3 (mean)")
     print(f"  T_e            {np.nanmean(d['T_e'][m]):9.4f} eV (mean)")
-    print(f"  v_l            {vl_m:9.2f} m/s   (+ = inner -> outer)")
-    print(f"  n*v_l          {flux_m / 1e22:9.4f} x1e22 m^-2 s^-1")
+    print(f"  v.n_hat        {vn_m:9.2f} m/s   (normal to the cut)")
+    print(f"  v.t_hat        {vl_m:9.2f} m/s   (along the cut - NOT a flux)")
     print(f"  |v_ExB|        {np.nanmean(vmag[m]):9.2f} m/s (mean magnitude)")
+    print(f"  n_hat          ({nrm[0]:+.3f}, {nrm[1]:+.3f})   "
+          f"+Gamma = flow along +n_hat")
+    print(f"  GAMMA_ExB      {gamma:9.3e} particles/s "
+          f"  = 2*pi * int n (v.n) R dl")
     print(f"  coherence      {coh:9.3f}")
 
     if coh < 0.3:
         print("\n  ** DIRECTION NOT RESOLVED - the flow rotates along the line **")
-    elif vl_m > 0:
-        print("\n  ** ExB transport INNER -> OUTER through the PFR"
-              "  ->  OPPOSES HFSHD **")
+    elif gamma > 0:
+        print("\n  ** net ExB transport along +n_hat"
+              "  (for a vertical cut: INNER -> OUTER, opposing HFSHD) **")
     else:
-        print("\n  ** ExB transport OUTER -> INNER through the PFR"
-              "  ->  the HFSHD DIRECTION **")
-    return dict(label=label, l=l, phi=phi, vl=vl, ne=ne, psin=psin, m=m,
-                flux=ne * vl, vl_m=vl_m, flux_m=flux_m, coh=coh)
+        print("\n  ** net ExB transport along -n_hat"
+              "  (for a vertical cut: OUTER -> INNER, the HFSHD direction) **")
+    return dict(label=label, l=l, phi=phi, vl=vn, ne=ne, psin=psin, m=m,
+                flux=ne * vn * R, vl_m=vn_m, flux_m=gamma, coh=coh)
 
 
 def main():
@@ -97,9 +113,9 @@ def main():
 
     if len(res) == 2:
         print(f"\n{'=' * 72}\n  {res[0]['label']}  ->  {res[1]['label']}")
-        print(f"    v_l   : {res[0]['vl_m']:+9.2f}  ->  {res[1]['vl_m']:+9.2f} m/s")
-        print(f"    n*v_l : {res[0]['flux_m']/1e22:+9.4f}  ->  "
-              f"{res[1]['flux_m']/1e22:+9.4f}  x1e22 m^-2 s^-1")
+        print(f"    v.n_hat   : {res[0]['vl_m']:+9.2f}  ->  {res[1]['vl_m']:+9.2f} m/s")
+        print(f"    GAMMA_ExB : {res[0]['flux_m']:+9.3e}  ->  "
+              f"{res[1]['flux_m']:+9.3e}  particles/s")
         print("=" * 72)
 
     if a.no_plot:
@@ -116,8 +132,8 @@ def main():
         m = r["m"]
         for i, (k, lab, sc) in enumerate([("phi", r"$\Phi$ [V]", 1),
                                           ("ne", r"$n_e$ [$10^{20}$m$^{-3}$]", 1e20),
-                                          ("vl", r"$v_l$ [m/s] (+ = in$\to$out)", 1),
-                                          ("flux", r"$n v_l$ [$10^{22}$m$^{-2}$s$^{-1}$]", 1e22)]):
+                                          ("vl", r"$v\cdot\hat n$ [m/s]", 1),
+                                          ("flux", r"$n\,(v\cdot\hat n)\,R$ [m$^{-1}$s$^{-1}$]", 1)]):
             ax[i].plot(r["l"][m], r[k][m] / sc, color=c, lw=1.6, label=r["label"])
             ax[i].set_ylabel(lab)
             ax[i].set_xlabel("distance along traverse [m]")
