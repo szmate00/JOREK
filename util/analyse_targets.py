@@ -234,6 +234,19 @@ class Target:
         i = np.flatnonzero(m)[int(np.nanargmax(np.abs(a[m])))]
         return a[i], self.s[i]
 
+    def integral(self, a, half=None):
+        """int a ds over the target window - the extensive measure.
+
+        The strike-point VALUE conflates two different things: more plasma on
+        this leg, and the same plasma redistributed toward the strike point.
+        HFSHD is a statement about the inner divertor's total content, so the
+        integral is the metric that answers it.
+        """
+        m = np.isfinite(a) if half is None else (np.abs(self.s) <= half) & np.isfinite(a)
+        if m.sum() < 2:
+            return np.nan
+        return np.trapz(a[m], self.s[m])
+
     def pfr_mean(self, a, width):
         m = (self.s > 0) & (self.s < width) & np.isfinite(a)
         return np.nanmean(a[m]) if m.any() else np.nan
@@ -340,11 +353,21 @@ def report(label, step, t_now, inner, outer, pfr_width):
     print(f"\n  ** PFR-side potential difference (0 < s < {pfr_width} m) = "
           f"{dphi_pfr:+.2f} V **")
 
+    # Extensive comparison: line-integrated density over each target.
+    li, lo = inner.integral(inner.ne), outer.integral(outer.ne)
+    ji, jo = inner.integral(inner.jsat), outer.integral(outer.jsat)
+    print("\n  -- integrated over the target (extensive) --")
+    row("int n_e ds [1e20/m^2]", li / 1e20, lo / 1e20)
+    row("int j_sat ds [a.u.]", ji, jo)
+
     dphi = inner._sp["phi"] - outer._sp["phi"]
     nr = inner._sp["ne"] / outer._sp["ne"]
     print(f"     (at the strike points themselves: {dphi:+.3f} V)")
     print(f"     n_e(in)/n_e(out) at the strike point = {nr:.3f}"
           "     (> 1 is the HFSHD direction)")
+    lr = li / lo if lo else float("nan")
+    print(f"     INTEGRATED  int n_in ds / int n_out ds = {lr:.3f}"
+          "     <- the HFSHD metric")
 
     # --- Which way does the PFR ExB run?
     vt_i = inner.pfr_mean(inner.vt, pfr_width)
@@ -390,7 +413,7 @@ def report(label, step, t_now, inner, outer, pfr_width):
                        "     -> no net inner/outer transfer; inflow must be elsewhere")
         print(f"\n  ** The ExB flow {verdict} **")
 
-    return dphi_pfr, nr
+    return dphi_pfr, nr, lr
 
 
 # ---------------------------------------------------------------------------
@@ -481,12 +504,14 @@ def main():
             summ.append((label, *r))
 
     if len(summ) == 2:
-        (l0, d0, n0), (l1, d1, n1) = summ
+        (l0, d0, n0, r0), (l1, d1, n1, r1) = summ
         print(f"\n{'=' * 76}\n  {l0}  ->  {l1}")
         print(f"    PFR drive (PFR-side mean)   : {d0:+.3f} V  ->  {d1:+.3f} V"
               f"   ({d1 - d0:+.3f} V)")
-        print(f"    density ratio  n_in/n_out   : {n0:.3f}      ->  {n1:.3f}"
+        print(f"    strike-point   n_in/n_out   : {n0:.3f}      ->  {n1:.3f}"
               f"       ({n1 - n0:+.3f})")
+        print(f"    INTEGRATED     n_in/n_out   : {r0:.3f}      ->  {r1:.3f}"
+              f"       ({r1 - r0:+.3f})")
         print(f"{'=' * 76}")
 
     if not a.no_plot:
