@@ -1,0 +1,35 @@
+! -----------------------------------------------------------------------------
+! Divertor target profiles for the sheath / HFSHD analysis (model600).
+!
+! Run:   jorek2_postproc < postproc_targets.in
+! Out:   boundary_quantities_s<min>..<max>.dat
+!
+! Edit the namelist name and the step range below, then feed the .dat to
+! util/analyse_targets.py.
+!
+! EXPRESSION NOTES - both of these are easy to get wrong:
+!
+!  * T_e / T_i, NOT Te.  The expression called "Te" is T0*fact_T/2 where
+!    T0 = Ti + Te, i.e. it returns the MEAN temperature. Its description
+!    ("assuming Ti=Te") is only true without WITH_TiTe. T_e and T_i are the
+!    real ones (mod_expression.f90:1999-2003).
+!
+!  * Phi has the WRONG SIGN for model600. The expression is u0*F0/fact_time
+!    (mod_expression.f90:1757, flagged "### sign?" in the source), but
+!    model600 implements v_pol = +R grad(u) x e_phi, so Phi = -F0*u. The
+!    analysis script negates it; if you plot the raw column yourself,
+!    remember to flip it or the ExB direction comes out backwards.
+!
+!  * V_ExB_R/V_ExB_Z ARE consistent with model600 (-R*u_Z, +R*u_R). Safe.
+!
+! units defaults to 0 = SI: Phi in V, T in eV, n in m^-3, v in m/s.
+! -----------------------------------------------------------------------------
+
+namelist input
+
+set nsub_bnd 4
+
+for step 3800 to 3900 do
+  expressions R Z Psi_N Bnorm bnd_normal_R bnd_normal_Z Phi T_e T_i ne V_ExB_R V_ExB_Z
+  boundary_quantities
+done
