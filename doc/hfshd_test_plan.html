@@ -108,12 +108,12 @@
 <header>
   <p class="eyebrow">JOREK · model600 · AUG 38773</p>
   <h1>Can the sheath drive HFSHD?</h1>
-  <p class="lede">The weak Galerkin sheath boundary condition works — closure to
-  <strong>0.00 %</strong> on both targets over 3900 steps. It produces a
-  <strong>58 V</strong> potential difference across the private flux region in the
-  attached case. And the in–out density ratio is still <strong>0.56</strong>, the
-  wrong way. These are the tests that would explain why, ordered so that each one
-  can falsify the next.</p>
+  <p class="lede">The boundary condition works, and so does the mechanism: an imposed
+  target-to-target bias <strong>does</strong> redistribute density between the legs, in the
+  HFSHD direction, by 63&nbsp;% of the way to parity at 40&nbsp;V. The bottleneck is not
+  the transport chain — it is the <strong>magnitude</strong> of the potential the plasma
+  generates by itself, which is only <strong>−23&nbsp;V</strong>. What remains is to raise
+  that, and to reach the regime where recycling amplifies it.</p>
 </header>
 
 <section>
@@ -175,23 +175,37 @@ Phi = 3Te/e:  true dPhi +0.226 V   floored dPhi +0.055 V</pre>
   <p class="sec-intro">The one test that can return a trustworthy negative. Everything
   else is worth running only if this passes.</p>
   <div class="card decisive">
-    <div class="card-top"><span class="chip b">decisive</span><h3>Differential wall bias scan</h3></div>
+    <div class="card-top"><span class="chip a">answered — PASS</span><h3>Differential wall bias scan</h3></div>
     <p><code>sheath_V_wall_at</code> applies an antisymmetric bias about R₀, so the
     targets differ by ≈ 2·V<sub>asym</sub> while the mean is unchanged — a uniform bias
     would be a pure gauge and nothing would respond.</p>
     <pre>sheath_V_wall_asym = 0, 10, 20, 40   ! V, four runs
 sheath_V_wall_R0   = 1.42d0
 sheath_V_wall_dR   = 0.10d0</pre>
+    <div class="tw"><table>
+      <thead><tr><th>run</th><th>ΔΦ at strike points</th><th>n<sub>in</sub>/n<sub>out</sub></th><th>slope</th></tr></thead>
+      <tbody>
+        <tr><td>baseline</td><td>−23.10 V</td><td>0.531</td><td>—</td></tr>
+        <tr><td>bias</td><td>−34.46 V</td><td>0.585</td><td>0.0048 /V</td></tr>
+        <tr><td>asym = 40</td><td>−59.30 V</td><td class="good">0.866</td><td>0.0093 /V</td></tr>
+      </tbody>
+    </table></div>
+    <p>At 40 V the two legs move in <em>opposite</em> directions — inner
+    n&nbsp;+22&nbsp;%, outer n&nbsp;−25&nbsp;% — which is a transfer between them, not
+    noise. The response is <strong>superlinear</strong>, twice the slope over the second
+    interval, though two points cannot separate real feedback from the first point being
+    within noise.</p>
     <dl>
-      <dt>measure</dt><dd><strong>n<sub>in</sub>/n<sub>out</sub></strong> against imposed ΔΦ</dd>
-      <dt>pass</dt><dd>ratio rises with bias — the transport chain works and the only
-        problem is that the self-consistent Φ is too small. Go to test 02.</dd>
-      <dt>fail</dt><dd>flat response — the chain is broken <em>downstream</em> of the
-        boundary condition. No gas placement or operating point will help, and the
-        answer is in test 04.</dd>
+      <dt>reading</dt><dd>The chain works. Extrapolating the higher slope, parity needs
+        <strong>~50 V</strong> more and a factor-2 asymmetry <strong>~160 V</strong> —
+        against the −23 V the plasma makes by itself.</dd>
+      <dt>caveats</dt><dd>T<sub>e</sub> is no longer flat at 40 V (inner 30.2 → 34.2 eV),
+        so part of the response is thermal; and the inner far-SOL Φ goes <em>negative</em>,
+        a state no machine reaches unbiased. Useful as a numerical experiment, not
+        quotable as physics.</dd>
+      <dt>still to do</dt><dd>the 10 V point, to settle linear vs superlinear; and the
+        integrated ratio rather than the strike-point value.</dd>
     </dl>
-    <p class="note">This separates the mechanism from the magnitude, which no
-    self-consistent run can do.</p>
   </div>
 </section>
 
@@ -209,6 +223,29 @@ sheath_V_wall_dR   = 0.10d0</pre>
         That shape would also explain why both endpoints showed nothing.</dd>
       <dt>caution</dt><dd>let each case converge. Step 2000 is ~1000 steps after a puff
         change and was still visibly evolving.</dd>
+    </dl>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head"><span class="sec-num">02b</span><h2>The payoff experiment</h2></div>
+  <p class="sec-intro">Only meaningful once 00 and 02 are done, and it is the run the whole
+  campaign has been building toward.</p>
+  <div class="card decisive">
+    <div class="card-top"><span class="chip b">decisive</span><h3>Bias scan inside the high-recycling regime</h3></div>
+    <p>Repeat the 01 scan at the operating point found in 02. The slope measured so far
+    — 0.005–0.009 per volt — comes from a <em>sheath-limited</em> divertor where the
+    recycling gain is ≈&nbsp;1 and nothing amplifies the drift. That is why the 160 V
+    extrapolation looks discouraging, and why it is probably pessimistic.</p>
+    <dl>
+      <dt>measure</dt><dd>the same d(n<sub>in</sub>/n<sub>out</sub>)/dΔΦ, in a divertor
+        that recycles</dd>
+      <dt>the number that matters</dt><dd>how much <strong>larger</strong> the slope is.
+        If it rises by an order of magnitude, the −23 V the plasma generates is enough on
+        its own and HFSHD is reachable self-consistently.</dd>
+      <dt>if the slope is unchanged</dt><dd>the drift is simply too weak against parallel
+        transport at any accessible drive, and the asymmetry has to come from the geometry
+        (03) or the missing terms (04).</dd>
     </dl>
   </div>
 </section>
