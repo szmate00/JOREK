@@ -1,0 +1,68 @@
+! -----------------------------------------------------------------------------
+! THE POTENTIAL HILL: Delta_Phi from the X-point down to each strike point.
+!
+! Run:  jorek2_postproc < postproc_hill.in
+! Then: util/analyse_hill.py pol_line_*.dat
+!
+! This is THE number of the Senichenkov (CPP 2022, 62(5-6), e202100177) HFSHD
+! mechanism, and it is the one quantity that compares directly against SOLPS:
+!
+!   div.j = 0 forces the divergent grad-B current in the PFR to close as parallel
+!   current to the plates. Driving it costs E_par = eta_par * j_par, and eta goes
+!   as T_e^-3/2, so a cold leg is expensive. Integrating along the field line,
+!
+!       Phi(X-point) - Phi(plate) = int eta_par j_par dl
+!
+!   leaves a POTENTIAL HILL at/just below the X-point. Its E x B circulates
+!   around it, and in the PFR that circulation connects the two legs: outer ->
+!   inner, which is HFSHD. SOLPS gets ~100 V of hill.
+!
+!   Note j_par is fixed by the closure requirement, NOT by Ohm's law -- Ohm's law
+!   only says what E_par it costs. So Phi_hill is LINEAR in eta, and if a floor
+!   (T_min_neg / T_min_eta) clamps eta above the true leg temperature,
+!   Phi_hill ~ T_floor^-3/2. That scaling is the test.
+!
+! A DOMAIN-WIDE Phi SPAN IS NOT THIS NUMBER. The span picks up the core-side
+! negative region, which has nothing to do with the hill. Traverse the field line
+! from the X-point to the plate, which is the path the integral is taken over.
+!
+! j_par IS NOT A VOLUME EXPRESSION. `Jpar` exists but is boundary-only, so it cannot be
+! used on a pol_line. It is reconstructed in the script from the physical current and
+! field components that ARE volume expressions:
+!
+!     j_par = ( JR*BR + JZ*BZ + Jtor*Btor ) / B_abs
+!
+! eta_T is exported alongside, so the script can form eta*j_par directly and compare its
+! line integral against the measured Delta_Phi. If those two agree, the hill IS the
+! resistive drop and the mechanism is confirmed in your own run, not by analogy.
+!
+! GEOMETRY, AUG 38773: X-point near (1.43,-0.93); strike points at (1.256,-1.055)
+! inner and (1.593,-1.150) outer. Check these against YOUR equilibrium before
+! trusting the result -- the X-point moves.
+!
+! SIGN WARNING: the postproc `Phi` expression returns +F0*u, which is the WRONG
+! SIGN for model600 (the model implements v_pol = +R grad(u) x e_phi, so
+! Phi = -F0*u). The script therefore flips it and says so. If that ever changes
+! upstream, the printed hill will change sign and nothing else.
+! -----------------------------------------------------------------------------
+
+namelist input
+
+si-units
+set linepoints 300
+
+for step 900 to 900 do
+
+  expressions R Z Psi_N Phi T_e T_i ne vpar eta_T JR JZ Jtor BR BZ Btor B_abs
+
+  ! X-point -> INNER strike point
+  pol_line 1.43 -0.93 1.256 -1.055 0.
+
+  ! X-point -> OUTER strike point
+  pol_line 1.43 -0.93 1.593 -1.150 0.
+
+  ! Control: straight down from the X-point into the PFR. If the hill is real,
+  ! Phi should FALL along this too, not only toward the plates.
+  pol_line 1.43 -0.93 1.43 -1.16 0.
+
+done
