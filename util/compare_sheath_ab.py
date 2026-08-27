@@ -150,12 +150,20 @@ def parse_log(path, keep_all=False):
                 # t_now is printed at the END of a step, so it belongs to the block above.
                 s = int(m.group(1))
                 tgt = None
-                if cur is not None and cur["step"] == s:
+                if cur is not None and (cur["step"] == s or not seen_banner):
                     tgt = cur
                 elif s in by_step:
                     tgt = recs[by_step[s]]
+                elif (not seen_banner) and recs:
+                    tgt = recs[-1]
                 if tgt is not None:
                     tgt["t_now"] = _f(m.group(2))
+                    # With no banner the block's "step" is only a counter. The After-step
+                    # line carries the real number, so adopt it -- otherwise a log from a
+                    # RESTARTED run (counter 1,2,3... vs istep 1000,1001,...) never matches
+                    # and t_now is silently dropped, taking time alignment with it.
+                    if not seen_banner:
+                        tgt["step"] = s
                 continue
 
             m = RE_HEAD.search(line)
@@ -543,6 +551,19 @@ def main():
     if any(r.get("step_is_guess") for r in ra + rb):
         out.append("  WARNING: no 'time step :' banner found -- steps are block counters.")
 
+    # Where does each run stand right now? The window mean can be dominated by a
+    # transient the run has already left, so the last sample is reported separately.
+    out.append("")
+    out.append("  CURRENT STATE (last sample in each log)")
+    for lab, r in ((la, ra), (lb, rb)):
+        last = r[-1]
+        out.append("    %-14s t_now %-10s weak %-11s I_wall %-11s ePhi/kTe mean %s"
+                   % (lab, fmt(last.get("t_now", NAN)).strip(),
+                      fmt(last.get("weak", NAN)).strip(),
+                      fmt(last.get("I_wall", NAN)).strip(),
+                      fmt(last.get("ePhi_mean", NAN)).strip()))
+    out.append("")
+
     wa, wb, xkey, how = choose_window(ra, rb, args, out)
     if wa is None:
         out += ["", "ERROR: " + how + ".", "",
@@ -561,6 +582,12 @@ def main():
                % (la[:14], len(wa), xkey, sp(xa[0]), sp(xa[1])))
     out.append("               %-14s %4d samples, %s %s .. %s"
                % (lb[:14], len(wb), xkey, sp(xb[0]), sp(xb[1])))
+    if xkey == "t_now":
+        full_a = ra[-1].get("t_now", NAN) - ra[0].get("t_now", NAN)
+        if not isnan(full_a) and full_a > 0 and (xa[1] - xa[0]) > 0.9 * full_a:
+            out.append("  WARNING: the window spans essentially the WHOLE of %s, startup" % la)
+            out.append("           included. Averages over a relaxation are not steady-state")
+            out.append("           values. Use --from-time to cut the transient off.")
     if min(len(wa), len(wb)) < 8:
         out.append("  WARNING: fewer than 8 samples in a window -- no drift estimate is possible.")
     elif min(len(wa), len(wb)) < 20:
