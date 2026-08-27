@@ -283,9 +283,11 @@ if (my_id .eq. 0) then
     write(*,*) '      so total energy is not conserved to Braginskii order. Adequate for'
     write(*,*) '      establishing whether the potential structure appears; NOT adequate'
     write(*,*) '      for a quantitative energy or detachment result.'
-    if ( .not. any(bcs(:)%natural%zj) ) then
-      write(*,*) '      WARNING: no boundary type has natural%zj, so the wall current cannot'
-      write(*,*) '      respond. The thermoelectric drive will then move the potential only.'
+    if ( (.not. any(bcs(:)%natural%zj)) .and. (.not. any(bcs(:)%sheath_zj_weak)) .and.      &
+         any(bcs(:)%dirichlet%zj) ) then
+      write(*,*) '      WARNING: zj is pinned at the wall (dirichlet%zj, no sheath_zj_weak and'
+      write(*,*) '      no natural%zj), so the wall current cannot respond and the'
+      write(*,*) '      thermoelectric drive will move the potential only.'
     endif
   endif
 

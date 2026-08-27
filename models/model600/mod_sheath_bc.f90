@@ -66,10 +66,28 @@
 !! whenever zj at the wall is pinned: the boundary condition can then only move the potential, and
 !! if the delivered current exceeds j_sat no potential satisfies the characteristic.
 !!
-!! So the current definition surface term must be restored: natural%zj = .true. with
-!! dirichlet%zj = .false. It couples zj at the boundary to grad(psi).n - the NORMAL derivative of
-!! psi, which dirichlet%psi does NOT pin (that fixes the value and the tangential derivative only).
-!! That is the degree of freedom through which the wall current can respond to the sheath.
+!! What that measurement shows is that dirichlet%zj must be OFF. It does not by itself show that
+!! natural%zj must be on, and the two routes differ here:
+!!
+!!  - NATURAL%U route: nothing replaces the boundary zj rows, so releasing the Dirichlet leaves
+!!    them with an incomplete weak form. natural%zj = .true. is then genuinely required; it
+!!    couples zj at the boundary to grad(psi).n - the NORMAL derivative of psi, which
+!!    dirichlet%psi does NOT pin (that fixes the value and the tangential derivative only), and
+!!    that is the degree of freedom through which the wall current responds to the sheath.
+!!
+!!  - WEAK (sheath_zj_weak) route: the boundary zj trace rows are REPLACED by the characteristic
+!!    itself, so the surface term would only contribute to rows that are then overwritten. The
+!!    j-V loop closes through the constraint: zj at the wall is not pinned, it is set to
+!!    zj_sh(u,rho,Ti,Te), and the interior zj = Delta*psi equation makes psi's normal derivative
+!!    follow. MEASURED: dirichlet%zj = .false. with natural%zj left OFF ran 3900 steps with
+!!    I_sheath = I_Ampere to four significant figures on both targets. natural%zj is therefore
+!!    NOT required on this route.
+!!
+!!    The one thing it still touches there: the trace space spans only the value and tangential
+!!    DOFs, so the zj rows at the NORMAL-derivative DOFs of boundary nodes are not replaced and
+!!    keep an incomplete weak form without it. That is second order and was not measurable at
+!!    0.00 % closure, but it is the reason to turn natural%zj on if a boundary zj row ever falls
+!!    below the trace accumulator's degeneracy floor.
 !!
 !! Its Jacobian was wrong until 2026-08-19: the trial loop produced columns only at
 !! l2 = direction(l), and psi_t synthesised a fictitious normal derivative on the value DOF, so the

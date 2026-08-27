@@ -28,8 +28,8 @@ Full writeup with a from-scratch finite-element primer: `doc/sheath_bc_whitepape
 Namelist:
 
     bcs(1)%sheath_zj_weak = .true.
-    bcs(1)%natural%zj     = .true.    ! REQUIRED - defaults .false., without it the j-V loop is open
-    bcs(1)%dirichlet%zj   = .false.
+    bcs(1)%dirichlet%zj   = .false.   ! REQUIRED - a pinned zj opens the j-V loop
+    bcs(1)%natural%zj     = .false.   ! NOT required on the weak route, see below
     bcs(1)%dirichlet%u    = .false.
     bcs(1)%dirichlet%w    = .true.
     bcs(1)%mach1          = .true.
@@ -37,6 +37,13 @@ Namelist:
 
 Keep `dirichlet%u = .true.` on at least one other boundary type as a gauge, or the constant
 mode of `u` is undetermined.
+
+`natural%zj` is required on the OLD natural%u route, where nothing replaces the boundary zj rows
+and releasing their Dirichlet leaves an incomplete weak form. On the WEAK route those rows are
+replaced by the characteristic itself, so the surface term would only feed rows that are then
+overwritten, and the j-V loop closes through the constraint: zj at the wall is not pinned, it is
+set to zj_sh(u,rho,Ti,Te), and the interior zj = Delta*psi equation makes psi's normal derivative
+follow. Measured: left off, 3900 steps at 0.00 % closure. Not required here.
 
 **This result stands regardless of how the physics question resolves.**
 

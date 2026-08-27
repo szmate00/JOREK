@@ -790,18 +790,35 @@ only move the potential --- and if the delivered current exceeds $j_{\rm sat}$, 
 the characteristic.
 \end{plain}
 
-The surface term must therefore be restored (\code{natural\%zj = .true.}, \code{dirichlet\%zj =
-.false.}), coupling $\zj$ at the boundary to $\nabla\psi\!\cdot\!\bm{n}$ --- the \emph{normal}
-derivative of $\psi$, which \code{dirichlet\%psi} does not pin, since that fixes the value and the
-tangential derivative only. That normal derivative is the degree of freedom through which the wall
-current responds to the sheath.
+What that measurement shows is that \code{dirichlet\%zj} must be \emph{off}. Whether the surface
+term must additionally be restored depends on the route, and the two differ:
+
+\begin{itemize}\itemsep3pt
+\item On the \textbf{natural\%u} route nothing replaces the boundary $\zj$ rows, so releasing the
+  Dirichlet leaves them with an incomplete weak form. \code{natural\%zj = .true.} is then genuinely
+  required, coupling $\zj$ at the boundary to $\nabla\psi\!\cdot\!\bm{n}$ --- the \emph{normal}
+  derivative of $\psi$, which \code{dirichlet\%psi} does not pin, since that fixes the value and
+  the tangential derivative only.
+\item On the \textbf{weak} route the boundary $\zj$ trace rows are \emph{replaced} by the
+  characteristic, so the surface term would only contribute to rows that are then overwritten. The
+  loop closes through the constraint itself: $\zj$ at the wall is not pinned, it is set to
+  $\zjsh(u,\rho,T_i,T_e)$, and the interior $\zj = \Delta^{*}\psi$ equation makes $\psi$'s normal
+  derivative follow. Measured: \code{natural\%zj} left off ran 3900 steps at $0.00\,\%$ closure.
+  It is \textbf{not} required here.
+\end{itemize}
+
+The one thing it still touches on the weak route is that the trace space spans only the value and
+tangential DOFs, so the $\zj$ rows at the \emph{normal}-derivative DOFs of boundary nodes are not
+replaced and keep an incomplete weak form without it. That is second order and was not measurable at
+$0.00\,\%$ closure, but it is the reason to enable it if a row ever falls below the accumulator's
+degeneracy floor.
 
 \subsection{Required namelist configuration}
 
 \begin{lstlisting}[caption={Enabling the weak sheath condition on the strike-point boundary types.}]
   bcs(1)%sheath_zj_weak = .true.    ! the weak Galerkin route (this work)
-  bcs(1)%natural%zj     = .true.    ! REQUIRED - without it the j-V loop is open
-  bcs(1)%dirichlet%zj   = .false.   ! ... and its Dirichlet has to come off
+  bcs(1)%dirichlet%zj   = .false.   ! REQUIRED - a pinned zj opens the j-V loop
+  bcs(1)%natural%zj     = .false.   ! optional here; see Section 5.7
   bcs(1)%dirichlet%u    = .false.   ! u is free, set by charge continuity at the wall
   bcs(1)%dirichlet%w    = .true.    ! KEEP; leave natural%w = .false.
   bcs(1)%mach1          = .true.    ! j_sat assumes Mach 1 here (default for type 1)
