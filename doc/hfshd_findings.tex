@@ -1,0 +1,386 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{mdframed}
+\usepackage{listings}
+\usepackage[colorlinks=true,linkcolor=NavyBlue,urlcolor=NavyBlue]{hyperref}
+\usepackage{microtype}
+
+\definecolor{codebg}{HTML}{F4F4F0}
+\definecolor{rulec}{HTML}{C9C7BC}
+\definecolor{keyc}{HTML}{7B3F00}
+\definecolor{warnc}{HTML}{8B2E1F}
+
+\lstset{
+  basicstyle=\ttfamily\scriptsize, columns=fullflexible, keepspaces=true,
+  breaklines=true, showstringspaces=false, backgroundcolor=\color{codebg},
+  xleftmargin=4pt, framexleftmargin=4pt, framextopmargin=3pt, framexbottommargin=3pt,
+  commentstyle=\color{rulec}\itshape,
+}
+
+\newmdenv[linecolor=rulec,linewidth=0.6pt,backgroundcolor=codebg,
+  innertopmargin=6pt,innerbottommargin=6pt,innerleftmargin=8pt,innerrightmargin=8pt,
+  skipabove=8pt,skipbelow=8pt]{keybox}
+
+\newmdenv[linecolor=warnc,linewidth=0.9pt,backgroundcolor=white,
+  innertopmargin=6pt,innerbottommargin=6pt,innerleftmargin=8pt,innerrightmargin=8pt,
+  skipabove=8pt,skipbelow=8pt]{caution}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\jpar}{j_\parallel}
+\newcommand{\vE}{\bm v_E}
+
+\title{\vspace{-1.5cm}HFSHD in JOREK model600: what drives the divertor potential,\\
+       and what is still missing}
+\author{Máté Szűcs}
+\date{27 August 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+Two independent numerical experiments show that the high-field-side density asymmetry in
+JOREK \code{model600} is controlled by the product $\eta\jpar$ in the SOL and private flux
+region, exactly as the SOLPS mechanism of Senichenkov \emph{et al.} (CPP \textbf{62}, 2022,
+e202100177) requires. Raising $\eta\jpar$ by either route --- restoring a volumetric current
+term in the SOL, or raising the resistivity directly --- produces the divertor potential
+structure and a high-field-side density enhancement; removing it removes both. This
+reverses the campaign's earlier conclusion that the mechanism was absent from the model.
+
+What has \emph{not} been reproduced is the full HFSHD signature. Both experiments produce a
+density enhancement localised \emph{at} the inner target; neither produces the cold, dense
+column extending from the target up the inner leg that defines HFSHD. The reason is
+identified: both routes amplify the \emph{electrical} half of the loop and neither supplies
+the \emph{thermal} half, because artificial resistivity does not cool the plasma. Section 6
+states precisely which claims are measured and which are inferred; several confident
+interpretations made during this work were falsified by the data and are recorded in
+Section 7 so they are not revisited.
+\end{abstract}
+
+\section{The mechanism being tested}
+
+Senichenkov's chain, in the order the causality runs:
+\begin{equation}
+  \partial_Z p \big|_{\rm PFR}
+  \;\longrightarrow\;
+  \nabla\!\cdot\!\bm j_{\rm dia}
+  \;\longrightarrow\;
+  \nabla_\parallel \jpar
+  \;\longrightarrow\;
+  E_\parallel = \eta\jpar
+  \;\longrightarrow\;
+  \Phi\ \text{structure}
+  \;\longrightarrow\;
+  \vE
+  \;\longrightarrow\;
+  n_{\rm HFS}
+  \label{eq:chain}
+\end{equation}
+The divergent diamagnetic current in the private flux region must close as parallel current
+to the plates; driving that current through cold, resistive plasma costs a parallel electric
+field; the integrated field is a potential structure near the X-point; its $\bm E\times\bm B$
+carries plasma from the outer to the inner divertor. The loop then closes on itself, because
+the transported density cools the inner leg, raising $\eta$ and therefore $E_\parallel$.
+
+\subsection{Every ingredient is present in \code{model600}}
+
+The vorticity equation \emph{is} $\nabla\!\cdot\!\bm j = 0$, so the second and third arrows of
+\eqref{eq:chain} are satisfied by construction rather than approximately:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+SOLPS ingredient & \code{model600} term & source line \\
+\midrule
+$\nabla\!\cdot\!\bm j_{\rm dia}$ & \code{u\_Eq\_\_grad\_p}, $R^2(v_s p_{0t}-v_t p_{0s}) \to -2R\,\partial_Z p$ & \code{mod\_elt\_matrix\_fft:1593} \\
+$\nabla_\parallel \jpar$         & \code{u\_Eq\_\_JxB}, $[\psi,zj]$                    & \code{:1586} \\
+$-\nabla_\parallel p_e/(en_e)$   & $\tau_{\rm IC}\!\cdot\!2/(r_{0}B^2)$ bracket        & \code{:1563} \\
+$-\alpha_e\nabla_\parallel T_e/e$& thermoelectric term                                 & \code{:1571} \\
+$\jpar$ through the plate        & weak Galerkin $j$--$V$ sheath BC                     & \code{mod\_sheath\_trace} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent and the switches are live in the production input: \code{tauic = 5.388e-3},
+\code{eta\_T\_dependent = .true.} (default), \code{keep\_current\_confine\_strength = 1}
+(default). No term of the mechanism is switched off.
+
+\section{Result 1: the cutoff scan}
+
+\code{keep\_current\_prof} maintains the current profile through a source $zj_{\rm src}$.
+The parameter \code{keep\_current\_confine\_strength} masks that source outside the confined
+region: $0$ leaves it acting everywhere including the SOL and PFR, $1$ removes it there
+entirely. Four runs, identical but for this parameter, compared at the same cycle and time
+(1000, $t = 2.83\times10^{-3}$\,s):
+
+\begin{center}
+\begin{tabular}{lcccc}
+\toprule
+strength & 0 & 0.25 & 0.5 & 1 \\
+\midrule
+$u_{\max}$ (read from plot)   & 39.5 & 25.4 & 20.7 & 12.4 \\
+PFR current                   & broad, filling & weaker & weaker & near zero \\
+inner-leg density lobe        & large, $n_{e20}\!\approx\!1$ & smaller & elongated & \textbf{absent} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Three quantities, monotonic, in the same direction, across four points. The potential
+amplitude changes by only $3.2\times$ while the density lobe goes from prominent to absent
+--- the density response is strongly nonlinear, which is the signature of a threshold rather
+than a proportional response.
+
+\subsection{Why this is causation and not correlation}
+
+\code{keep\_current\_prof} enters \emph{only} the $\psi$ equation, as $\eta(zj - zj_{\rm src})$.
+It appears nowhere in the continuity equation. Its only path to the density is therefore
+\begin{equation}
+  zj_{\rm src}\;\rightarrow\;\text{EMF in Ohm's law}\;\rightarrow\;\Phi\;\rightarrow\;\vE\;\rightarrow\;n .
+\end{equation}
+That is a statement about which terms exist in which equations, not an inference from four
+correlated panels. (A second path exists in principle --- the source changes $zj=\Delta^*\psi$,
+hence the field, hence parallel transport --- but SOL currents are $\sim0.1\%$ of $I_p$, so it
+is negligible.)
+
+\subsection{Why a boundary condition cannot substitute}
+
+This is the structural reason the converged sheath BC, on its own, did not produce HFSHD.
+
+\begin{keybox}
+A boundary condition drives current that flows \emph{through} the domain: in at one plate,
+out at the other. Along a field line $\jpar$ is then roughly constant, so
+$\int\!\eta\jpar\,dl$ is \textbf{monotonic} --- a target-to-target bias.
+
+A potential hill is a \emph{local maximum}: $\Phi$ falls from the X-point toward
+\emph{both} plates, so $\jpar$ must flow \emph{out of} the X-point region in both directions
+and therefore \textbf{change sign} along the field line. A current that changes sign requires
+a source in between. No boundary condition can supply that; only a volumetric
+$\nabla\!\cdot\!\bm j$ term can.
+\end{keybox}
+
+\noindent This is measurable in the runs, not merely argued. With the sheath BC active the
+$u$ field shows $\Phi>0$ on the inner leg and $\Phi<0$ on the outer --- a monotonic
+target-to-target bias with no local extremum at the X-point. And an imposed bias of that shape
+was separately measured to be a weak lever: \textbf{36\,V moved the integrated in--out density
+ratio from 1.171 to 1.189}, i.e. $5\times10^{-4}$ per volt.
+
+\section{Result 2: resistivity alone, with no artificial source}
+
+The obvious objection to Section 2 is that $zj_{\rm src}$ is not a physical current. The
+second experiment removes it. With \code{keep\_current\_confine\_strength = 1} (source fully
+masked in the SOL), the sheath BC and thermoelectric term active, and $\eta$ raised
+$100\times$:
+
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+ & $\eta\times1$ & $\eta\times100$ \\
+\midrule
+$u_{\max}$                & 12.4 & \textbf{108.4} \\
+PFR potential structure   & thin wedge & strong, localised, closed \\
+current in the divertor   & thin filaments on the separatrix & broad, diffuse \\
+HFS density enhancement   & absent & \textbf{present at the target} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent The structure appears \emph{without any artificial current in the SOL}. Whatever
+current the model generates physically, multiplied by a large enough $\eta$, produces the
+potential structure and an HFS density enhancement. This is the same chain as Section 2
+reached by an independent route, and it is the stronger of the two results because nothing is
+imposed.
+
+Two subsidiary observations:
+
+\begin{itemize}\itemsep2pt
+\item The current is no longer filamentary. At $\eta\times1$ it forms thin layers hugging the
+      separatrix; at $\eta\times100$ resistive diffusion is $100\times$ faster and those layers
+      broaden past the grid scale. The filaments are consistent with flux dragging against a
+      frozen $\psi$ (\code{sheath\_wall\_vel = 0}), which suggests that parameter as a way to
+      broaden them \emph{without} unphysical resistivity.
+\item Scaling: $u_{\max}$ rose by $8.7\times$ for $100\times$ in $\eta$ --- sublinear, as
+      expected since $\jpar$ responds. Working backwards, reaching the $u_{\max}\approx40$ that
+      produced a clear lobe in Section 2 requires roughly $\eta\times10$--$20$.
+\end{itemize}
+
+\begin{keybox}
+\textbf{That factor is available physically.} Since $\eta\propto T_e^{-3/2}$, cooling the leg
+from the present $\approx\!25$\,eV to $\approx\!5$\,eV gives $\eta\times11$. The required
+amplification does not need artificial resistivity; it needs a moderately detached leg.
+\end{keybox}
+
+\section{What is still missing: the thermal half}
+
+Neither experiment reproduced HFSHD. Both produced a density enhancement \emph{at} the inner
+target. HFSHD is more than that: it is a cold, dense structure extending \emph{from} the HFS
+target \emph{up} the inner leg, past the X-point, into the HFS SOL. In the runs, the inner leg
+immediately above the enhancement is among the most dilute regions in the domain.
+
+\begin{caution}
+\textbf{$\bm{\eta\times100}$ is not equivalent to a cold leg.} It reproduces the resistivity of
+a $\approx\!1.2$\,eV plasma \emph{for Ohm's law only}. Every temperature-dependent process ---
+line radiation, ionisation balance, volume recombination, charge-exchange momentum loss,
+parallel conduction --- still sees 25\,eV. The upward extension of HFSHD is a detachment front,
+and fronts propagate on radiation and power balance, not on $\bm E\times\bm B$. A run with
+artificial $\eta$ therefore \emph{cannot} produce the column, however large the potential
+structure becomes.
+\end{caution}
+
+\noindent This separates the loop cleanly:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+half & supplies & status \\
+\midrule
+electrical & $\eta\jpar \to \Phi \to \vE \to$ seeds the asymmetry & \textbf{demonstrated, twice} \\
+thermal    & radiation, recombination $\to$ cold column up the leg & \textbf{not present} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent The thermal half requires the leg to be genuinely cold, which requires
+recycling and radiation --- and in ASDEX Upgrade HFSHD is observed in \emph{pure deuterium}
+high-density discharges, so hydrogenic radiation, CX momentum loss and volume recombination
+are sufficient. Impurity seeding is not a prerequisite.
+
+The high-density deuterium runs already produce dense legs, but \emph{symmetric} ones. The
+electrical seed and the thermal amplifier have so far never been present in the same run: the
+low-puff cases have the potential structure available (via artificial $\eta$) but warm legs;
+the high-puff cases have cold legs but no measured potential structure.
+
+\section{Numerical suppression: a specific, untested suspect}
+
+One direct comparison in the run set shows a density lobe present and then absent:
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+configuration & inner-leg lobe \\
+\midrule
+cutoff & present, $n_{e20}\approx0.5$ \\
+cutoff + sheath $j$ + \code{D\_perp\_sc\_num = 10} & absent \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{caution}
+\textbf{Two things changed at once; this comparison cannot attribute the loss.} Either the
+sheath BC's $\bm E\times\bm B$ transports the lobe away, or the shock-capturing diffusion
+erases it.
+\end{caution}
+
+\noindent The second is the more targeted hypothesis. \code{D\_perp\_sc\_num} defaults to $0$
+and is set to $10$; shock-capturing diffusion acts precisely where gradients are steep, and
+HFSHD \emph{is} a steep gradient --- dense HFS against dilute LFS across a sharp boundary
+through the PFR. It was introduced to suppress cell-P\'eclet ringing in earlier
+floating-potential work; whether it also removes the structure of interest is untested and is
+resolved by one run with \code{use\_sc = .false.}
+
+\section{Epistemic status}
+
+Several confident interpretations made during this work were falsified within hours. The
+following distinguishes what the data support from what is inferred.
+
+\begin{center}
+\begin{tabular}{p{0.52\linewidth}p{0.40\linewidth}}
+\toprule
+claim & status \\
+\midrule
+Density asymmetry, PFR current and $u_{\max}$ all scale monotonically with the SOL current source & \textbf{Measured}, 4 points, matched time \\[2pt]
+The source reaches the density only through $\Phi$ & \textbf{Structural}: it appears only in the $\psi$ equation \\[2pt]
+A boundary condition produces a monotonic bias, not a local maximum & \textbf{Structural}, and consistent with the measured $u$ topology \\[2pt]
+An imposed target-to-target bias is a weak lever & \textbf{Measured}: $5\times10^{-4}$ per volt \\[2pt]
+At $\eta\times100$ with no artificial source, the potential structure and an HFS enhancement appear & \textbf{Measured}, but the run \emph{crashed at 610 steps} and is not converged ($t=2.2\times10^{-4}$\,s) \\[2pt]
+$\eta\times10$--$20$ suffices, and a 5\,eV leg supplies it & \textbf{Inferred} from a sublinear two-point scaling; not verified \\[2pt]
+$zj_{\rm src}$ is a proxy for the physical plate-closing current & \textbf{Structural analogy only.} $zj_{\rm src}$ is the initial equilibrium profile, not the divergent $\nabla\!\cdot\!\bm j_{\rm dia}$ pattern. The scan shows \emph{a} volumetric current term drives the chain; it does \emph{not} establish that the physical current does so at its physical magnitude \\[2pt]
+The thin current layers are flux dragging against frozen $\psi$ & \textbf{Hypothesis}, supported by their disappearance at high $\eta$; \code{sheath\_wall\_vel} untested \\[2pt]
+\code{D\_perp\_sc\_num} erases the lobe & \textbf{Confounded}; two changes at once \\[2pt]
+The inner-leg lobe is drift-fed rather than puff-fed & \textbf{Not established.} \code{valves(1)} sits at $R\,1.3$--$1.4$, $Z\,-1.11$--$-1.05$, directly beneath it \\[2pt]
+Sign convention of $\Phi$ relative to the plotted $u$ & \textbf{Unresolved.} $\Phi=-F_0u$, so red $u$ is negative $\Phi$; postproc's \code{Phi} expression additionally returns $+F_0u$. Pin this before comparing topology to SOLPS \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Supporting measurements from the same campaign}
+
+\begin{itemize}\itemsep2pt
+\item $\Phi$ is \textbf{not} a flux function: flux-weighted misalignment $7.2^\circ$, with closed
+      $u$ contours (local extrema) in the PFR where $\psi$ has none.
+\item Cross-field transport in the PFR: $\langle|\Gamma_\psi|\rangle/\langle|\Gamma_{\parallel,\rm pol}|\rangle = 0.168$
+      with net fraction $0.558$, i.e. $\approx9\%$ of the parallel flux crossing flux surfaces
+      and \emph{not} cancelling.
+\item The reduced-MHD balance $v_\psi \approx \eta\jpar/|\nabla\psi|$ is verified: 21\,m/s
+      measured against 15\,m/s predicted. The model is in the correct resistive balance.
+\item The thermoelectric term contributes $+2\%$ to the inner sheath potential, \emph{reduces}
+      the in--out asymmetry by 45\%, and its changes avoid the PFR (concentration ratio 0.33).
+      It is not the driver.
+\end{itemize}
+
+\section{Falsified during this work}
+
+Recorded so they are not revisited:
+
+\begin{itemize}\itemsep2pt
+\item \emph{``The divertor is too cold; $\Phi$ is $40\times$ too small.''} The low-puff legs are
+      20--30\,eV. The 1\,eV figure came from a different case with a broken pump.
+\item \emph{``The resistivity floor is clamping $\eta$.''} \code{t\_min\_neg = 3e-5} puts the knee
+      at 1.93\,eV, far below the leg temperature. Inactive.
+\item \emph{``$F_0$ has the wrong sign.''} The wiki is explicit that standard ASDEX Upgrade is
+      $F_0>0$ in JOREK; the toroidal angle runs opposite to the device convention. The
+      remaining condition \code{Psi\_axis < Psi\_xpoint} has not been checked.
+\item \emph{``The thermoelectric term is the key.''} 2\%, wrong direction, PFR-avoiding.
+\item \emph{``The sheath BC alone can build the hill.''} Structurally it cannot; see \S2.3.
+\item \emph{``Impurity seeding is required.''} HFSHD is observed in pure-D high-density ASDEX
+      Upgrade discharges.
+\item \emph{``The uncut \code{keep\_current\_prof} was 100\% artifact.''} What was falsified was
+      the $\eta$-scaling interpretation. The source acts as a volumetric EMF in the SOL and
+      drives the chain; see the caveat in \S6 on how far that analogy extends.
+\end{itemize}
+
+\section{Next steps}
+
+Ordered by information per unit compute.
+
+\begin{enumerate}\itemsep3pt
+\item \textbf{High-D with \code{use\_sc = .false.}} One line. The high-density case already
+      supplies the thermal half; this tests whether the structure is being erased as it forms.
+      Step $10\to3\to1$ if ringing returns. \emph{This is the only run in which both halves of
+      the loop could be present at once.}
+\item \textbf{High-D with \code{eta = 2.e-7}} ($\times10$). Insurance: guarantees the electrical
+      half is above threshold while the cold leg supplies the thermal half. Neither half faked.
+\item \textbf{\code{sheath\_wall\_vel = 4.e-3}.} Tests whether the thin current layers are flux
+      dragging. If they broaden and current enters the PFR interior, the amplification is
+      recovered without unphysical $\eta$. Mesh-dependent --- scan it.
+\item \textbf{\code{valves(1)} off.} Decides whether the inner-leg lobe is drift-fed or
+      puff-fed. Until this is answered it is not established that the lobe is HFSHD at all.
+\item \textbf{Fix the polygons} before any detachment attempt: all four pump and valve quads
+      are specified in bowtie order (bottom-left, top-left, bottom-right, top-right), which
+      self-intersects and roughly halves the effective areas. Swap the last two vertices of
+      each, or set \code{only\_in\_polygon = .false.} and use a whole-wall albedo.
+\end{enumerate}
+
+\subsection*{What would close the question}
+
+The measurement that distinguishes ``mechanism present but subcritical'' from ``mechanism
+absent'' is $\Delta\Phi$ along the field line from the X-point to each strike point, compared
+against $\int\!\eta\jpar\,dl$ over the same path. SOLPS obtains $\sim100$\,V. Tooling exists
+(\code{util/postproc\_hill.in}, \code{util/analyse\_hill.py}) and has not been run.
+
+\vspace{1em}
+\hrule
+\vspace{0.6em}
+\noindent\footnotesize
+Runs: AUG \#38773, \code{model600}, boundary type 1, $n_{\rm tor}=1$, branch
+\code{thermoelectric-ohm}. Reference: I.~Senichenkov \emph{et al.}, Contrib.\ Plasma Phys.\
+\textbf{62} (5--6), e202100177 (2022). Companion documents:
+\code{doc/sheath\_bc\_whitepaper.pdf} (the weak Galerkin $j$--$V$ sheath BC),
+\code{doc/jorek\_vpar\_bc\_drifts.pdf} (the Mach-1 BC and its drift term).
+
+\end{document}
