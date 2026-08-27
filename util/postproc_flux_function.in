@@ -1,0 +1,63 @@
+! -----------------------------------------------------------------------------
+! Is Phi a flux function in the divertor, and does the departure move density?
+!
+! Run:   jorek2_postproc < postproc_flux_function.in
+! Then:  util/analyse_flux_function.py exprs_Rmin*.h5
+!        util/analyse_flux_function.py nothermo/exprs_*.h5 thermo/exprs_*.h5   (A/B)
+!
+! WHY POSTPROC AND NOT VISIT. The quantity wanted is
+!
+!     v_psi = (v_ExB . grad psi) / |grad psi|
+!
+! which is IDENTICALLY ZERO if and only if Phi = Phi(psi). Computing it in VisIt
+! means calling gradient() on the VTK export, and that export carries LINEAR
+! cells while JOREK's elements are bicubic Bezier -- so the gradient is that of
+! the linear interpolant, with cell-scale noise worst exactly where the mesh is
+! coarse. postproc evaluates the derivatives analytically from the Bezier basis.
+! For a diagnostic whose whole content is "are these two gradients parallel",
+! that difference is not cosmetic.
+!
+! It also returns NUMBERS rather than pixels. The open question is not what the
+! map looks like -- it is whether the radial ExB flux is a significant fraction
+! of the parallel flux in the PFR, and that is a ratio, not a picture.
+!
+! WHAT IS EXPORTED AND WHY. There is no v_psi expression in JOREK, and
+! V_ExB_pol is NOT it: that one is -(grad u . grad psi)/B_theta, the component
+! of v_ExB ALONG the poloidal field. What is wanted is the CROSS product, i.e.
+! the component across flux surfaces. It is reconstructed in the Python script
+! from quantities that DO exist, with no numerical differentiation at all:
+!
+!     grad psi = ( -R*BZ, R*BR )        (from B_pol = (psi_Z, -psi_R)/R)
+!     |grad psi| = R * Btheta
+!  => v_psi = ( V_ExB_Z*BR - V_ExB_R*BZ ) / Btheta
+!
+! The R factors cancel exactly. vpar, ne, B_abs and Btheta are exported so the
+! script can form the comparison that actually decides the question,
+!
+!     Gamma_psi / Gamma_par,pol = n*v_psi / ( n*vpar*Btheta/B )
+!
+! both being poloidal-plane flux densities, hence directly comparable.
+!
+! ORDER MATTERS, NAMES DO NOT. write_hdf5_2d stores the variable names into a
+! character(len=1) array (mod_diag_output.f90:552, flagged in the source with a
+! row of #), so every name in the file is truncated to its FIRST LETTER. The
+! reader therefore keys on the ORDER of the expressions below. If you edit this
+! list, pass the new list to the script with --vars.
+! -----------------------------------------------------------------------------
+
+namelist input
+
+set units 0          ! SI
+
+for step 1180 to 1180 do
+
+  ! Order is load-bearing -- see the note above.
+  expressions R Z Psi_N Phi ne T_e T_i vpar V_ExB_R V_ExB_Z BR BZ Btheta B_abs
+
+  ! The divertor region: both legs, the X-point and the whole PFR between them.
+  ! For AUG 38773 the strike points sit at (1.256,-1.055) and (1.593,-1.150),
+  ! with the X-point near (1.43,-0.93). 300 x 300 is ~1.5 mm resolution, fine
+  ! enough for the PFR cell (which spans ~R 1.30-1.50) without being slow.
+  rectangle 1.15 1.72 300 -1.18 -0.78 300 0.
+
+done
