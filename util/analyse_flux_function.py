@@ -153,11 +153,27 @@ def derive(d, zx=-0.93):
         pr_a, pz_a = -R * BZ, R * BR                     # asserted grad psi
         m = np.isfinite(gr) & np.isfinite(gz) & np.isfinite(pr_a) & np.isfinite(pz_a)
         m &= (np.hypot(gr, gz) > 0) & (np.hypot(pr_a, pz_a) > 0)
+        # RESTRICT TO STRONG GRADIENTS. The DIRECTION of grad psi is meaningless where
+        # |grad psi| -> 0, which is exactly what happens approaching the X-point, and the
+        # export is centred on the X-point. Those points contribute a uniformly random
+        # cosine and drag the median toward zero -- on real data to -0.40, which reads as
+        # a broken formula rather than as an ill-posed question. Keep only the upper half
+        # by |grad psi|, where the direction is actually defined.
+        gmag = np.hypot(pr_a, pz_a)
+        if m.sum() > 200:
+            thr = np.nanmedian(gmag[m])
+            ms = m & (gmag > thr)
+            if ms.sum() > 100:
+                m = ms
         if m.sum() > 100:
             cos = ((gr[m] * pr_a[m] + gz[m] * pz_a[m])
                    / (np.hypot(gr[m], gz[m]) * np.hypot(pr_a[m], pz_a[m])))
-            d["_sign_cos"] = float(np.nanmedian(cos))
-            d["_sign_n"] = int(m.sum())
+            cos = cos[np.isfinite(cos)]
+            d["_sign_cos"] = float(np.median(cos)) if cos.size else float("nan")
+            d["_sign_n"] = int(cos.size)
+            # Bimodality: a genuine anti-alignment is ~100% one sign. A mixture is not a
+            # sign problem at all, it means the reference field is unusable here.
+            d["_sign_frac_pos"] = float(np.mean(cos > 0)) if cos.size else float("nan")
         else:
             d["_sign_cos"] = float("nan")
     except Exception as e:
@@ -230,9 +246,19 @@ def report_one(d, pfr, label, out):
         elif sc < -0.9:
             note = "grad psi is ANTI-parallel to grad %s: +v_psi points INWARD" % ref
         else:
-            note = ("WEAK sign check against %s (cos = %s) -- do not trust the SIGN of "
-                    "v_psi, only its magnitude" % (ref, fmt(sc, 3)))
+            fp = d.get("_sign_frac_pos", float("nan"))
+            note = ("WEAK sign check against %s (cos = %s, %s%% of points positive over %d"
+                    " samples)" % (ref, fmt(sc, 3),
+                                   fmt(100 * fp, 3) if np.isfinite(fp) else "?",
+                                   d.get("_sign_n", 0)))
         out.append("    %s" % note)
+        if not np.isfinite(sc) or abs(sc) <= 0.9:
+            out.append("    -> The FORMULA is not in doubt: mod_expression.f90:1319 gives")
+            out.append("       BR = +psi_Z/R and BZ = -psi_R/R, so v_psi > 0 means the ExB")
+            out.append("       points toward increasing psi, exactly. What is unverified is")
+            out.append("       only whether increasing psi is outward in THIS equilibrium.")
+            out.append("       All magnitudes, ratios and the net/circulating split are")
+            out.append("       unaffected -- they are invariant under a global sign flip.")
 
     if m.sum() == 0:
         out.append("    WARNING: the PFR box contains no valid points. Check --pfr against")
