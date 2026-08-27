@@ -736,7 +736,32 @@ def main():
                    % (reps[0], reps[1]))
         out.append("      imposing the same BC, so this is not a controlled comparison.")
 
-    # --- gate 3: same geometry -----------------------------------------------------------
+    # --- gate 3: comparable time resolution ----------------------------------------------
+    # Two runs at the same PHYSICAL time can still have got there with very different
+    # timesteps. The comparison is then between two different truncation errors as well as
+    # two different physics settings. dt is measured from consecutive t_now, so it works
+    # even when the log has no 'time step :' banner.
+    if xkey == "t_now":
+        dts = []
+        for w in (wa, wb):
+            ts = sorted(r["t_now"] for r in w.recs if not isnan(r.get("t_now", NAN)))
+            gaps = [b - a for a, b in zip(ts, ts[1:]) if b > a]
+            dts.append(sum(gaps) / len(gaps) if gaps else NAN)
+        out.append("")
+        out.append("GATE 3 -- time resolution (mean dt between samples, in the window)")
+        for lab, dt in ((la, dts[0]), (lb, dts[1])):
+            out.append("  %-14s dt = %s" % (lab, fmt(dt)))
+        if not any(isnan(x) for x in dts) and min(dts) > 0:
+            ratio = max(dts) / min(dts)
+            if ratio > 1.5:
+                out.append("  ==> The runs advance with %.1fx different timesteps. At equal t_now"
+                           % ratio)
+                out.append("      they therefore carry different time-discretisation error, and a")
+                out.append("      small delta may be partly that rather than physics. If the")
+                out.append("      adaptive controller chose these, the difference in dt is itself")
+                out.append("      an effect of the change -- worth reporting either way.")
+
+    # --- gate 4: same geometry -----------------------------------------------------------
     for k, nm in (("area_inner", "INNER area"), ("area_outer", "OUTER area")):
         aa, ab = wmean(wa, k), wmean(wb, k)
         if not (isnan(aa) or isnan(ab)) and aa > 0 and abs(ab - aa) / aa > 1e-6:
