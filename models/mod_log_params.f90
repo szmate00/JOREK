@@ -645,6 +645,8 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
 
 
   write(*,LOGI_FMT) 'keep_current_prof     ', keep_current_prof
+  write(*,LOGI_FMT) 'diag_mach1            ', diag_mach1
+  write(*,REAL_FMT) 'mach1_diag_R_split    ', mach1_diag_R_split
   write(*,LOGI_FMT) 'init_current_prof     ', init_current_prof
   write(*,LOGI_FMT) 'current_prof_initialized', current_prof_initialized
   write(*,LOGI_FMT) 'linear_run            ', linear_run

@@ -653,6 +653,8 @@ subroutine preset_parameters
   tgnum_A3           = 0.d0
 
   keep_current_prof  = .true.               ! Keep the current_source term
+  diag_mach1         = .false.              ! Mach-1 drift-term A/B diagnostic, pure diagnostic
+  mach1_diag_R_split = 0.d0                 ! 0 = do not split the diagnostic by target
   init_current_prof  = .false.
   current_prof_initialized = .false.
   

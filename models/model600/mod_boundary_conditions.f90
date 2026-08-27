@@ -37,13 +37,14 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        RMP_start_time, tstep, RMP_har_cos, RMP_har_sin, T_min,                                             &
        mach_one_bnd_integral, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,                            &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
-       bcs, loop_voltage, central_density, central_mass 
+       bcs, loop_voltage, central_density, central_mass, diag_mach1 
 use tr_module
 use mpi_mod
 use mod_basisfunctions
 use mod_interp
 use mod_integer_types
 use mod_node_indices
+use mod_mach1_diag, only: mach1_diag_reset, mach1_diag_add, mach1_diag_report
 
 implicit none
 
@@ -81,6 +82,7 @@ integer(kind=int_all) :: ijA_position,ijA_position2
 integer :: ilarge2, kv, kT, kTi, kTe, ku, kn, ilarge_vv, ilarge_vT, ilarge_vus, ilarge_vn
 integer :: ilarge_vsvs, ilarge_vsTs, ilarge_vsT, ilarge_vut, ilarge_vtvt, ilarge_vtTt, ilarge_vtT
 integer :: ierr
+real*8  :: u0_s_d, u0_t_d, u0_x_d, u0_y_d, vE_R_d, vE_Z_d, vE_n_d, vE_t_d, d_jrk_d
 logical :: apply_psi_BC, apply_current_BC, s_constant_boundary, t_constant_boundary, apply_cs, apply_dirichlet_1234, apply_dirichlet_all
 
 real*8, allocatable :: psi_RMP_cos1(:),dpsi_RMP_cos_dR1(:),dpsi_RMP_cos_dZ1(:)
@@ -145,6 +147,8 @@ RMPspectrum: if (RMP_on .and. (n_tor .ge. 3)) then !*****
     dpsi_RMP_sin_dR1(j) = dpsi_RMP_sin_dR(j) * establish_RMP
     dpsi_RMP_sin_dZ1(j) = dpsi_RMP_sin_dZ(j) * establish_RMP
   end do
+
+  if ( diag_mach1 ) call mach1_diag_reset()
 
   if (my_id == 0) then
     write (*,*) 'psi_RMP_cos1(1) and derivatives after multiplication in boundary conditions'
@@ -552,6 +556,24 @@ do i=1, n_local_elms !=== do elements
                                   + direction / Btot * Hfact_b * cs0_T
           dMach1BC_Tb =           + direction / Btot * factor  * cs0_T * element_size_0
 
+          ! --- A/B diagnostic only; imposes nothing. Rebuild the E x B velocity from u at this
+          ! --- node the same way ps0_x/ps0_y are built from psi, then split it on the boundary.
+          ! --- v_ExB = R grad(u) x e_phi = R*(-u_y, u_x) in model600's ansatz.
+          if ( diag_mach1 ) then
+            u0_s_d = node_list%node(inode)%values(1,2,var_u) * element_size_s
+            u0_t_d = node_list%node(inode)%values(1,3,var_u) * element_size_t
+            u0_x_d = (   Z_t * u0_s_d - Z_s * u0_t_d ) / xjac
+            u0_y_d = ( - R_t * u0_s_d + R_s * u0_t_d ) / xjac
+            vE_R_d = - BigR * u0_y_d
+            vE_Z_d = + BigR * u0_x_d
+            vE_n_d =   vE_R_d * normal(1) + vE_Z_d * normal(2)      ! + = into the wall
+            vE_t_d = - vE_R_d * normal(2) + vE_Z_d * normal(1)
+            ! --- The JOREK drift term as it enters v_par. Mach1BC is written in Vpar units,
+            ! --- so multiply through by Btot to compare with c_s directly.
+            d_jrk_d = factor * BigR**2 * u0_b / ps0_b
+            call mach1_diag_add(BigR, factor*cs0, d_jrk_d, vE_n_d, vE_t_d, bn, dl)
+          endif
+
 
           if (n_order .ge. 5) then
             dMach1BC     = dMach1BC + factor / Btot * BigR**2 * U0_bb/ps0_b
@@ -743,6 +765,8 @@ do i=1, n_local_elms !=== do elements
   enddo         !=== enddo vertex
  
 enddo           !=== do elements
+
+if ( diag_mach1 ) call mach1_diag_report(my_id)
 
 if (RMP_on) then
   if (allocated(psi_RMP_cos1))         call tr_deallocate(psi_RMP_cos1,"psi_RMP_cos1",CAT_UNKNOWN)
