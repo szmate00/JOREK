@@ -265,8 +265,7 @@ def _weights(pts):
     return w
 
 
-def wmean(win, key):
-    pts = win.xy(key)
+def _wmean(pts):
     if not pts:
         return NAN
     w = _weights(pts)
@@ -274,8 +273,7 @@ def wmean(win, key):
     return sum(wi * y for wi, (_, y) in zip(w, pts)) / tw if tw > 0 else NAN
 
 
-def wstd(win, key):
-    pts = win.xy(key)
+def _wstd(pts):
     if len(pts) < 2:
         return NAN
     w = _weights(pts)
@@ -284,12 +282,69 @@ def wstd(win, key):
         return NAN
     m = sum(wi * y for wi, (_, y) in zip(w, pts)) / tw
     v = sum(wi * (y - m) ** 2 for wi, (_, y) in zip(w, pts)) / tw
-    # small-sample correction so short windows do not look artificially quiet
-    n = len(pts)
+    n = len(pts)      # small-sample correction, so short windows are not falsely quiet
     return math.sqrt(v * n / (n - 1))
 
 
-def wdrift(win, key):
+def wmean(win, key):
+    return _wmean(win.xy(key))
+
+
+def wstd(win, key):
+    return _wstd(win.xy(key))
+
+
+def _interp(pts):
+    """Linear interpolation on a sorted list of (x, y)."""
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+
+    def f(x):
+        if x <= xs[0]:
+            return ys[0]
+        if x >= xs[-1]:
+            return ys[-1]
+        lo, hi = 0, len(xs) - 1
+        while hi - lo > 1:
+            mid = (lo + hi) // 2
+            if xs[mid] <= x:
+                lo = mid
+            else:
+                hi = mid
+        dx = xs[hi] - xs[lo]
+        if dx <= 0:
+            return ys[lo]
+        w = (x - xs[lo]) / dx
+        return ys[lo] * (1 - w) + ys[hi] * w
+    return f
+
+
+def paired(wa, wb, key):
+    """The DIFFERENCE series b(x) - a(x) on a common abscissa.
+
+    Both runs start from the same initial condition, so their startup transient is
+    largely COMMON MODE and cancels in the difference. Judging the A/B on each run's own
+    drift is therefore the wrong test: two runs can each swing hundreds of amps through a
+    relaxation while the gap between them is pinned. What has to be settled is the
+    DIFFERENCE, and that is what this measures.
+
+    The grid is the sparser run's abscissa, so no data is invented; the denser run is
+    interpolated onto it.
+    """
+    pa, pb = wa.xy(key), wb.xy(key)
+    if len(pa) < 2 or len(pb) < 2:
+        return []
+    lo, hi = max(pa[0][0], pb[0][0]), min(pa[-1][0], pb[-1][0])
+    if hi <= lo:
+        return []
+    grid = [x for x, _ in (pa if len(pa) <= len(pb) else pb) if lo <= x <= hi]
+    if len(grid) < 2:
+        return []
+    fa, fb = _interp(pa), _interp(pb)
+    return [(x, fb(x) - fa(x)) for x in grid]
+
+
+def _wdrift_pts(pts):
     """Change across the window: mean(second half) - mean(first half), split at the
     MIDPOINT IN X, not by record count -- otherwise a run whose steps shrink late puts
     most of its records in the second half and the split is not a split in time.
@@ -298,7 +353,6 @@ def wdrift(win, key):
     inflates the very standard deviation you would divide by, so it would hide itself.
     It is judged against the A/B delta it competes with -- see verdict_for().
     """
-    pts = win.xy(key)
     if len(pts) < 8:
         return NAN
     xlo, xhi = pts[0][0], pts[-1][0]
@@ -310,32 +364,68 @@ def wdrift(win, key):
     if len(a) < 2 or len(b) < 2:
         return NAN
 
-    def m(sub):
-        w = _weights(sub)
-        tw = sum(w)
-        return sum(wi * y for wi, (_, y) in zip(w, sub)) / tw if tw > 0 else NAN
-
-    return m(b) - m(a)
+    return _wmean(b) - _wmean(a)
 
 
-def verdict_for(delta, pooled_sd, drift_a, drift_b):
-    """Classify one metric's A/B difference. Returns (tag, worst_drift)."""
-    dr = [abs(x) for x in (drift_a, drift_b) if not isnan(x)]
-    worst = max(dr) if dr else NAN
-    if isnan(delta):
-        return "?", worst
-    # Drift is checked BEFORE scatter. While a run is still relaxing, its trend inflates
-    # its own standard deviation, so a "within noise" test would fire for the wrong reason
-    # and report a transient as a null result.
-    if not isnan(worst) and worst > abs(delta):
-        return "DRIFT > delta", worst
-    if not isnan(pooled_sd) and pooled_sd > 0 and abs(delta) < pooled_sd:
-        return "within noise", worst
-    if isnan(worst):
-        return "?", worst
-    if worst > 0.5 * abs(delta):
-        return "drift ~ delta", worst
-    return "ok", worst
+def wdrift(win, key):
+    return _wdrift_pts(win.xy(key))
+
+
+def assess(wa, wb, key):
+    """Assess one metric. Returns a dict of everything the table and verdict need.
+
+    The PAIRED difference b(x)-a(x) is the primary statistic. Common-mode transient
+    cancels in it, so a difference can be well determined long before either run alone
+    has settled -- which is the normal situation when both runs relax from the same
+    initial condition. The unpaired numbers are kept for reference and used as a fallback
+    when pairing is impossible (step alignment, missing samples).
+    """
+    ma, mb = wmean(wa, key), wmean(wb, key)
+    d = mb - ma
+    rel = 100.0 * d / abs(ma) if (not isnan(ma) and ma != 0) else NAN
+    sa, sb = wstd(wa, key), wstd(wb, key)
+    pooled = math.sqrt((sa ** 2 + sb ** 2) / 2) if not (isnan(sa) or isnan(sb)) else NAN
+
+    pts = paired(wa, wb, key)
+    r = {"ma": ma, "mb": mb, "delta": d, "rel": rel, "pooled": pooled,
+         "drift_a": wdrift(wa, key), "drift_b": wdrift(wb, key),
+         "paired": bool(pts), "p_mean": NAN, "p_sd": NAN, "p_drift": NAN}
+    if pts:
+        r["p_mean"] = _wmean(pts)
+        r["p_sd"] = _wstd(pts)
+        r["p_drift"] = _wdrift_pts(pts)
+
+    # Which numbers to judge on.
+    if r["paired"] and not isnan(r["p_mean"]):
+        val, sd, dr = r["p_mean"], r["p_sd"], r["p_drift"]
+        r["basis"] = "paired"
+    else:
+        val, sd = d, pooled
+        cand = [abs(x) for x in (r["drift_a"], r["drift_b"]) if not isnan(x)]
+        dr = max(cand) if cand else NAN
+        r["basis"] = "unpaired"
+    r["judged_drift"] = dr
+
+    scale = max(abs(ma) if not isnan(ma) else 0.0, abs(mb) if not isnan(mb) else 0.0)
+    if isnan(val):
+        r["tag"] = "?"
+    elif scale > 0 and abs(d) < 1e-9 * scale:
+        # Bit-for-bit equal in the log's printed precision -- comparing rounding dust
+        # below this would manufacture verdicts out of nothing.
+        r["tag"] = "identical"
+    elif not isnan(dr) and abs(dr) > abs(val):
+        # The difference itself has not settled -- checked BEFORE scatter, because a trend
+        # inflates the very standard deviation a "within noise" test would divide by.
+        r["tag"] = "DRIFT > delta"
+    elif not isnan(sd) and sd > 0 and abs(val) < sd:
+        r["tag"] = "within noise"
+    elif isnan(dr):
+        r["tag"] = "?"
+    elif abs(dr) > 0.5 * abs(val):
+        r["tag"] = "drift ~ delta"
+    else:
+        r["tag"] = "ok"
+    return r
 
 
 # ----------------------------------------------------------------------------------------
@@ -385,26 +475,24 @@ HEALTH_ROWS = [
     Row("closure wall", "clo_wall", ""),
 ]
 
-W = 112
+W = 128
 
 
 def compare_table(title, rows, wa, wb, la, lb, out):
     out.append("")
     out.append(title)
     out.append("-" * W)
-    out.append("  %-24s %12s %12s %12s %9s %11s   %s"
-               % ("metric", la[:12], lb[:12], "delta", "rel", "drift", "verdict"))
+    out.append("  %-24s %12s %12s %12s %9s %11s %11s   %s"
+               % ("metric", la[:12], lb[:12], "delta", "rel", "sd(delta)", "drift(delta)",
+                  "verdict"))
     out.append("-" * W)
     for row in rows:
-        ma, mb = wmean(wa, row.key), wmean(wb, row.key)
-        d = mb - ma
-        rel = 100.0 * d / abs(ma) if (not isnan(ma) and ma != 0) else NAN
-        sa, sb = wstd(wa, row.key), wstd(wb, row.key)
-        pooled = math.sqrt((sa ** 2 + sb ** 2) / 2) if not (isnan(sa) or isnan(sb)) else NAN
-        tag, worst = verdict_for(d, pooled, wdrift(wa, row.key), wdrift(wb, row.key))
-        out.append("  %-24s %12s %12s %12s %9s %11s   %s"
+        r = assess(wa, wb, row.key)
+        out.append("  %-24s %12s %12s %12s %9s %11s %11s   %s"
                    % (row.name + (" [%s]" % row.unit if row.unit else ""),
-                      fmt(ma, 12), fmt(mb, 12), fmt(d, 12), pct(rel), fmt(worst, 11), tag))
+                      fmt(r["ma"], 12), fmt(r["mb"], 12), fmt(r["delta"], 12), pct(r["rel"]),
+                      fmt(r["p_sd"] if r["paired"] else r["pooled"], 11),
+                      fmt(r["judged_drift"], 11), r["tag"]))
         if row.note:
             out.append("  %-24s ( %s )" % ("", row.note))
     out.append("-" * W)
@@ -557,11 +645,21 @@ def main():
     out.append("  CURRENT STATE (last sample in each log)")
     for lab, r in ((la, ra), (lb, rb)):
         last = r[-1]
-        out.append("    %-14s t_now %-10s weak %-11s I_wall %-11s ePhi/kTe mean %s"
-                   % (lab, fmt(last.get("t_now", NAN)).strip(),
+        # A log being written live ends mid-step: the SHEATH block is out but the
+        # 'After step' line that carries t_now is not. Walk back for the last known time.
+        t_last, mid = last.get("t_now", NAN), False
+        if isnan(t_last):
+            mid = True
+            for rec in reversed(r):
+                if not isnan(rec.get("t_now", NAN)):
+                    t_last = rec["t_now"]
+                    break
+        out.append("    %-14s t_now %-10s weak %-11s I_wall %-11s ePhi/kTe mean %s%s"
+                   % (lab, fmt(t_last).strip(),
                       fmt(last.get("weak", NAN)).strip(),
                       fmt(last.get("I_wall", NAN)).strip(),
-                      fmt(last.get("ePhi_mean", NAN)).strip()))
+                      fmt(last.get("ePhi_mean", NAN)).strip(),
+                      "   (log ends mid-step)" if mid else ""))
     out.append("")
 
     wa, wb, xkey, how = choose_window(ra, rb, args, out)
@@ -613,7 +711,9 @@ def main():
     if bad:
         out.append("  ==> %s has not converged the sheath BC in this window. The physics"
                    % " and ".join(bad))
-        out.append("      difference below is not separable from BC error.")
+        out.append("      difference below may be BC error rather than physics. It is still worth")
+        out.append("      reading -- a difference that is stable while BOTH runs converge is more")
+        out.append("      than noise -- but do not quote a magnitude from it.")
 
     # --- gate 2: same constraint ---------------------------------------------------------
     out.append("")
@@ -666,49 +766,70 @@ def main():
 
     # --- verdict -------------------------------------------------------------------------
     out += ["", "READING THIS", "-" * W]
-    ma, mb = wmean(wa, "I_loop"), wmean(wb, "I_loop")
-    d = mb - ma
-    sa, sb = wstd(wa, "I_loop"), wstd(wb, "I_loop")
-    pooled = math.sqrt((sa ** 2 + sb ** 2) / 2) if not (isnan(sa) or isnan(sb)) else NAN
-    dra, drb = wdrift(wa, "I_loop"), wdrift(wb, "I_loop")
-    tag, worst = verdict_for(d, pooled, dra, drb)
+    r = assess(wa, wb, "I_loop")
 
     out += ["  I_loop is the antisymmetric target current -- what the 0.71*grad_par(Te) thermal",
             "  force acts on directly. I_wall is the symmetric part and is pinned by",
             "  quasi-neutrality, so an effect appearing ONLY in I_wall is more likely a transport",
             "  change than a thermoelectric one.",
             "",
-            "    I_loop  %-14s = %s A" % (la, fmt(ma)),
-            "    I_loop  %-14s = %s A" % (lb, fmt(mb)),
-            "    delta                   = %s A   (%s)"
-            % (fmt(d), pct(100 * d / abs(ma) if (not isnan(ma) and ma) else NAN)),
-            "    run-to-run scatter      = %s A" % fmt(pooled),
-            "    within-run drift        = %s A (%s) / %s A (%s)"
-            % (fmt(dra), la[:12], fmt(drb), lb[:12])]
+            "    I_loop  %-14s = %s A" % (la, fmt(r["ma"])),
+            "    I_loop  %-14s = %s A" % (lb, fmt(r["mb"])),
+            "    delta                   = %s A   (%s)" % (fmt(r["delta"]), pct(r["rel"])),
+            "",
+            "    each run on its own:  scatter %s A,  drift %s A (%s) / %s A (%s)"
+            % (fmt(r["pooled"]).strip(), fmt(r["drift_a"]).strip(), la[:12],
+               fmt(r["drift_b"]).strip(), lb[:12])]
+    if r["paired"]:
+        out += ["    the DIFFERENCE:       scatter %s A,  drift %s A   <- judged on this"
+                % (fmt(r["p_sd"]).strip(), fmt(r["p_drift"]).strip()),
+                "",
+                "  Both runs start from the same state, so their transient is largely common mode",
+                "  and cancels in the difference. That is why the difference can be settled while",
+                "  each run alone is still swinging -- compare the two lines above."]
+    else:
+        out += ["    (no paired difference available -- falling back to the unpaired numbers)"]
 
+    dd = r["p_mean"] if r["paired"] else r["delta"]
     if bad:
-        v = "BLOCKED: %s not converged (gate 1). Nothing above is trustworthy." % " and ".join(bad)
-    elif tag == "DRIFT > delta":
-        v = ("BLOCKED: I_loop drifts by %s A across the window, MORE than the %s A difference "
-             "between the runs. These are two transients caught at different phases, not a "
-             "measured effect. Extend the runs, or move the window later and re-check."
-             % (fmt(worst).strip(), fmt(d).strip()))
-    elif tag == "within noise":
-        v = ("NEGATIVE: the shift in I_loop (%s A) is smaller than the runs' own scatter (%s A). "
-             "The thermoelectric term is not changing the target current balance at this level."
-             % (fmt(d).strip(), fmt(pooled).strip()))
-    elif tag == "drift ~ delta":
-        v = ("MARGINAL: the difference is %s A but each run still drifts by up to %s A inside the "
-             "window. Real, but do not quote the magnitude yet."
-             % (fmt(d).strip(), fmt(worst).strip()))
-    elif tag == "ok":
-        v = ("POSITIVE: I_loop shifts by %s A (%.0fx the scatter), against a residual within-run "
-             "drift of %s A. The thermoelectric term is moving the loop current."
-             % (fmt(d).strip(), abs(d) / pooled if pooled else NAN, fmt(worst).strip()))
+        v = ("GATE 1 FAILED: %s not converged. The sheath BC is not yet imposing the "
+             "characteristic to better than the differences being measured, so a delta here "
+             "can be BC error rather than physics. Treat everything above as provisional."
+             % " and ".join(bad))
+    elif r["tag"] == "DRIFT > delta":
+        v = ("BLOCKED: the DIFFERENCE itself drifts by %s A across the window, more than its own "
+             "mean of %s A. Not settled. Extend the runs, or move the window later."
+             % (fmt(r["judged_drift"]).strip(), fmt(dd).strip()))
+    elif r["tag"] == "within noise":
+        v = ("NEGATIVE: the shift in I_loop (%s A) is smaller than the scatter of the difference "
+             "(%s A). The thermoelectric term is not changing the target current balance at this "
+             "level." % (fmt(dd).strip(),
+                         fmt(r["p_sd"] if r["paired"] else r["pooled"]).strip()))
+    elif r["tag"] == "drift ~ delta":
+        v = ("MARGINAL: the difference is %s A but still drifting by %s A inside the window. Real, "
+             "but do not quote the magnitude yet."
+             % (fmt(dd).strip(), fmt(r["judged_drift"]).strip()))
+    elif r["tag"] == "ok":
+        sd = r["p_sd"] if r["paired"] else r["pooled"]
+        v = ("POSITIVE: I_loop shifts by %s A (%.0fx the scatter of the difference), with the "
+             "difference itself drifting only %s A. The thermoelectric term is moving the loop "
+             "current." % (fmt(dd).strip(), abs(dd) / sd if sd else NAN,
+                           fmt(r["judged_drift"]).strip()))
     else:
         v = "Cannot classify: too few samples in the window for a drift estimate (need 8)."
     for i, chunk in enumerate(_wrap(v, W - 6)):
         out.append("  " + ("  " if i else "") + chunk)
+
+    # Which metrics ARE settled, even if I_loop is not?
+    settled = [(row, assess(wa, wb, row.key)) for row in MAIN_ROWS]
+    settled = [(row, a) for row, a in settled
+               if a["tag"] == "ok" and not isnan(a["delta"]) and a["delta"] != 0.0]
+    if settled:
+        out += ["", "  Settled differences in this window (difference drift < half its mean):"]
+        for row, a in settled:
+            out.append("    %-24s %s %-4s  (%s)"
+                       % (row.name, fmt(a["p_mean"] if a["paired"] else a["delta"]).strip(),
+                          row.unit, pct(a["rel"]).strip()))
 
     out += ["",
             "  Note: d(ePhi/kTe) is in units of the LOCAL Te, so an unchanged d(ePhi/kTe) across",
