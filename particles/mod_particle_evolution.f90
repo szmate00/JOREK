@@ -603,15 +603,25 @@ contains
               coulomb_log = max(10.d0, coulomb_log)
               coulomb_log = min(20.d0, coulomb_log)
 
-              !> Get parallel flow velocity
-              call sim%fields%interp_PRZ(t, particle_tmp%i_elm, [var_Vpar], 1, particle_tmp%st(1), particle_tmp%st(2), &
-                  particle_tmp%x(3), P, P_s, P_t, P_phi, P_time, R, R_s, R_t, Z, Z_s, Z_t)
+              !> Get the FULL background flow velocity [v_R, v_Z, v_phi] in m/s.
+              !> This used to interpolate var_Vpar alone and pass vpar*B_vec = v_par*b_hat,
+              !> i.e. the PARALLEL flow only. That is not a small error: v_ExB is
+              !> PERPENDICULAR to B while v_par is along it, so omitting it discarded 100%
+              !> of the perpendicular background flow rather than the ~1% the speed ratio
+              !> suggests. It also disagreed with the charge-exchange branch of this same
+              !> loop, which has always used calc_vvector and is correct.
+              !>
+              !> calc_vvector is called again here rather than reusing the value from the
+              !> NCS block: that call sits inside `if (coupling_scheme == 'ncs')` and this
+              !> block is in the ICS branch, so vvector would be stale - and uninitialised
+              !> on the first pass, which a debug build turns into a SIGFPE.
+              call sim%fields%calc_vvector(t, particle_tmp%i_elm, particle_tmp%st, particle_tmp%x(3), vvector)
               
               do l=1,n_coll
                 call rng(i_rng)%next(ran2(:,l))
               end do
 
-              call sample_velocity_dist_magnetized(n_coll, ran2(1:6,:), kTb, q, n_b, m_b, q_b, P(1)*B/sim%t_norm, v_b)
+              call sample_velocity_dist_magnetized(n_coll, ran2(1:6,:), kTb, q, n_b, m_b, q_b, vvector, v_b)
   
               do l=1,n_coll
                 call rng(i_rng)%next(ran)
