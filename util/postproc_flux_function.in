@@ -38,6 +38,16 @@
 !
 ! both being poloidal-plane flux densities, hence directly comparable.
 !
+! A_3 IS THE TRUE psi; Psi_N IS NOT MONOTONIC. get_psi_n (models/equil_info.f90:1011)
+! REFLECTS the normalised flux inside the private region,
+!     psi_n -> 2*psi_n_xpoint - psi_n     for psi_n < psi_n_xpoint and Z < Z_xpoint,
+! so that PFR surfaces come out above the separatrix value like the SOL ones. A useful
+! labelling, but it means grad(Psi_N) is ANTI-parallel to grad(psi) inside the PFR,
+! parallel outside, and meaningless at the seam -- so Psi_N cannot be used to verify the
+! orientation of grad psi. A_3 is psi itself ("Tor. Comp. of Magn. Vect. Pot. Multiplied
+! by R (==Psi)") and is monotonic, so the script checks against that. Psi_N is still
+! exported, for the separatrix contour and for masking.
+!
 ! ORDER MATTERS, NAMES DO NOT. write_hdf5_2d stores the variable names into a
 ! character(len=1) array (mod_diag_output.f90:552, flagged in the source with a
 ! row of #), so every name in the file is truncated to its FIRST LETTER. The
@@ -52,7 +62,7 @@ set units 0          ! SI
 for step 1180 to 1180 do
 
   ! Order is load-bearing -- see the note above.
-  expressions R Z Psi_N Phi ne T_e T_i vpar V_ExB_R V_ExB_Z BR BZ Btheta B_abs
+  expressions R Z Psi_N A_3 Phi ne T_e T_i vpar V_ExB_R V_ExB_Z BR BZ Btheta B_abs
 
   ! The divertor region: both legs, the X-point and the whole PFR between them.
   ! For AUG 38773 the strike points sit at (1.256,-1.055) and (1.593,-1.150),

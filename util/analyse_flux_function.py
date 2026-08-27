@@ -49,7 +49,8 @@ except ImportError:
 # character(len=1) array, so every one is truncated to its first letter. Order is the only
 # reliable key, and a mismatch here silently mislabels every column -- hence the checks in
 # load().
-DEFAULT_VARS = ("R Z Psi_N Phi ne T_e T_i vpar V_ExB_R V_ExB_Z BR BZ Btheta B_abs").split()
+DEFAULT_VARS = ("R Z Psi_N A_3 Phi ne T_e T_i vpar V_ExB_R V_ExB_Z "
+                "BR BZ Btheta B_abs").split()
 
 # AUG 38773: strike points (1.256,-1.055) and (1.593,-1.150), X-point near (1.43,-0.93).
 # The box sits inside both legs and below the X-point.
@@ -114,7 +115,17 @@ def derive(d):
     # Sign check. grad(psi) = (-R*BZ, R*BR) is asserted, not measured, so verify it against
     # the numerically differentiated Psi_N. Only the SIGN is taken from the numerical
     # gradient, which is robust even on a coarse grid.
-    R, Z, pn = d["R"], d["Z"], d["Psi_N"]
+    R, Z = d["R"], d["Z"]
+    # Check against A_3 (== psi) and NOT Psi_N. get_psi_n (models/equil_info.f90:1011)
+    # reflects the normalised flux inside the private region, psi_n -> 2*psi_n_x - psi_n,
+    # so grad(Psi_N) is ANTI-parallel to grad(psi) there, parallel outside, and undefined
+    # at the seam. Checking orientation against it returns a meaningless mixture -- on real
+    # data, a median cosine of -0.28 -- which looks like a broken formula and is not.
+    pn = d.get("A_3")
+    d["_sign_ref"] = "A_3 (psi)"
+    if pn is None:
+        pn = d["Psi_N"]
+        d["_sign_ref"] = "Psi_N (REFLECTED in the PFR -- unreliable, export A_3 instead)"
     try:
         # `rectangle` lays out a uniform grid, so differentiate on the INDEX grid and
         # rescale by the constant spacing. Passing the R/Z columns to np.gradient as
@@ -185,19 +196,27 @@ def report_one(d, pfr, label, out):
     out.append("  %s   t_now = %s,  time = %s s,  step %d,  grid %s"
                % (label, fmt(d["_t_now"]), fmt(d["_time"]), d["_index"], d["_shape"]))
     sc = d.get("_sign_cos", float("nan"))
+    ref = d.get("_sign_ref", "?")
     if not np.isfinite(sc):
         # A check that silently does not run is worse than no check at all.
-        out.append("    SIGN CHECK DID NOT RUN (grad Psi_N could not be differentiated --")
-        out.append("    NaNs in the R/Z columns outside the plasma?). Magnitudes below are")
-        out.append("    unaffected; the SIGN of v_psi is unverified.")
+        out.append("    SIGN CHECK DID NOT RUN (could not differentiate %s). Magnitudes" % ref)
+        out.append("    below are unaffected; the SIGN of v_psi is unverified.")
+    elif "REFLECTED" in ref:
+        # Unconditional: a favourable cosine against a reflected field proves nothing, it
+        # only means the unreflected majority outvoted the PFR in the median.
+        out.append("    SIGN CHECK INVALID (cos = %s): it ran against Psi_N, which"
+                   % fmt(sc, 3))
+        out.append("    get_psi_n REFLECTS inside the private region, so its gradient is")
+        out.append("    anti-parallel to grad psi there. Add A_3 to the expressions line")
+        out.append("    and re-export. Magnitudes below are unaffected.")
     else:
         if sc > 0.9:
-            note = "grad psi orientation confirmed against Psi_N (+v_psi = outward)"
+            note = "grad psi orientation confirmed against %s (+v_psi = outward)" % ref
         elif sc < -0.9:
-            note = "grad psi is ANTI-parallel to grad Psi_N: +v_psi points INWARD"
+            note = "grad psi is ANTI-parallel to grad %s: +v_psi points INWARD" % ref
         else:
-            note = ("WEAK sign check (cos = %s) -- do not trust the SIGN of v_psi, only "
-                    "its magnitude" % fmt(sc, 3))
+            note = ("WEAK sign check against %s (cos = %s) -- do not trust the SIGN of "
+                    "v_psi, only its magnitude" % (ref, fmt(sc, 3)))
         out.append("    %s" % note)
 
     if m.sum() == 0:
