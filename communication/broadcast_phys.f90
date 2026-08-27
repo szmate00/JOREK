@@ -847,6 +847,11 @@ if (my_id .eq. 0) then
   call MPI_PACK(keep_current_prof,      1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(thermoelectric_ohm,     1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(thermoelectric_coef,    1,MPI_REAL8  ,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(keep_current_prof_confined,1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(keep_current_psin_cutoff,1,MPI_REAL8  ,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(keep_current_psin_sig,  1,MPI_REAL8  ,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(keep_current_z_sig,     1,MPI_REAL8  ,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(keep_current_confine_strength,1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(init_current_prof,      1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(current_prof_initialized,1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
 
@@ -1877,6 +1882,11 @@ if (my_id .ne. 0) then
   call MPI_UNPACK(buffer,bufsize,position,keep_current_prof,      1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,thermoelectric_ohm,     1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,thermoelectric_coef,    1,MPI_REAL8  ,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,keep_current_prof_confined,1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,keep_current_psin_cutoff,1,MPI_REAL8  ,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,keep_current_psin_sig,  1,MPI_REAL8  ,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,keep_current_z_sig,     1,MPI_REAL8  ,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,keep_current_confine_strength,1,MPI_REAL8,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,init_current_prof,      1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,current_prof_initialized,1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
 

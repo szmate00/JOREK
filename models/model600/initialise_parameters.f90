@@ -22,6 +22,9 @@ integer :: ierr,err,i
 namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 rst_hdf5, rst_hdf5_version, keep_current_prof,      &
                 thermoelectric_ohm, thermoelectric_coef,            &
+                keep_current_prof_confined, keep_current_psin_cutoff, &
+                keep_current_psin_sig, keep_current_z_sig,          &
+                keep_current_confine_strength,                      &
                 eta, visco, visco_par, visco_par_par,               &
                 restart, rst_format, regrid, bootstrap, write_ps,   &
                 bootstrap_psin_cutoff,                              &
@@ -284,6 +287,26 @@ if (my_id .eq. 0) then
       write(*,*) '      WARNING: no boundary type has natural%zj, so the wall current cannot'
       write(*,*) '      respond. The thermoelectric drive will then move the potential only.'
     endif
+  endif
+
+  ! --- keep_current_confine_strength multiplies the DEPTH of the mask, so values outside
+  ! --- [0,1] are not a stronger cut: mask_eff = 1 - s*(1 - mask) goes NEGATIVE for s > 1
+  ! --- wherever mask < 1 - 1/s, which reverses the sign of the current source in the SOL
+  ! --- and private flux region rather than removing it. s < 0 amplifies it there instead.
+  if ( (keep_current_confine_strength .lt. 0.d0) .or.                                     &
+       (keep_current_confine_strength .gt. 1.d0) ) then
+    write(*,*) 'ERROR: keep_current_confine_strength must lie in [0,1]. It is the fraction'
+    write(*,*) '       of the keep_current_prof source that the confinement mask removes'
+    write(*,*) '       outside the confined region: 1 = mask in full (the default and the'
+    write(*,*) '       previous behaviour), 0 = no masking, identical to'
+    write(*,*) '       keep_current_prof_confined = .false. Outside that range the applied'
+    write(*,*) '       mask leaves the range [0,1] and the source is reversed or amplified'
+    write(*,*) '       on open field lines instead of being suppressed.'
+    stop
+  endif
+  if ( keep_current_prof_confined .and. (.not. keep_current_prof) ) then
+    write(*,*) 'WARNING: keep_current_prof_confined is set but keep_current_prof is .false.,'
+    write(*,*) '         so there is no current source for the mask to act on.'
   endif
 
   if ( ( n_tor .eq. 1 ) .and. freeboundary .and. (.not. freeboundary_equil) ) then

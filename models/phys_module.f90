@@ -968,6 +968,19 @@ module phys_module
   logical             :: thermoelectric_ohm
   !> Coefficient of that term. 0.71 is the Braginskii value for a Lorentz plasma at Z=1.
   real*8              :: thermoelectric_coef
+  logical             :: keep_current_prof_confined !< Restrict the keep_current_prof source to the confined region via smooth tanh masks (suppressed in SOL and private flux region)
+  real*8              :: keep_current_psin_cutoff   !< Center of the tanh mask in psi_N for keep_current_prof_confined
+  real*8              :: keep_current_psin_sig      !< Width of the tanh mask in psi_N for keep_current_prof_confined
+  real*8              :: keep_current_z_sig         !< Width of the tanh mask in Z beyond the X-point(s) for keep_current_prof_confined (masks the private flux region where psi_N < 1)
+  !> Strength of the keep_current_prof_confined mask, in [0,1]. The applied mask is
+  !! 1 - strength*(1 - mask), so 1 removes the current source outside the confined region
+  !! exactly as before, 0 leaves it untouched (identical to keep_current_prof_confined =
+  !! .false.), and intermediate values leave a fraction 1-strength of the unmasked source
+  !! in the SOL and private flux region. Provided because the artefact this mask removes -
+  !! a spurious eta*(j-j0) drive on open field lines, which is stiffest where the plasma is
+  !! coldest - is not a binary: its influence on any result should be established by
+  !! scanning it continuously rather than by comparing two endpoints.
+  real*8              :: keep_current_confine_strength
   logical             :: init_current_prof !< Initialize the current source from the current profile present
   logical             :: current_prof_initialized !< Flag that is automatically set to true once the current source has been initialized to prevent accidental reinitialization when restarting
   

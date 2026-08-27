@@ -711,6 +711,11 @@ subroutine preset_parameters
   keep_current_prof  = .true.               ! Keep the current_source term
   thermoelectric_ohm = .false.              ! Braginskii thermal force in Ohm's law
   thermoelectric_coef= 0.71d0               ! Braginskii value, Z = 1
+  keep_current_prof_confined = .false.      ! Apply the current_source term only in the confined region
+  keep_current_psin_cutoff   = 0.98d0
+  keep_current_psin_sig      = 0.01d0
+  keep_current_z_sig         = 0.02d0
+  keep_current_confine_strength = 1.d0    ! 1 = mask as before, 0 = no masking at all
   init_current_prof  = .false.
   current_prof_initialized = .false.
   
