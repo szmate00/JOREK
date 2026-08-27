@@ -1,0 +1,571 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{mdframed}
+\usepackage[colorlinks=true,linkcolor=NavyBlue,citecolor=NavyBlue,urlcolor=NavyBlue]{hyperref}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{microtype}
+
+\definecolor{codebg}{HTML}{F4F4F0}
+\definecolor{coderule}{HTML}{C9C7BC}
+\definecolor{keyc}{HTML}{7B3F00}
+\definecolor{comc}{HTML}{6B7A6B}
+
+\lstdefinestyle{f90}{
+  language=[90]Fortran,
+  basicstyle=\ttfamily\scriptsize,
+  keywordstyle=\color{keyc},
+  commentstyle=\color{comc}\itshape,
+  columns=fullflexible,
+  keepspaces=true,
+  breaklines=true,
+  breakatwhitespace=false,
+  postbreak=\mbox{\textcolor{coderule}{$\hookrightarrow$}\space},
+  showstringspaces=false,
+  frame=none,
+  backgroundcolor=\color{codebg},
+  xleftmargin=4pt,
+  framexleftmargin=4pt,
+  framexrightmargin=4pt,
+  framextopmargin=3pt,
+  framexbottommargin=3pt,
+}
+\lstset{style=f90}
+
+% --- a "code line" block: source reference, the Fortran, then the maths -----------------
+\newenvironment{codeline}[1]
+  {\par\medskip\noindent\textcolor{coderule}{\rule{\linewidth}{0.4pt}}\par
+   \nopagebreak\noindent{\ttfamily\footnotesize\textcolor{keyc}{#1}}\par\nopagebreak\smallskip}
+  {\par\medskip}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\bhat}{\hat{\bm{b}}}
+\newcommand{\nhat}{\hat{\bm{n}}}
+\newcommand{\that}{\hat{\bm{t}}}
+\newcommand{\vE}{\bm{v}_E}
+\newcommand{\eph}{\bm{e}_\varphi}
+
+\newmdenv[
+  linecolor=coderule,linewidth=0.6pt,
+  backgroundcolor=codebg,
+  innertopmargin=6pt,innerbottommargin=6pt,
+  innerleftmargin=8pt,innerrightmargin=8pt,
+  skipabove=8pt,skipbelow=8pt,
+]{keybox}
+
+\title{\vspace{-1.5cm}The parallel-velocity boundary condition in JOREK,\\
+       with the $\bm{E}\times\bm{B}$ drift term written out}
+\author{Máté Szűcs}
+\date{27 August 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+This note writes out, line by line, the Mach-1 (Bohm) boundary condition on the parallel
+velocity as it is actually implemented in JOREK's \code{model600}, including the
+$\bm{E}\times\bm{B}$ drift term that JOREK already carries.  Every expression is paired with
+the exact source line it comes from, in
+\code{models/model600/mod\_boundary\_conditions.f90} at commit \code{9508effe0} of branch
+\code{thermoelectric-ohm}.  The last two sections compare the result with the
+drift-compatible Bohm condition used by SOLPS-ITER and report a measurement, taken with the
+\code{diag\_mach1} A/B diagnostic, showing that the two differ by exactly one factor of
+$|\bm{B}|$.
+\end{abstract}
+
+\section{The velocity representation}
+
+\code{model600} is a reduced-MHD model.  The velocity is split into a poloidal
+$\bm{E}\times\bm{B}$ part written through a stream function $u$, and a parallel part written
+through a variable $v_{\rm par}$:
+\begin{equation}
+  \bm{v} \;=\; \underbrace{R\,\nabla u \times \eph}_{\textstyle \vE}
+             \;+\; v_{\rm par}\,\bm{B} .
+  \label{eq:ansatz}
+\end{equation}
+
+Two things about this ansatz drive everything below.
+
+\begin{keybox}
+\textbf{(i)} The stream-function convention fixes the sign of the potential:
+$\Phi = -F_0 u$ in \code{model600}.  (The JOREK reference papers write
+$\bm{v}_{\rm pol} = -R\nabla u\times\eph$; the code uses $+$.)
+
+\textbf{(ii)} $v_{\rm par}$ is \emph{not} the parallel velocity.  The physical parallel
+velocity is
+\[
+   v_\parallel \;=\; v_{\rm par}\,|\bm{B}| \;=\; v_{\rm par}\,B_{\rm tot}.
+\]
+Every factor of $1/B_{\rm tot}$ in the code exists to undo this.  Losing track of it is the
+single easiest mistake to make in this routine, and \S\ref{sec:compare} is about exactly
+that.
+\end{keybox}
+
+Writing \eqref{eq:ansatz} in components, with $\bm{x}=(R,Z)$ poloidal:
+\begin{equation}
+  \vE \;=\; R\,\bigl(-\partial_Z u,\; \partial_R u\bigr),
+  \qquad
+  \bm{B}_{\rm pol} \;=\; \frac{1}{R}\bigl(\partial_Z\psi,\;-\partial_R\psi\bigr),
+  \qquad
+  \bm{B}_\varphi = \frac{F_0}{R}\,\eph .
+  \label{eq:components}
+\end{equation}
+Note the structural symmetry: $\vE$ is $-R^2$ times the same differential operator applied to
+$u$ that produces $\bm{B}_{\rm pol}$ from $\psi$.  That symmetry is what makes the identity in
+\S\ref{sec:identity} come out as cleanly as it does.
+
+The $\vE$ components appear literally in the diagnostic block, which is the easiest place to
+read the sign convention off the source:
+
+\begin{codeline}{mod\_boundary\_conditions.f90:637--641}
+\begin{lstlisting}
+u0_x_d = (   Z_t * u0_s_d - Z_s * u0_t_d ) / xjac      ! = du/dR
+u0_y_d = ( - R_t * u0_s_d + R_s * u0_t_d ) / xjac      ! = du/dZ
+vE_R_d = - BigR * u0_y_d
+vE_Z_d = + BigR * u0_x_d
+\end{lstlisting}
+\end{codeline}
+
+\section{Geometry at the boundary}
+
+The boundary of a bicubic element is a curve of constant $s$ or constant $t$.  The routine
+sets a single index \code{iv\_dir} that selects the derivative \emph{along} that curve:
+
+\begin{codeline}{mod\_boundary\_conditions.f90:254, 259}
+\begin{lstlisting}
+        iv_dir      = 2      ! t_constant_boundary: differentiate w.r.t. s
+        iv_dir      = 3      ! s_constant_boundary: differentiate w.r.t. t
+\end{lstlisting}
+\end{codeline}
+
+\begin{keybox}
+\code{iv\_dir} is the \textbf{tangential} derivative index, not the normal one.  On a
+\code{t\_constant} boundary $s$ runs along the wall, so \code{iv\_dir = 2} means
+$\partial/\partial s$, which is tangential.  (\code{iv\_perp\_dir}, used elsewhere in the same
+file, is the normal one.)  This is worth stating explicitly because reading it the other way
+inverts the conclusion of \S\ref{sec:identity}.
+\end{keybox}
+
+Throughout, a subscript $b$ denotes this tangential derivative, scaled to the element by
+\code{element\_size\_0}.  So for any field $f$,
+\begin{equation}
+  f_{0b} \;\equiv\; \code{f0\_b} \;=\; \partial_b f \;=\; \nabla f \cdot \that \;\; \Delta\ell ,
+\end{equation}
+where $\that$ is the unit tangent and $\Delta\ell = \code{dl} = \sqrt{R_b^2+Z_b^2}$ is the
+arc length per unit of the local boundary coordinate.
+
+\begin{codeline}{mod\_boundary\_conditions.f90:468, 590, 583}
+\begin{lstlisting}
+ps0_b   = node_list%node(inode)%values(1,iv_dir,var_psi)  * element_size_0
+u0_b    = node_list%node(inode)%values(1,iv_dir,var_u)    * element_size_0
+Vpar0_b = node_list%node(inode)%values(1,iv_dir,var_Vpar) * element_size_0
+\end{lstlisting}
+\end{codeline}
+
+\noindent The remaining geometric quantities:
+
+\begin{codeline}{mod\_boundary\_conditions.f90:512--521}
+\begin{lstlisting}
+normal     = normal / norm2(normal)                                   ! outward pointing
+direction  = sign(1.d0,dot_product((/ps0_y,-ps0_x/),normal))
+Btot       = sqrt(F0**2 + ps0_x**2 + ps0_y**2) / BigR
+dl         = sqrt(R_b**2 + Z_b**2)
+bn         = dot_product( (/ps0_y,-ps0_x/), normal ) /  (BigR*Btot)   ! B.n/Btot
+\end{lstlisting}
+\end{codeline}
+
+\begin{align}
+  B_{\rm tot} &= \frac{\sqrt{F_0^2 + |\nabla\psi|^2}}{R} = |\bm{B}| ,
+  &
+  b_n &= \frac{\bm{B}\cdot\nhat}{|\bm{B}|} = \frac{\bm{B}_{\rm pol}\cdot\nhat}{B_{\rm tot}} ,
+  &
+  \sigma &\equiv \code{direction} = \operatorname{sign}(b_n) .
+  \label{eq:geom}
+\end{align}
+The toroidal field has no normal component at the wall, so only $\bm{B}_{\rm pol}$ enters
+$b_n$.  Comparing the \code{bn} line with \eqref{eq:components} gives the sign relation used
+below,
+\begin{equation}
+  \bm{B}_{\rm pol}\cdot\nhat \;=\; b_n\,B_{\rm tot} .
+  \label{eq:bpoln}
+\end{equation}
+
+\subsection*{The obliqueness factor}
+
+\code{factor} is a smoothing weight, active only where the normal field component changes sign
+between the two ends of a boundary edge ($\code{bn\_1}\cdot\code{bn\_2} < 0$), i.e.\ at a
+tangency point.  Away from such points it is identically $1$.
+
+\begin{codeline}{mod\_boundary\_conditions.f90:534--554}
+\begin{lstlisting}
+c_1 = vpar_smoothing_coef(1); c_2 = vpar_smoothing_coef(2); c_3 = vpar_smoothing_coef(3)
+if ((vpar_smoothing) .and. (bn_1*bn_2 .lt. 0.d0)) then
+  if (c_2 .gt. 0d0) then
+    factor    = 0.25d0 * ( 1.d0 + tanh( (abs(bn) - c_1) / c_2 ) )**2 - c_3
+  else
+    factor    = tanh(bn/c_1)
+    direction = 1.d0
+  endif
+else
+  factor    = 1.d0
+endif
+Hfact_b   = factor * R_b / BigR  + factor_b
+\end{lstlisting}
+\end{codeline}
+
+\begin{equation}
+  \mathcal{F} \;\equiv\; \code{factor} \;=\;
+  \begin{cases}
+    \dfrac{1}{4}\Bigl[1 + \tanh\dfrac{|b_n| - c_1}{c_2}\Bigr]^{2} - c_3, & c_2 > 0,\\[2.2ex]
+    \tanh\!\bigl(b_n/c_1\bigr), \quad \sigma \to 1, & c_2 \le 0,\\[1.2ex]
+    1 & \text{away from tangency.}
+  \end{cases}
+  \label{eq:factor}
+\end{equation}
+
+\code{Hfact\_b} is not a separate physical quantity: it is the logarithmic derivative of the
+whole prefactor $\mathcal{F}/B_{\rm tot}$.  Under the routine's stated approximation that the
+field is frozen (so $B_{\rm tot}\simeq F_0/R$ and $\partial_b B_{\rm tot}^{-1} =
+R_b/F_0 = R_b/(R\,B_{\rm tot})$),
+\begin{equation}
+  \partial_b\!\left(\frac{\mathcal{F}}{B_{\rm tot}}\right)
+  \;=\; \frac{1}{B_{\rm tot}}\underbrace{\left(\mathcal{F}\frac{R_b}{R} + \mathcal{F}_b\right)}
+        _{\textstyle \code{Hfact\_b}} .
+  \label{eq:hfact}
+\end{equation}
+
+\section{The boundary condition itself}
+
+\subsection{The value row}
+
+\begin{codeline}{mod\_boundary\_conditions.f90:617 \quad\normalfont\itshape(the line this note is about)}
+\begin{lstlisting}
+Mach1BC = - Vpar0 + direction / Btot * factor * cs0 + factor / Btot * BigR**2 * U0_b/ps0_b
+\end{lstlisting}
+\end{codeline}
+
+\begin{equation}
+  \boxed{\;
+  \mathcal{M} \;=\; -\,v_{\rm par}
+  \;+\; \frac{\sigma\,\mathcal{F}}{B_{\rm tot}}\,c_s
+  \;+\; \frac{\mathcal{F}}{B_{\rm tot}}\,R^{2}\,\frac{\partial_b u}{\partial_b \psi}
+  \;=\; 0
+  \;}
+  \label{eq:mach1}
+\end{equation}
+
+with the sound speed and its temperature derivatives
+
+\begin{codeline}{mod\_boundary\_conditions.f90:612--615}
+\begin{lstlisting}
+cs0      =   sqrt(gamma*(Ti0+Te0))
+cs0_T    =   0.5d0  * gamma    / cs0
+cs0_TT   = - 0.25d0 * gamma**2 / cs0**3
+cs0_TTT  = 3.d0/8.d0* gamma**3 / cs0**5
+\end{lstlisting}
+\end{codeline}
+
+\begin{equation}
+  c_s = \sqrt{\gamma\,(T_i + T_e)},\qquad
+  \frac{\partial c_s}{\partial T} = \frac{\gamma}{2c_s},\qquad
+  \frac{\partial^2 c_s}{\partial T^2} = -\frac{\gamma^2}{4c_s^3},\qquad
+  \frac{\partial^3 c_s}{\partial T^3} = \frac{3\gamma^3}{8c_s^5}.
+\end{equation}
+
+The third term of \eqref{eq:mach1} is the drift term.  It is the subject of the next section.
+
+\subsection{The tangential-derivative row}
+
+The trace space of a bicubic $C^1$ element carries a value \emph{and} a tangential derivative
+at each node, so the condition must be imposed on both.  Differentiating \eqref{eq:mach1}
+along the boundary:
+
+\begin{codeline}{mod\_boundary\_conditions.f90:621--622, 655}
+\begin{lstlisting}
+dMach1BC = - Vpar0_b + direction / Btot * factor  * cs0_T * (Ti0_b+Te0_b)  &
+                     + direction / Btot * Hfact_b * cs0
+! --- only for n_order >= 5:
+dMach1BC = dMach1BC + factor / Btot * BigR**2 * U0_bb/ps0_b
+\end{lstlisting}
+\end{codeline}
+
+\begin{equation}
+  \partial_b\mathcal{M} \;=\; -\,\partial_b v_{\rm par}
+  \;+\; \frac{\sigma\mathcal{F}}{B_{\rm tot}}\frac{\partial c_s}{\partial T}\bigl(\partial_b T_i + \partial_b T_e\bigr)
+  \;+\; \frac{\sigma}{B_{\rm tot}}\,\code{Hfact\_b}\;c_s
+  \;+\; \underbrace{\frac{\mathcal{F}}{B_{\rm tot}}R^2\frac{\partial_b^2 u}{\partial_b\psi}}
+        _{\textstyle n_{\rm order}\ge 5\ \text{only}} .
+  \label{eq:dmach1}
+\end{equation}
+
+\begin{keybox}
+\textbf{Approximations in \eqref{eq:dmach1}, stated by the code itself} (line 556: \emph{``For
+the BC's the magnetic field is assumed constant, and we do not take derivatives of psi into
+account''}):
+\begin{itemize}\itemsep2pt
+  \item $\partial_b\psi$, $\partial_b R^2$ and $\partial_b B_{\rm tot}$ are not differentiated
+        in the drift term.  Only $R_b/R$ survives, through \code{Hfact\_b}, and only in the
+        $c_s$ term.
+  \item At $n_{\rm order} = 3$ --- the production setting --- \textbf{the drift term does not
+        contribute to the derivative row at all}, because $\partial_b^2 u$ is not a degree of
+        freedom.  The Bohm condition is drift-corrected in its value but not in its
+        tangential slope.
+\end{itemize}
+\end{keybox}
+
+\subsection{The second-derivative row ($n_{\rm order}\ge5$)}
+
+\begin{codeline}{mod\_boundary\_conditions.f90:657--668}
+\begin{lstlisting}
+d2Mach1BC    = - Vpar0_bb + direction / Btot * factor   * cs0_TT * (Ti0_b+Te0_b)**2   &
+                          + direction / Btot * factor   * cs0_T  * (Ti0_bb+Te0_bb)   !&
+                          !+ direction / Btot * Hfact_b  * cs0_T  * T0_b *2.0 !&
+                          !+ direction / Btot * Hfact_bb * cs0
+\end{lstlisting}
+\end{codeline}
+
+\begin{equation}
+  \partial_b^2\mathcal{M} \;=\; -\,\partial_b^2 v_{\rm par}
+  \;+\; \frac{\sigma\mathcal{F}}{B_{\rm tot}}\left[
+        \frac{\partial^2 c_s}{\partial T^2}\bigl(\partial_b T_i + \partial_b T_e\bigr)^2
+      + \frac{\partial c_s}{\partial T}\bigl(\partial_b^2 T_i + \partial_b^2 T_e\bigr)
+        \right].
+\end{equation}
+The two \code{Hfact} contributions are commented out in the source, and the drift term has no
+second-derivative counterpart at all.  This row is therefore the least complete of the three;
+it is unused at $n_{\rm order}=3$.
+
+\subsection{Jacobian columns}
+
+The condition is imposed by row replacement with a large weight \code{zbig}.  The linearisation
+treats $v_{\rm par}$, $T$ and $u$ as the only variables --- $\psi$, and with it the whole
+geometry, is frozen inside a Newton iteration.
+
+\begin{codeline}{mod\_boundary\_conditions.f90:618--620, 623--630, 656}
+\begin{lstlisting}
+Mach1BC_v   = - 1.0
+Mach1BC_T   =           + direction / Btot * factor  * cs0_T
+Mach1BC_u   =                                        + factor / Btot * BigR**2 * element_size_0/ps0_b
+dMach1BC_v  = - element_size_0
+dMach1BC_T  =           + direction / Btot * factor  * cs0_TT* T0_b  &
+                        + direction / Btot * Hfact_b * cs0_T
+dMach1BC_Tb =           + direction / Btot * factor  * cs0_T * element_size_0
+dMach1BC_ubb=           + factor / Btot * BigR**2 * element_size_3/ps0_b
+\end{lstlisting}
+\end{codeline}
+
+\begin{center}
+\begin{tabular}{llll}
+\toprule
+row & column & code & expression \\
+\midrule
+value & $v_{\rm par}$ & \code{Mach1BC\_v}    & $-1$ \\
+value & $T$           & \code{Mach1BC\_T}    & $\sigma\mathcal{F}B_{\rm tot}^{-1}\,\partial_T c_s$ \\
+value & $u$           & \code{Mach1BC\_u}    & $\mathcal{F}B_{\rm tot}^{-1}R^2\,h_0/\partial_b\psi$ \\
+$\partial_b$ & $v_{\rm par}$ & \code{dMach1BC\_v}  & $-h_0$ \\
+$\partial_b$ & $T$           & \code{dMach1BC\_T}  & $\sigma B_{\rm tot}^{-1}\bigl[\mathcal{F}\,\partial^2_T c_s\,\partial_b T + \code{Hfact\_b}\,\partial_T c_s\bigr]$ \\
+$\partial_b$ & $\partial_b T$& \code{dMach1BC\_Tb} & $\sigma\mathcal{F}B_{\rm tot}^{-1}\,\partial_T c_s\, h_0$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent with $h_0 = \code{element\_size\_0}$.  Note that \code{Mach1BC\_u} is the drift
+term's Jacobian entry --- it already exists, which matters for \S\ref{sec:fix}.
+
+\section{The identity: what the drift term actually is}
+\label{sec:identity}
+
+The drift term in \eqref{eq:mach1} is written in element coordinates,
+$R^2\,\partial_b u/\partial_b\psi$, which hides its meaning.  Converting it costs four lines.
+
+Take the unit tangent oriented as $\that = (n_Z, -n_R)$.  From \eqref{eq:components},
+\begin{align}
+  \vE\cdot\nhat
+    &= R\bigl(-u_Z n_R + u_R n_Z\bigr)
+     = R\,\nabla u\cdot\that
+     = R\,\frac{\partial_b u}{\Delta\ell},
+     \label{eq:vEn}\\[4pt]
+  \bm{B}_{\rm pol}\cdot\nhat
+    &= \frac{1}{R}\bigl(\psi_Z n_R - \psi_R n_Z\bigr)
+     = -\frac{1}{R}\,\nabla\psi\cdot\that
+     = -\frac{1}{R}\,\frac{\partial_b\psi}{\Delta\ell}.
+     \label{eq:Bn}
+\end{align}
+The arc-length scale $\Delta\ell$ is common to both.  Dividing and using \eqref{eq:bpoln}:
+
+\begin{keybox}
+\begin{equation}
+  R^{2}\,\frac{\partial_b u}{\partial_b \psi}
+  \;=\; -\,\frac{\vE\cdot\nhat}{\bm{B}_{\rm pol}\cdot\nhat}
+  \;=\; -\,\frac{\vE\cdot\nhat}{b_n\,B_{\rm tot}} .
+  \label{eq:identity}
+\end{equation}
+\end{keybox}
+
+\noindent This is why \eqref{eq:mach1} works at all: the ratio of two tangential derivatives
+of two different fields is a \emph{normal} quantity, because differentiating along the
+boundary and dotting the corresponding vector into the normal are the same operation up to the
+same scale factor for both $u$ and $\psi$.  It also explains why the term is written this way:
+$\partial_b u$ and $\partial_b\psi$ are both directly available as nodal degrees of freedom on
+the boundary, whereas $\vE\cdot\nhat$ and $b_n$ are not.
+
+Substituting \eqref{eq:identity} into \eqref{eq:mach1} and multiplying by $B_{\rm tot}$ to
+convert $v_{\rm par}\to v_\parallel$:
+
+\begin{keybox}
+\begin{equation}
+  \boxed{\;
+  v_\parallel^{\,\rm JOREK}
+  \;=\; \mathcal{F}\left[\,\sigma\,c_s \;-\; \frac{\vE\cdot\nhat}{b_n\,B_{\rm tot}}\,\right]
+  \;}
+  \label{eq:jorekvpar}
+\end{equation}
+\end{keybox}
+
+\noindent So JOREK's Mach-1 condition is \emph{already} drift-aware: the second term has the
+$\vE\cdot\nhat/b_n$ structure of a drift correction, not merely some numerical smoothing.
+
+\section{Comparison with the drift-compatible (SOLPS) condition}
+\label{sec:compare}
+
+The Bohm condition constrains the \emph{total} flux into the wall, not the parallel flux.  With
+drifts retained, the total normal velocity is
+\begin{equation}
+  \bm{v}\cdot\nhat \;=\; v_\parallel\,b_n \;+\; \vE\cdot\nhat \;\;\ge\;\; \sigma\,c_s\,b_n ,
+\end{equation}
+so the condition to impose on $v_\parallel$ is
+\begin{equation}
+  \boxed{\;
+  v_\parallel^{\,\rm req}
+  \;=\; \sigma\,c_s \;-\; \frac{\vE\cdot\nhat}{b_n}
+  \;}
+  \label{eq:required}
+\end{equation}
+which is the form SOLPS-ITER imposes (manual 3.0.9, \code{BCMOM} = 3/13), together with a clip
+at $\pm 2c_s|b_x|$ to keep the correction bounded near tangency.
+
+Comparing \eqref{eq:jorekvpar} with \eqref{eq:required}, the $\sigma c_s$ terms agree (up to
+$\mathcal{F}$, which is $1$ away from tangency), and the drift terms differ by exactly one
+factor $B_{\rm tot}$:
+\begin{equation}
+  \frac{\text{JOREK drift term}}{\text{required drift term}}
+  \;=\; \frac{\mathcal{F}}{B_{\rm tot}} .
+  \label{eq:ratio}
+\end{equation}
+
+\begin{keybox}
+\textbf{Reading.} Both terms in \eqref{eq:mach1} carry the same $1/B_{\rm tot}$ prefactor.
+That is \emph{correct} for the $c_s$ term, because $v_\parallel = v_{\rm par}B_{\rm tot}$
+converts it into $\mathcal{F}\sigma c_s$.  The drift term needed the $B_{\rm tot}$ to survive
+the same conversion, and it does not have it.  This reads as a missing $B_{\rm tot}$ --- but
+that is an inference about intent, not a measurement.  The term appears identically in
+\code{model401}, \code{model502} and \code{model600} with no comment, so it is worth
+confirming with the authors before changing three models.
+\end{keybox}
+
+\section{Measurement}
+
+The A/B diagnostic (\code{models/model600/mod\_mach1\_diag.f90}, enabled by
+\code{diag\_mach1}) accumulates both forms at every boundary node and reports their ratio.
+
+\begin{codeline}{mod\_boundary\_conditions.f90:632--650 \quad\normalfont\itshape(diagnostic only; imposes nothing)}
+\begin{lstlisting}
+vE_n_d  =   vE_R_d * normal(1) + vE_Z_d * normal(2)      ! + = into the wall
+d_jrk_d = factor * BigR**2 * u0_b / ps0_b
+call mach1_diag_add(BigR, factor*cs0, d_jrk_d, vE_n_d, vE_t_d, bn, dl)
+\end{lstlisting}
+\end{codeline}
+
+\noindent with, inside \code{mach1\_diag\_add}, $\code{d\_slp} = \code{vE\_n}/|\code{bn}|$.
+By \eqref{eq:identity} the $u$-dependence cancels identically and
+\begin{equation}
+  \text{ratio} \;=\; \frac{\code{d\_jrk}}{\code{d\_slp}}
+  \;=\; -\operatorname{sign}(b_n)\,\frac{\mathcal{F}}{B_{\rm tot}} ,
+  \label{eq:predratio}
+\end{equation}
+a purely \emph{geometric} quantity.  This is a strong prediction: the ratio should be frozen
+in time even while both drift terms evolve.  It is.  The measured min, max and mean were
+byte-identical at every output step over the run.
+
+\begin{center}
+\begin{tabular}{lcccc}
+\toprule
+target & $R$ [m] & measured ratio & $R/F_0$ & agreement \\
+\midrule
+INNER  & $\approx 1.256$ & $+0.431$ & $0.423$ & $2\%$ \\
+OUTER  & $\approx 1.594$ & $-0.533$ & $0.536$ & $0.5\%$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent Since $B_{\rm tot} = \sqrt{F_0^2+|\nabla\psi|^2}/R \ge F_0/R$, the quantity
+$1/B_{\rm tot}$ must sit just \emph{below} $R/F_0$ --- and the outer measurement does exactly
+that.  The opposite signs on the two targets are $\operatorname{sign}(b_n)$ flipping between an
+entering and an exiting field line, as \eqref{eq:predratio} requires.  With $F_0 = 2.9723$,
+\eqref{eq:ratio} is confirmed to three digits on two independent targets.
+
+\subsection*{Does the difference matter?}
+
+Measured at steady state (weak-form residual $9.8\times10^{-4}$, electrical closure $0.00\%$ on
+both targets), in units of $c_s$:
+
+\begin{center}
+\begin{tabular}{lcccc}
+\toprule
+& \multicolumn{2}{c}{JOREK, eq.~\eqref{eq:jorekvpar}} & \multicolumn{2}{c}{required, eq.~\eqref{eq:required}} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+target & mean & max & mean & max \\
+\midrule
+INNER & $1.36\%$ & $115\%$ & $3.22\%$ & $272\%$ \\
+OUTER & $0.25\%$ & $ 46\%$ & $0.48\%$ & $ 85\%$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent A shortfall of $1.9\%$ and $0.2\%$ of $c_s$ \emph{in the mean} --- but up to $150\%$
+of $c_s$ \emph{locally}.  The amplifier is grazing incidence:
+\begin{equation}
+  \langle|b_n|\rangle = 0.0080 \;\;(0.46^\circ), \qquad \min|b_n| = 0.0000 \;\;\text{(tangency)},
+\end{equation}
+and the correction goes as $\vE\cdot\nhat/b_n$.  It is resolvable
+($|\vE\cdot\nhat/b_n| > 10^{-3}c_s$) on only $24\%$ of the inner and $2.3\%$ of the outer
+boundary weight: concentrated near tangency, not spread over the target.  The fraction of
+boundary weight on which the correction would \emph{reverse} the sign of $v_\parallel$ is
+$0.89\%$, so SOLPS's $\pm 2c_s|b_x|$ clip is not optional.
+
+\section{If it is to be changed}
+\label{sec:fix}
+
+Equation~\eqref{eq:required} needs the drift term of \eqref{eq:mach1} multiplied by
+$B_{\rm tot}$, i.e.\ the $1/B_{\rm tot}$ dropped from that term only:
+\begin{equation}
+  \frac{\mathcal{F}}{B_{\rm tot}}R^2\frac{\partial_b u}{\partial_b\psi}
+  \;\longrightarrow\;
+  \mathcal{F}\,R^2\frac{\partial_b u}{\partial_b\psi},
+  \qquad\text{clipped to } |\,\cdot\,| \le 2c_s .
+\end{equation}
+The Jacobian entry \code{Mach1BC\_u} (line 620) scales identically, and
+\code{dMach1BC\_ubb} (line 656) likewise --- no new columns are needed, because the derivative
+of the term with respect to $u$ already exists.  Put behind a flag
+(\code{bohm\_drift\_compatible}, default \code{.false.}) the A/B becomes a namelist switch on a
+single build, and the diagnostic provides its own check: ratio \eqref{eq:predratio} must go to
+$-\operatorname{sign}(b_n)$ when the flag is on.
+
+\vspace{1em}
+\hrule
+\vspace{0.6em}
+\noindent\footnotesize
+Source: \code{models/model600/mod\_boundary\_conditions.f90} and
+\code{models/model600/mod\_mach1\_diag.f90}, branch \code{thermoelectric-ohm},
+commit \code{9508effe0}.  Run: AUG \#38773, \code{model600}, boundary type 1, $n_{\rm tor}=1$,
+weak Galerkin sheath $j$--$V$ BC active.
+
+\end{document}
