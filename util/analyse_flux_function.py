@@ -97,7 +97,7 @@ def load(path, varnames):
     return d
 
 
-def derive(d):
+def derive(d, zx=-0.93):
     """Everything the report needs, computed once."""
     vR, vZ = d["V_ExB_R"], d["V_ExB_Z"]
     BR, BZ, Bth, Babs = d["BR"], d["BZ"], d["Btheta"], d["B_abs"]
@@ -123,9 +123,21 @@ def derive(d):
     # data, a median cosine of -0.28 -- which looks like a broken formula and is not.
     pn = d.get("A_3")
     d["_sign_ref"] = "A_3 (psi)"
+    # A_3 can come back identically zero or all-NaN depending on how the run stores the
+    # vector potential. Detect that here rather than letting np.gradient return a field of
+    # zeros and the mask quietly reject every point.
+    if pn is not None:
+        fin = pn[np.isfinite(pn)]
+        if fin.size < 100 or np.nanmax(np.abs(fin)) == 0.0 or np.ptp(fin) == 0.0:
+            pn = None
+            d["_a3_degenerate"] = True
     if pn is None:
-        pn = d["Psi_N"]
-        d["_sign_ref"] = "Psi_N (REFLECTED in the PFR -- unreliable, export A_3 instead)"
+        # Psi_N is only reflected BELOW the X-point (get_psi_n requires Z < Z_xpoint), so
+        # it is perfectly monotonic above it. Restrict the check to that half-plane and it
+        # becomes valid again -- and Psi_N increases outward by construction, which is
+        # exactly the reference needed to fix the sign.
+        pn = np.where(d["Z"] > zx, d["Psi_N"], np.nan)
+        d["_sign_ref"] = "Psi_N above Z = %.3f (no reflection there)" % zx
     try:
         # `rectangle` lays out a uniform grid, so differentiate on the INDEX grid and
         # rescale by the constant spacing. Passing the R/Z columns to np.gradient as
@@ -197,6 +209,9 @@ def report_one(d, pfr, label, out):
                % (label, fmt(d["_t_now"]), fmt(d["_time"]), d["_index"], d["_shape"]))
     sc = d.get("_sign_cos", float("nan"))
     ref = d.get("_sign_ref", "?")
+    if d.get("_a3_degenerate"):
+        out.append("    NOTE: A_3 came back constant/empty in this export -- fell back to")
+        out.append("    Psi_N above the X-point, where get_psi_n does not reflect it.")
     if not np.isfinite(sc):
         # A check that silently does not run is worse than no check at all.
         out.append("    SIGN CHECK DID NOT RUN (could not differentiate %s). Magnitudes" % ref)
@@ -329,6 +344,10 @@ def main():
                     metavar=("Rmin", "Rmax", "Zmin", "Zmax"))
     ap.add_argument("--labels", nargs=2, default=None)
     ap.add_argument("--vars", default=None, help="expression order, space separated")
+    ap.add_argument("--zxpoint", type=float, default=-0.93,
+                    help="Z of the X-point; Psi_N is unreflected above it and is used "
+                         "there to fix the sign of v_psi if A_3 is unusable "
+                         "(default -0.93, AUG 38773)")
     ap.add_argument("--plot", default=None, metavar="FILE.png")
     args = ap.parse_args()
 
@@ -340,7 +359,7 @@ def main():
             sys.exit("ERROR: '%s' must be in the expression list." % need)
 
     labels = args.labels or [os.path.basename(p) for p in args.files]
-    ds = [derive(load(p, varnames)) for p in args.files]
+    ds = [derive(load(p, varnames), zx=args.zxpoint) for p in args.files]
 
     out = ["=" * 78, "FLUX-FUNCTION TEST   v_psi = (v_ExB . grad psi)/|grad psi|", "=" * 78,
            "  Zero everywhere iff Phi = Phi(psi). Derivatives are analytic (Bezier basis),",
@@ -355,6 +374,18 @@ def main():
             out += ["", "ERROR: the two exports are on different grids %s vs %s -- rerun both"
                     % (a["_shape"], b["_shape"]), "       with the same `rectangle` line."]
         else:
+            na = float(np.nanmean(a["ne"][np.isfinite(a["ne"])]))
+            nb = float(np.nanmean(b["ne"][np.isfinite(b["ne"])]))
+            if na > 0 and nb > 0 and (max(na, nb) / min(na, nb) > 100):
+                out += ["", "ERROR: the two exports are in DIFFERENT UNIT SYSTEMS.",
+                        "       mean ne = %s vs %s -- a factor %.3g apart, which is"
+                        % (fmt(na), fmt(nb), max(na, nb) / min(na, nb)),
+                        "       central_density*1e20, i.e. one export is in SI and the other",
+                        "       in JOREK normalised units. Re-export the normalised one with",
+                        "       `si-units` in the postproc input. Every delta below would be",
+                        "       a unit conversion, not physics."]
+                print("\n".join(out))
+                return 1
             dt = abs(a["_time"] - b["_time"])
             rel = dt / max(abs(a["_time"]), abs(b["_time"]), 1e-30)
             out += ["", "=" * 78, "A/B   %s  minus  %s" % (labels[1], labels[0]), "=" * 78]

@@ -57,7 +57,7 @@
 
 namelist input
 
-set units 0          ! SI
+si-units             ! NOT "set units 0" -- that is not a command and is silently ignored
 
 for step 1180 to 1180 do
 
