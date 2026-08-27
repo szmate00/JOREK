@@ -716,6 +716,8 @@ subroutine preset_parameters
   keep_current_psin_sig      = 0.01d0
   keep_current_z_sig         = 0.02d0
   keep_current_confine_strength = 1.d0    ! 1 = mask as before, 0 = no masking at all
+  diag_mach1         = .false.              ! Mach-1 drift-term A/B diagnostic, pure diagnostic
+  mach1_diag_R_split = 0.d0                 ! 0 = do not split the diagnostic by target
   init_current_prof  = .false.
   current_prof_initialized = .false.
   

@@ -44,13 +44,14 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        bcs, loop_voltage, central_density, central_mass,                                                    &
        sheath_Lambda, sheath_V_wall, sheath_u_exp_max, sheath_u_exp_min, sheath_u_relax, sheath_min_bn, &
        sheath_u_relax_time, sheath_wall_vel, sheath_u_align_psi, sheath_u_value_only, &
-       sheath_zj_relax, sheath_ramp_time, t_start, sheath_zj_ratio_max
+       sheath_zj_relax, sheath_ramp_time, t_start, sheath_zj_ratio_max, diag_mach1
 use tr_module
 use mpi_mod
 use mod_basisfunctions
 use mod_interp
 use mod_integer_types
 use mod_node_indices
+use mod_mach1_diag, only: mach1_diag_reset, mach1_diag_add, mach1_diag_report
 
 implicit none
 
@@ -88,6 +89,7 @@ integer(kind=int_all) :: ijA_position,ijA_position2
 integer :: ilarge2, kv, kT, kTi, kTe, ku, kn, ilarge_vv, ilarge_vT, ilarge_vus, ilarge_vn
 integer :: ilarge_vsvs, ilarge_vsTs, ilarge_vsT, ilarge_vut, ilarge_vtvt, ilarge_vtTt, ilarge_vtT
 integer :: ierr
+real*8  :: u0_s_d, u0_t_d, u0_x_d, u0_y_d, vE_R_d, vE_Z_d, vE_n_d, vE_t_d, d_jrk_d
 logical :: apply_psi_BC, apply_current_BC, s_constant_boundary, t_constant_boundary, apply_cs, apply_dirichlet_1234, apply_dirichlet_all
 logical :: apply_sheath_u
 logical :: apply_natural_u
@@ -180,6 +182,8 @@ RMPspectrum: if (RMP_on .and. (n_tor .ge. 3)) then !*****
     dpsi_RMP_sin_dR1(j) = dpsi_RMP_sin_dR(j) * establish_RMP
     dpsi_RMP_sin_dZ1(j) = dpsi_RMP_sin_dZ(j) * establish_RMP
   end do
+
+  if ( diag_mach1 ) call mach1_diag_reset()
 
   if (my_id == 0) then
     write (*,*) 'psi_RMP_cos1(1) and derivatives after multiplication in boundary conditions'
@@ -622,6 +626,27 @@ do i=1, n_local_elms !=== do elements
           dMach1BC_Te =           + direction / Btot * factor  * cs0_TT* T0_b   &
                                   + direction / Btot * Hfact_b * cs0_T
           dMach1BC_Tb =           + direction / Btot * factor  * cs0_T * element_size_0
+
+          ! --- A/B diagnostic only; imposes nothing. Rebuild the E x B velocity from u at this
+          ! --- node the same way ps0_x/ps0_y are built from psi, then split it on the boundary.
+          ! --- v_ExB = R grad(u) x e_phi = R*(-u_y, u_x) in model600's ansatz.
+          if ( diag_mach1 ) then
+            u0_s_d = node_list%node(inode)%values(1,2,var_u) * element_size_s
+            u0_t_d = node_list%node(inode)%values(1,3,var_u) * element_size_t
+            u0_x_d = (   Z_t * u0_s_d - Z_s * u0_t_d ) / xjac
+            u0_y_d = ( - R_t * u0_s_d + R_s * u0_t_d ) / xjac
+            vE_R_d = - BigR * u0_y_d
+            vE_Z_d = + BigR * u0_x_d
+            vE_n_d =   vE_R_d * normal(1) + vE_Z_d * normal(2)      ! + = into the wall
+            vE_t_d = - vE_R_d * normal(2) + vE_Z_d * normal(1)
+            ! --- The JOREK drift term as it enters v_par. NOTE iv_dir indexes the
+            ! --- TANGENTIAL derivative (t_constant boundary -> iv_dir = 2 = d/ds, and s
+            ! --- runs along the boundary there), so u0_b and ps0_b are tangential and
+            ! --- R^2*u0_b/ps0_b = v_ExB.n/(b_n*|B|) - i.e. structurally the SOLPS
+            ! --- correction already. The ratio below tests that.
+            d_jrk_d = factor * BigR**2 * u0_b / ps0_b
+            call mach1_diag_add(BigR, factor*cs0, d_jrk_d, vE_n_d, vE_t_d, bn, dl)
+          endif
 
 
           if (n_order .ge. 5) then
@@ -1368,6 +1393,7 @@ if ( any(bcs(:)%sheath_zj_weak) ) then
   enddo
   call sheath_trace_report(my_id)
 endif
+if ( diag_mach1 ) call mach1_diag_report(my_id)
 
 if (RMP_on) then
   if (allocated(psi_RMP_cos1))         call tr_deallocate(psi_RMP_cos1,"psi_RMP_cos1",CAT_UNKNOWN)

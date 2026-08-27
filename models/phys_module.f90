@@ -981,6 +981,13 @@ module phys_module
   !! coldest - is not a binary: its influence on any result should be established by
   !! scanning it continuously rather than by comparing two endpoints.
   real*8              :: keep_current_confine_strength
+  !> A/B diagnostic for the Mach-1 boundary condition. Measures the drift term already present
+  !! in Mach1BC against the SOLPS-ITER drift-compatible Bohm-Chodura correction v_ExB.n/b_n, at
+  !! the same nodes, imposing neither. Pure diagnostic: .false. changes nothing and costs nothing.
+  logical             :: diag_mach1
+  !> Major radius dividing INNER from OUTER in that diagnostic. Set to about the X-point major
+  !! radius; <= 0 reports the two targets together, which averages an in-out difference away.
+  real*8              :: mach1_diag_R_split
   logical             :: init_current_prof !< Initialize the current source from the current profile present
   logical             :: current_prof_initialized !< Flag that is automatically set to true once the current source has been initialized to prevent accidental reinitialization when restarting
   
