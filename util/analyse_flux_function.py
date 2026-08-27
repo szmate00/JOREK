@@ -283,6 +283,44 @@ def report_one(d, pfr, label, out):
                       fmt(s["absmean"]), fmt(s["p95"]), fmt(s["mx"])))
     out.append("      " + "-" * 62)
 
+    # PLASMA STATE. Reported because every conclusion about the potential scale depends on
+    # it: the sheath sets Phi ~ Lambda*Te/e, so "is Phi of order 100 V like SOLPS" is a
+    # question about Te, not about the potential solver. Phi is reported as a RANGE, not a
+    # mean -- it is a signed field that straddles zero over this box, so its mean cancels
+    # and says nothing about the scale.
+    out.append("")
+    out.append("      %-22s %12s %12s %12s"
+               % ("plasma state (PFR box)", "mean", "min", "max"))
+    out.append("      " + "-" * 62)
+    for key, name, unit in (("T_e", "T_e", "eV"), ("T_i", "T_i", "eV"),
+                            ("ne", "ne", "m^-3"), ("Phi", "Phi", "V")):
+        if key not in d:
+            continue
+        v = d[key][m]
+        v = v[np.isfinite(v)]
+        if v.size == 0:
+            continue
+        out.append("      %-22s %12s %12s %12s"
+                   % (name + " [%s]" % unit, fmt(float(np.mean(v))),
+                      fmt(float(np.min(v))), fmt(float(np.max(v)))))
+    # Phi over the WHOLE export, not just the PFR: the targets are outside the box and
+    # that is where the sheath drop lives.
+    if "Phi" in d:
+        pv = d["Phi"][np.isfinite(d["Phi"])]
+        if pv.size:
+            out.append("      %-22s %12s %12s %12s"
+                       % ("Phi [V]  WHOLE export", fmt(float(np.mean(pv))),
+                          fmt(float(np.min(pv))), fmt(float(np.max(pv)))))
+            out.append("      -> Phi span over the export = %s V" % fmt(float(np.ptp(pv))))
+    if "T_e" in d:
+        te = d["T_e"][m]
+        te = te[np.isfinite(te)]
+        if te.size:
+            tem = float(np.mean(te))
+            out.append("      -> sheath scale Lambda*T_e/e at <T_e> = %s V  (Lambda = 3)"
+                       % fmt(3.0 * tem))
+    out.append("      " + "-" * 62)
+
     sa = stat(d["sin_ang"], m)
     fr = stat(d["flux_ratio"], m)
 
@@ -429,6 +467,7 @@ def main():
                               ("sin_ang", "mean |sin_ang|"),
                               ("flux_ratio", "mean |Gamma ratio|"),
                               ("Phi", "mean Phi [V]"),
+                              ("T_e", "mean T_e [eV]"),
                               ("ne", "mean ne [m^-3]")):
                 if key not in a:
                     continue
