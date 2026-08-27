@@ -709,6 +709,8 @@ subroutine preset_parameters
   tgnum_A3           = 0.d0
 
   keep_current_prof  = .true.               ! Keep the current_source term
+  thermoelectric_ohm = .false.              ! Braginskii thermal force in Ohm's law
+  thermoelectric_coef= 0.71d0               ! Braginskii value, Z = 1
   init_current_prof  = .false.
   current_prof_initialized = .false.
   

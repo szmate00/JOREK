@@ -645,6 +645,8 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
 
 
   write(*,LOGI_FMT) 'keep_current_prof     ', keep_current_prof
+  write(*,LOGI_FMT) 'thermoelectric_ohm    ', thermoelectric_ohm
+  write(*,REAL_FMT) 'thermoelectric_coef   ', thermoelectric_coef
   write(*,LOGI_FMT) 'init_current_prof     ', init_current_prof
   write(*,LOGI_FMT) 'current_prof_initialized', current_prof_initialized
   write(*,LOGI_FMT) 'linear_run            ', linear_run

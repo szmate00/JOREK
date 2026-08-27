@@ -77,7 +77,7 @@ logical, parameter :: unified_element_matrix = .true.
 
 !> parameters for naming equation terms in the RHS diagnostic 
 integer,  parameter :: max_terms    = 26
-integer,  parameter :: n_terms_psi  = 5
+integer,  parameter :: n_terms_psi  = 7
 integer,  parameter :: n_terms_u    = 13
 integer,  parameter :: n_terms_zj   = 1
 integer,  parameter :: n_terms_w    = 1
@@ -95,7 +95,9 @@ character*36, dimension(n_terms_psi),  parameter :: Psi_term_names=  &
                                                  'psi_Eq__B.grad_u         ', &  ! 2: \mathbf{B}\cdot\nabla u 
                                                  'psi_Eq__eta_num_term     ', &  ! 3: \eta_{num}\nabla^2 j 
                                                  'psi_Eq__diamag_term      ', &  ! 4: \mathbf{B}\cdot\nabla p
-                                                 'psi_Eq__zeta_timevol_term'/)   ! 5: \zeta\delta\psi
+                                                 'psi_Eq__zeta_timevol_term', &  ! 5: \zeta\delta\psi
+                                                 'psi_Eq__RE_coupling      ', &  ! 6: \eta j_{re}, kinetic RE coupling
+                                                 'psi_Eq__thermal_force    '/)   ! 7: -0.71 \nabla_\parallel T_e / e
 
 character*36, dimension(n_terms_u),     parameter :: u_term_names=  &
                                               (/ 'u_Eq__rho_v.grad_v     ', &  !  1:

@@ -958,6 +958,16 @@ module phys_module
 
   !> @name Flag to determine whether or not we keep current source term  
   logical             :: keep_current_prof !< Artificial current source to approximately keep the initial current profile, i.e., \f$\eta(j-j0)\f$?
+  !> Braginskii parallel thermal force in Ohm's law, -(0.71/e) grad_par(Te). Model600 already
+  !! carries the electron pressure term -(1/en) grad_par(p_e) (psi_Eq__diamag_term); this is its
+  !! partner. Both push Phi off the flux surfaces, which is what produces a RADIAL ExB drift:
+  !! Phi = Phi(psi) gives E perpendicular to flux surfaces and hence a purely POLOIDAL ExB that
+  !! only circulates. With a 10x parallel Te gradient in the SOL the thermal force is the largest
+  !! of the terms in grad_par(Phi), and it also drives a thermoelectric current between targets
+  !! that differ in Te, which then acts again through eta*j_par.
+  logical             :: thermoelectric_ohm
+  !> Coefficient of that term. 0.71 is the Braginskii value for a Lorentz plasma at Z=1.
+  real*8              :: thermoelectric_coef
   logical             :: init_current_prof !< Initialize the current source from the current profile present
   logical             :: current_prof_initialized !< Flag that is automatically set to true once the current source has been initialized to prevent accidental reinitialization when restarting
   

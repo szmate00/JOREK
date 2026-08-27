@@ -21,6 +21,7 @@ integer :: ierr,err,i
 ! --- Namelist with input parameters.
 namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 rst_hdf5, rst_hdf5_version, keep_current_prof,      &
+                thermoelectric_ohm, thermoelectric_coef,            &
                 eta, visco, visco_par, visco_par_par,               &
                 restart, rst_format, regrid, bootstrap, write_ps,   &
                 bootstrap_psin_cutoff,                              &
@@ -263,6 +264,26 @@ if (my_id .eq. 0) then
     close(42)
   else
     read(5,in1)
+  endif
+
+  if ( thermoelectric_ohm ) then
+    write(*,*) 'NOTE: thermoelectric_ohm is ON. This adds the Braginskii thermal force'
+    write(*,*) '      -(0.71/e)*grad_par(Te) to Ohm''s law, alongside the electron pressure'
+    write(*,*) '      term model600 already carries. Two things it does: it makes Phi vary'
+    write(*,*) '      ALONG field lines, so Phi is no longer a flux function and the ExB'
+    write(*,*) '      drift acquires a component ACROSS flux surfaces; and it drives a'
+    write(*,*) '      thermoelectric current between targets at different Te, which acts'
+    write(*,*) '      again through eta*j_par.'
+    write(*,*) '      INCOMPLETE PAIR: the reciprocal electron heat flux'
+    write(*,*) '      -div(0.71*Te*j_par/e) is NOT implemented. Current and potential will'
+    write(*,*) '      respond without the electron energy transport that accompanies them,'
+    write(*,*) '      so total energy is not conserved to Braginskii order. Adequate for'
+    write(*,*) '      establishing whether the potential structure appears; NOT adequate'
+    write(*,*) '      for a quantitative energy or detachment result.'
+    if ( .not. any(bcs(:)%natural%zj) ) then
+      write(*,*) '      WARNING: no boundary type has natural%zj, so the wall current cannot'
+      write(*,*) '      respond. The thermoelectric drive will then move the potential only.'
+    endif
   endif
 
   if ( ( n_tor .eq. 1 ) .and. freeboundary .and. (.not. freeboundary_equil) ) then
