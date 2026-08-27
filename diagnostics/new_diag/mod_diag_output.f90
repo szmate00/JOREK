@@ -587,7 +587,10 @@ module mod_diag_output
         rho_norm = central_density *1.d20 * central_mass * atomic_mass_unit
         t_norm   = sqrt(MU_zero*rho_norm)
         call HDF5_real_saving(i_file,t_now*t_norm,'time'//char(0))
-        call HDF5_integer_saving(i_file,index_now,'index_now'//char(0))
+        ! --- index_now is already written unconditionally above. Writing it again here
+        ! --- makes H5Dcreate2 fail with "name already exists" and prints a 30-line
+        ! --- HDF5-DIAG traceback on every single export. Harmless (it is the last write,
+        ! --- so the file is complete) but it buries real errors in noise.
       end if
     end if
     
@@ -666,7 +669,10 @@ module mod_diag_output
         rho_norm = central_density *1.d20 * central_mass * atomic_mass_unit
         t_norm   = sqrt(MU_zero*rho_norm)
         call HDF5_real_saving(i_file,t_now*t_norm,'time'//char(0))
-        call HDF5_integer_saving(i_file,index_now,'index_now'//char(0))
+        ! --- index_now is already written unconditionally above. Writing it again here
+        ! --- makes H5Dcreate2 fail with "name already exists" and prints a 30-line
+        ! --- HDF5-DIAG traceback on every single export. Harmless (it is the last write,
+        ! --- so the file is complete) but it buries real errors in noise.
       end if
     end if
     
