@@ -12,19 +12,36 @@
 !!
 !!     poloidal(v_par) + poloidal(v_ExB)  >=  poloidal(c_s)
 !!
-!! i.e. an added v_ExB.n / b_n on the parallel velocity. The two use different
-!! projections at an oblique target, so it is not clear from the source whether
-!! JOREK's term is the same physics written differently, a partial version, or
-!! something else.
+!! i.e. an added v_ExB.n / b_n on the parallel velocity.
+!!
+!! Working the geometry: iv_dir indexes the TANGENTIAL derivative (t_constant
+!! boundary gives iv_dir = 2 = d/ds, and s runs along the boundary there), so
+!! u0_b and ps0_b are tangential. With v_ExB = R grad(u) x e_phi one gets
+!! v_ExB.n = -R du/dt and dpsi/dt = -R B_pol.n, hence
+!!
+!!     R^2 * (du/dt) / (dpsi/dt)  =  v_ExB.n / (B_pol.n)  =  v_ExB.n / (b_n |B|)
+!!
+!! which is the SOLPS correction up to normalisation. So JOREK very likely
+!! ALREADY has the drift-compatible condition, and this module is a verification
+!! rather than a discovery. Note it also means the term vanishes identically
+!! wherever dirichlet%u holds - that pins the value and the TANGENTIAL
+!! derivative, so du/dt = 0 - and therefore the whole question only arises on a
+!! boundary where u is free, i.e. under the sheath boundary condition.
 !!
 !! This module answers that by measuring BOTH at the same nodes, imposing
 !! NEITHER. It changes no behaviour: with diag_mach1 = .false. (default) nothing
 !! is accumulated or printed.
 !!
-!! WHAT TO READ. 'JOREK/SOLPS' near 1 means the existing term already is the
-!! drift-compatible correction and there is nothing to add. Near 0 means the
-!! correction is genuinely missing. Anything else means they are different
-!! quantities and the difference is what a new implementation has to supply.
+!! WHAT TO READ. The ratio's SPREAD matters more than its value, because the
+!! Vpar normalisation may leave a constant factor the derivation above does not
+!! pin down:
+!!
+!!   min ~ max, any value   the two are the SAME quantity differing by a constant
+!!                          normalisation. Nothing to implement.
+!!   ratio varies           genuinely different quantities, and the difference is
+!!                          what an implementation would have to supply.
+!!   ratio ~ 0              the correction is absent (expected wherever
+!!                          dirichlet%u holds, since du/dt is then pinned to 0).
 module mod_mach1_diag
 
   implicit none
@@ -39,6 +56,8 @@ module mod_mach1_diag
   real*8, save :: md_dj(2)     = 0.d0   !< sum w*|JOREK drift term|
   real*8, save :: md_ds(2)     = 0.d0   !< sum w*|SOLPS drift term|
   real*8, save :: md_ratio(2)  = 0.d0   !< sum w*(JOREK/SOLPS)
+  real*8, save :: md_rmax(2)   = -1.d30 !< max of that ratio
+  real*8, save :: md_rmin(2)   =  1.d30 !< min of that ratio
   real*8, save :: md_vn(2)     = 0.d0   !< sum w*(v_ExB . n), + = into the wall
   real*8, save :: md_vt(2)     = 0.d0   !< sum w*(v_ExB . t)
   real*8, save :: md_bn(2)     = 0.d0   !< sum w*|b_n|
@@ -56,6 +75,7 @@ subroutine mach1_diag_reset()
   md_w=0.d0; md_cs=0.d0; md_dj=0.d0; md_ds=0.d0; md_ratio=0.d0
   md_vn=0.d0; md_vt=0.d0; md_bn=0.d0; md_djmax=0.d0; md_dsmax=0.d0
   md_bnmin=1.d30; md_rev=0.d0; md_n=0.d0
+  md_rmax=-1.d30; md_rmin=1.d30
 end subroutine mach1_diag_reset
 
 
@@ -94,8 +114,11 @@ subroutine mach1_diag_add(BigR, cs, d_jrk, vE_n, vE_t, bn, wgt)
   d_slp = 0.d0
   if ( absbn .gt. 1.d-8 ) d_slp = vE_n / absbn
 
+  ! --- Only form the ratio where the denominator is a meaningful fraction of c_s;
+  ! --- below that it is dominated by whatever noise is in du/dt and its spread
+  ! --- would swamp the signal this diagnostic exists to show.
   rat = 0.d0
-  if ( abs(d_slp) .gt. 1.d-30 ) rat = d_jrk / d_slp
+  if ( abs(d_slp) .gt. 1.d-3 * cs ) rat = d_jrk / d_slp
 
   !$omp critical (mach1_diag_accumulate)
   md_n(k)     = md_n(k)     + 1.d0
@@ -104,6 +127,10 @@ subroutine mach1_diag_add(BigR, cs, d_jrk, vE_n, vE_t, bn, wgt)
   md_dj(k)    = md_dj(k)    + wgt * abs(d_jrk)
   md_ds(k)    = md_ds(k)    + wgt * abs(d_slp)
   md_ratio(k) = md_ratio(k) + wgt * rat
+  if ( abs(d_slp) .gt. 1.d-3 * cs ) then
+    md_rmax(k) = max(md_rmax(k), rat)
+    md_rmin(k) = min(md_rmin(k), rat)
+  endif
   md_vn(k)    = md_vn(k)    + wgt * vE_n
   md_vt(k)    = md_vt(k)    + wgt * vE_t
   md_bn(k)    = md_bn(k)    + wgt * absbn
@@ -129,18 +156,18 @@ subroutine mach1_diag_report(my_id)
   integer, intent(in) :: my_id
 
   integer :: ierr, k
-  real*8  :: loc(2,10), glo(2,10), lmax(2,2), gmax(2,2), lmin(2), gmin(2)
+  real*8  :: loc(2,10), glo(2,10), lmax(2,3), gmax(2,3), lmin(2,2), gmin(2,2)
   real*8  :: w, cs, dj, ds, rat, vn, vt, bn, rev
   character(len=5) :: lbl(2)
 
   loc(:,1)=md_n;  loc(:,2)=md_w;  loc(:,3)=md_cs; loc(:,4)=md_dj; loc(:,5)=md_ds
   loc(:,6)=md_ratio; loc(:,7)=md_vn; loc(:,8)=md_vt; loc(:,9)=md_bn; loc(:,10)=md_rev
-  lmax(:,1)=md_djmax; lmax(:,2)=md_dsmax
-  lmin = md_bnmin
+  lmax(:,1)=md_djmax; lmax(:,2)=md_dsmax; lmax(:,3)=md_rmax
+  lmin(:,1)=md_bnmin; lmin(:,2)=md_rmin
 
   call MPI_Reduce(loc,  glo,  20, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
-  call MPI_Reduce(lmax, gmax,  4, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
-  call MPI_Reduce(lmin, gmin,  2, MPI_REAL8, MPI_MIN, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(lmax, gmax,  6, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(lmin, gmin,  4, MPI_REAL8, MPI_MIN, 0, MPI_COMM_WORLD, ierr)
 
   if ( my_id .ne. 0 ) return
   if ( sum(glo(:,1)) .lt. 0.5d0 ) return
@@ -164,12 +191,13 @@ subroutine mach1_diag_report(my_id)
     write(*,'(A,es10.3,A,f7.2,A,f7.2,A)')                                         &
       '     SOLPS drift term  = ', ds, '   mean/c_s=', 100.d0*ds/max(cs,1.d-30),  &
       ' %   max/c_s=', 100.d0*gmax(k,2), ' %'
-    write(*,'(A,f9.3,A)')                                                         &
-      '     ratio JOREK/SOLPS = ', rat, '     (1 = the same correction, 0 = absent)'
+    write(*,'(A,f9.3,A,f9.3,A,f9.3,A)')                                           &
+      '     ratio JOREK/SOLPS = ', rat, '   min=', gmin(k,2), '  max=', gmax(k,3), &
+      '   (constant => same quantity)'
     write(*,'(A,es10.3,A,es10.3,A)')                                              &
       '     v_ExB.n (into wall)=', vn, '   v_ExB.t=', vt, ' [same units as c_s]'
     write(*,'(A,f8.4,A,f8.4,A,f6.2,A)')                                           &
-      '     |b_n| mean=', bn, '  min=', gmin(k), '   would-reverse fraction=',    &
+      '     |b_n| mean=', bn, '  min=', gmin(k,1), '   would-reverse fraction=',   &
       100.d0*rev, ' %'
   enddo
 

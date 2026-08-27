@@ -568,8 +568,11 @@ do i=1, n_local_elms !=== do elements
             vE_Z_d = + BigR * u0_x_d
             vE_n_d =   vE_R_d * normal(1) + vE_Z_d * normal(2)      ! + = into the wall
             vE_t_d = - vE_R_d * normal(2) + vE_Z_d * normal(1)
-            ! --- The JOREK drift term as it enters v_par. Mach1BC is written in Vpar units,
-            ! --- so multiply through by Btot to compare with c_s directly.
+            ! --- The JOREK drift term as it enters v_par. NOTE iv_dir indexes the
+            ! --- TANGENTIAL derivative (t_constant boundary -> iv_dir = 2 = d/ds, and s
+            ! --- runs along the boundary there), so u0_b and ps0_b are tangential and
+            ! --- R^2*u0_b/ps0_b = v_ExB.n/(b_n*|B|) - i.e. structurally the SOLPS
+            ! --- correction already. The ratio below tests that.
             d_jrk_d = factor * BigR**2 * u0_b / ps0_b
             call mach1_diag_add(BigR, factor*cs0, d_jrk_d, vE_n_d, vE_t_d, bn, dl)
           endif
