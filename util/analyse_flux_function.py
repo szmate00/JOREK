@@ -116,7 +116,17 @@ def derive(d):
     # gradient, which is robust even on a coarse grid.
     R, Z, pn = d["R"], d["Z"], d["Psi_N"]
     try:
-        gz, gr = np.gradient(pn, Z[:, 0], R[0, :])       # axis 0 = Z, axis 1 = R
+        # `rectangle` lays out a uniform grid, so differentiate on the INDEX grid and
+        # rescale by the constant spacing. Passing the R/Z columns to np.gradient as
+        # coordinate arrays fails outright when they carry NaNs outside the plasma --
+        # which they do -- and the check then silently never runs.
+        rr = R[np.isfinite(R)]
+        zz = Z[np.isfinite(Z)]
+        nR, nZ = R.shape[1], R.shape[0]
+        dR = (np.max(rr) - np.min(rr)) / max(nR - 1, 1)
+        dZ = (np.max(zz) - np.min(zz)) / max(nZ - 1, 1)
+        gz, gr = np.gradient(pn)                         # axis 0 = Z, axis 1 = R
+        gr, gz = gr / dR, gz / dZ
         pr_a, pz_a = -R * BZ, R * BR                     # asserted grad psi
         m = np.isfinite(gr) & np.isfinite(gz) & np.isfinite(pr_a) & np.isfinite(pz_a)
         m &= (np.hypot(gr, gz) > 0) & (np.hypot(pr_a, pz_a) > 0)
@@ -124,10 +134,12 @@ def derive(d):
             cos = ((gr[m] * pr_a[m] + gz[m] * pz_a[m])
                    / (np.hypot(gr[m], gz[m]) * np.hypot(pr_a[m], pz_a[m])))
             d["_sign_cos"] = float(np.nanmedian(cos))
+            d["_sign_n"] = int(m.sum())
         else:
             d["_sign_cos"] = float("nan")
-    except Exception:
+    except Exception as e:
         d["_sign_cos"] = float("nan")
+        d["_sign_err"] = str(e)
     return d
 
 
@@ -173,7 +185,12 @@ def report_one(d, pfr, label, out):
     out.append("  %s   t_now = %s,  time = %s s,  step %d,  grid %s"
                % (label, fmt(d["_t_now"]), fmt(d["_time"]), d["_index"], d["_shape"]))
     sc = d.get("_sign_cos", float("nan"))
-    if np.isfinite(sc):
+    if not np.isfinite(sc):
+        # A check that silently does not run is worse than no check at all.
+        out.append("    SIGN CHECK DID NOT RUN (grad Psi_N could not be differentiated --")
+        out.append("    NaNs in the R/Z columns outside the plasma?). Magnitudes below are")
+        out.append("    unaffected; the SIGN of v_psi is unverified.")
+    else:
         if sc > 0.9:
             note = "grad psi orientation confirmed against Psi_N (+v_psi = outward)"
         elif sc < -0.9:
@@ -208,6 +225,32 @@ def report_one(d, pfr, label, out):
 
     sa = stat(d["sin_ang"], m)
     fr = stat(d["flux_ratio"], m)
+
+    # RATIO OF MEANS, not the mean of the pointwise ratio. Gamma_par,pol carries a factor
+    # Btheta, which vanishes at the X-point, and vpar stagnates elsewhere in the PFR -- so
+    # the pointwise ratio is singular on a set of measure zero that the grid samples
+    # anyway, and its mean is dominated by those points rather than by the transport. The
+    # flux-weighted ratio below is the physical one; fr["absmean"] is kept only as a
+    # diagnostic of how bad the pointwise version is.
+    gp = stat(d["Gamma_psi"], m)
+    gq = stat(d["Gamma_par_pol"], m)
+    flux_w = gp["absmean"] / gq["absmean"] if gq["absmean"] else float("nan")
+
+    ve = stat(d["vE_mag"], m)
+    vp = stat(d["v_psi"], m)
+    sin_w = vp["absmean"] / ve["absmean"] if ve["absmean"] else float("nan")
+
+    # Circulation or transport? A closed ExB cell has a large |Gamma_psi| everywhere and
+    # zero NET flux. Comparing the signed mean with the mean magnitude separates the two.
+    gsig = d["Gamma_psi"][m]
+    gsig = gsig[np.isfinite(gsig)]
+    net = float(np.mean(gsig)) if gsig.size else float("nan")
+    netfrac = abs(net) / gp["absmean"] if gp["absmean"] else float("nan")
+    out.append("")
+    out.append("      flux-weighted   <|v_psi|>/<|v_ExB|>       = %s  (%.1f deg)"
+               % (fmt(sin_w, 3), _ang(sin_w)))
+    out.append("      flux-weighted   <|G_psi|>/<|G_par,pol|>   = %s" % fmt(flux_w, 3))
+    out.append("      net vs circulating  |<G_psi>|/<|G_psi>|   = %s" % fmt(netfrac, 3))
     out.append("")
     out.append("      IS PHI A FLUX FUNCTION IN THE PFR?")
     if not np.isfinite(sa["absmean"]):
@@ -223,19 +266,40 @@ def report_one(d, pfr, label, out):
                    % (_ang(sa["absmean"]), _ang(sa["mx"])))
     out.append("")
     out.append("      DOES IT MOVE DENSITY?")
-    if not np.isfinite(fr["absmean"]):
+    if not np.isfinite(flux_w):
         out.append("        cannot tell -- parallel flux is zero or missing.")
     else:
-        out.append("        Gamma_psi / Gamma_par,pol = %s in the mean, %s at the 95th"
-                   % (fmt(fr["absmean"], 3), fmt(fr["p95"], 3)))
-        if fr["absmean"] < 0.01:
+        out.append("        <|Gamma_psi|> / <|Gamma_par,pol|> = %s" % fmt(flux_w, 3))
+        if flux_w < 0.01:
             out.append("        Below 1%: the cross-field ExB is negligible against parallel")
-            out.append("        streaming, and this structure cannot be driving an asymmetry.")
-        elif fr["absmean"] < 0.1:
-            out.append("        A few per cent -- real but subdominant. Worth carrying, not")
-            out.append("        worth calling a mechanism on its own.")
+            out.append("        streaming, and this structure cannot drive an asymmetry.")
+        elif flux_w < 0.1:
+            out.append("        A few per cent -- real but subdominant.")
         else:
-            out.append("        Above 10%: the cross-field ExB is a leading-order term here.")
+            out.append("        Above 10%: the cross-field ExB is a leading-order transport")
+            out.append("        channel in the PFR.")
+        if np.isfinite(netfrac):
+            out.append("")
+            if netfrac < 0.1:
+                out.append("        BUT |<Gamma_psi>|/<|Gamma_psi|> = %s: the flux very nearly"
+                           % fmt(netfrac, 3))
+                out.append("        CANCELS. This is a closed circulation cell, not a net")
+                out.append("        transfer between the legs. A large circulating flux moves")
+                out.append("        no inventory. For the NET inter-leg transfer use the signed")
+                out.append("        integral through a dividing surface -- postproc_pfr_line.in")
+                out.append("        with analyse_pfr_line.py, whose cut is vertical at the")
+                out.append("        X-point major radius precisely for this reason.")
+            else:
+                out.append("        |<Gamma_psi>|/<|Gamma_psi|> = %s, so a real fraction of this"
+                           % fmt(netfrac, 3))
+                out.append("        is NET, not circulating. Confirm the direction and the")
+                out.append("        magnitude with analyse_pfr_line.py.")
+        if fr["absmean"] > 3 * flux_w:
+            out.append("")
+            out.append("        (The pointwise mean ratio is %s -- inflated by points where"
+                       % fmt(fr["absmean"], 3))
+            out.append("        Btheta or vpar approach zero. Ignore it; use the flux-weighted")
+            out.append("        number above.)")
 
 
 def main():
@@ -313,13 +377,24 @@ def main():
             if fin.sum() and m.sum():
                 inb = float(np.mean(np.abs(dv[m])))
                 allb = float(np.mean(np.abs(dv[fin])))
+                conc = inb / allb if allb else float("nan")
                 out += ["",
                         "  mean |delta v_psi|:  %s m/s in the PFR box,  %s over the whole"
                         % (fmt(inb), fmt(allb)),
-                        "  export.  Concentration ratio %s -- above ~1.5 the change is"
-                        % fmt(inb / allb if allb else float("nan"), 3),
-                        "  structural (it modifies the inter-leg channel); near 1.0 it is a",
-                        "  uniform offset with no structural consequence."]
+                        "  export.  Concentration ratio %s." % fmt(conc, 3)]
+                if not np.isfinite(conc):
+                    pass
+                elif conc > 1.5:
+                    out += ["  Above 1.5: the change is CONCENTRATED in the PFR, i.e. it",
+                            "  modifies the inter-leg transport channel."]
+                elif conc > 0.7:
+                    out += ["  Near 1: a roughly uniform offset, with no particular",
+                            "  structural preference for the PFR."]
+                else:
+                    out += ["  Below 0.7: the change AVOIDS the PFR -- it is %.1fx weaker"
+                            % (1.0 / conc if conc else float("nan"),),
+                            "  there than elsewhere in the export. Whatever moved, it was",
+                            "  not the inter-leg channel; look at the legs and the targets."]
 
     out.append("")
     out.append("=" * 78)
