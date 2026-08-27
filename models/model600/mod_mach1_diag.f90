@@ -55,7 +55,9 @@ module mod_mach1_diag
   real*8, save :: md_cs(2)     = 0.d0   !< sum w*c_s
   real*8, save :: md_dj(2)     = 0.d0   !< sum w*|JOREK drift term|
   real*8, save :: md_ds(2)     = 0.d0   !< sum w*|SOLPS drift term|
-  real*8, save :: md_ratio(2)  = 0.d0   !< sum w*(JOREK/SOLPS)
+  real*8, save :: md_ratio(2)  = 0.d0   !< sum w*(JOREK/SOLPS), over resolved nodes only
+  real*8, save :: md_rw(2)     = 0.d0   !< sum of w over those nodes, so the mean is not
+                                        !< diluted by the ones where no ratio was formed
   real*8, save :: md_rmax(2)   = -1.d30 !< max of that ratio
   real*8, save :: md_rmin(2)   =  1.d30 !< min of that ratio
   real*8, save :: md_vn(2)     = 0.d0   !< sum w*(v_ExB . n), + = into the wall
@@ -75,7 +77,7 @@ subroutine mach1_diag_reset()
   md_w=0.d0; md_cs=0.d0; md_dj=0.d0; md_ds=0.d0; md_ratio=0.d0
   md_vn=0.d0; md_vt=0.d0; md_bn=0.d0; md_djmax=0.d0; md_dsmax=0.d0
   md_bnmin=1.d30; md_rev=0.d0; md_n=0.d0
-  md_rmax=-1.d30; md_rmin=1.d30
+  md_rmax=-1.d30; md_rmin=1.d30; md_rw=0.d0
 end subroutine mach1_diag_reset
 
 
@@ -126,10 +128,11 @@ subroutine mach1_diag_add(BigR, cs, d_jrk, vE_n, vE_t, bn, wgt)
   md_cs(k)    = md_cs(k)    + wgt * cs
   md_dj(k)    = md_dj(k)    + wgt * abs(d_jrk)
   md_ds(k)    = md_ds(k)    + wgt * abs(d_slp)
-  md_ratio(k) = md_ratio(k) + wgt * rat
   if ( abs(d_slp) .gt. 1.d-3 * cs ) then
-    md_rmax(k) = max(md_rmax(k), rat)
-    md_rmin(k) = min(md_rmin(k), rat)
+    md_ratio(k) = md_ratio(k) + wgt * rat
+    md_rw(k)    = md_rw(k)    + wgt
+    md_rmax(k)  = max(md_rmax(k), rat)
+    md_rmin(k)  = min(md_rmin(k), rat)
   endif
   md_vn(k)    = md_vn(k)    + wgt * vE_n
   md_vt(k)    = md_vt(k)    + wgt * vE_t
@@ -156,16 +159,17 @@ subroutine mach1_diag_report(my_id)
   integer, intent(in) :: my_id
 
   integer :: ierr, k
-  real*8  :: loc(2,10), glo(2,10), lmax(2,3), gmax(2,3), lmin(2,2), gmin(2,2)
+  real*8  :: loc(2,11), glo(2,11), lmax(2,3), gmax(2,3), lmin(2,2), gmin(2,2)
   real*8  :: w, cs, dj, ds, rat, vn, vt, bn, rev
   character(len=5) :: lbl(2)
 
   loc(:,1)=md_n;  loc(:,2)=md_w;  loc(:,3)=md_cs; loc(:,4)=md_dj; loc(:,5)=md_ds
   loc(:,6)=md_ratio; loc(:,7)=md_vn; loc(:,8)=md_vt; loc(:,9)=md_bn; loc(:,10)=md_rev
+  loc(:,11)=md_rw
   lmax(:,1)=md_djmax; lmax(:,2)=md_dsmax; lmax(:,3)=md_rmax
   lmin(:,1)=md_bnmin; lmin(:,2)=md_rmin
 
-  call MPI_Reduce(loc,  glo,  20, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(loc,  glo,  22, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
   call MPI_Reduce(lmax, gmax,  6, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
   call MPI_Reduce(lmin, gmin,  4, MPI_REAL8, MPI_MIN, 0, MPI_COMM_WORLD, ierr)
 
@@ -180,7 +184,9 @@ subroutine mach1_diag_report(my_id)
     if ( (mach1_diag_R_split .le. 0.d0) .and. (k .eq. 1) ) cycle
     w = glo(k,2)
     if ( w .le. 0.d0 ) cycle
-    cs=glo(k,3)/w; dj=glo(k,4)/w; ds=glo(k,5)/w; rat=glo(k,6)/w
+    cs=glo(k,3)/w; dj=glo(k,4)/w; ds=glo(k,5)/w
+    rat = 0.d0
+    if ( glo(k,11) .gt. 0.d0 ) rat = glo(k,6)/glo(k,11)
     vn=glo(k,7)/w; vt=glo(k,8)/w; bn=glo(k,9)/w; rev=glo(k,10)/w
 
     write(*,'(A,A,A,i0,A,es10.3,A)')                                              &
@@ -194,6 +200,8 @@ subroutine mach1_diag_report(my_id)
     write(*,'(A,f9.3,A,f9.3,A,f9.3,A)')                                           &
       '     ratio JOREK/SOLPS = ', rat, '   min=', gmin(k,2), '  max=', gmax(k,3), &
       '   (constant => same quantity)'
+    write(*,'(A,f6.2,A)') '     ratio resolved on ', 100.d0*glo(k,11)/w,                &
+      ' % of the boundary weight (|SOLPS drift| > 1e-3 c_s)'
     write(*,'(A,es10.3,A,es10.3,A)')                                              &
       '     v_ExB.n (into wall)=', vn, '   v_ExB.t=', vt, ' [same units as c_s]'
     write(*,'(A,f8.4,A,f8.4,A,f6.2,A)')                                           &

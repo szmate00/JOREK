@@ -183,8 +183,6 @@ RMPspectrum: if (RMP_on .and. (n_tor .ge. 3)) then !*****
     dpsi_RMP_sin_dZ1(j) = dpsi_RMP_sin_dZ(j) * establish_RMP
   end do
 
-  if ( diag_mach1 ) call mach1_diag_reset()
-
   if (my_id == 0) then
     write (*,*) 'psi_RMP_cos1(1) and derivatives after multiplication in boundary conditions'
     write (*,*) psi_RMP_cos1(1), dpsi_RMP_cos_dR1(1), dpsi_RMP_cos_dZ1(1)
@@ -192,6 +190,10 @@ RMPspectrum: if (RMP_on .and. (n_tor .ge. 3)) then !*****
   endif
 
 end if RMPspectrum
+
+! --- Unconditionally, NOT inside RMPspectrum: that block needs RMP_on and n_tor >= 3, so with
+! --- n_tor = 1 the reset never ran and the accumulators grew without bound across calls.
+if ( diag_mach1 ) call mach1_diag_reset()
 
 ! --- Record psi at the first call, from the very node_list this routine indexes. Doing it here
 ! --- rather than in jorek2_main avoids any question of node redistribution or restart ordering
