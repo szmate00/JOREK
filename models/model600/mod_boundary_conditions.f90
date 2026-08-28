@@ -138,7 +138,7 @@ real*8  :: QPs0,QPs0_s,QPs0_t,QPs0_st,QPs0_ss,QPs0_tt
 integer :: ifail, i_elm
 
 real*8  ::   Mach1BC,   Mach1BC_v,   Mach1BC_T,   Mach1BC_u
-real*8  ::  drift_bc, drift_bc_u, drift_bc_bb, drift_bc_ubb, drift_max
+real*8  ::  drift_bc, drift_bc_u, drift_bc_bb, drift_bc_ubb, drift_max, drift_tnh
 real*8  ::  dMach1BC,  dMach1BC_v,  dMach1BC_T,  dMach1BC_Ti, dMach1BC_Te,  dMach1BC_Tb, dMach1BC_ubb
 real*8  :: d2Mach1BC, d2Mach1BC_v, d2Mach1BC_T, d2Mach1BC_Tb, d2Mach1BC_Tbb
 
@@ -638,14 +638,18 @@ do i=1, n_local_elms !=== do elements
             ! --- the bound is clip*cs0/Btot, since the v_par value of drift_bc is Btot times
             ! --- it. Clipped BEFORE `factor` is applied, because `factor` is JOREK's
             ! --- obliqueness smoothing and the physical quantity SOLPS bounds is the drift.
+            ! --- SMOOTH limiter, not a hard clip. A hard clip is C0 in the residual but its
+            ! --- Jacobian jumps discontinuously to zero at the knee, so Gauss points chatter
+            ! --- between clipped and unclipped from one Newton iteration to the next and the
+            ! --- solve stops converging - observed as a crash a few hundred steps in.
+            ! --- tanh has the same bound and the same small-argument limit, is C-infinity,
+            ! --- and its derivative sech^2 = 1 - tanh^2 is exact, so residual and Jacobian
+            ! --- stay consistent everywhere.
             drift_max = bohm_drift_clip * cs0 / Btot
-            if ( abs(drift_bc) .gt. drift_max ) then
-              drift_bc   = sign(drift_max, drift_bc)
-              ! --- Saturated: the constraint no longer depends on u there, so the Jacobian
-              ! --- entry is zero. That is the derivative of a clipped function, not an
-              ! --- approximation - keeping the unclipped slope would leave the Newton row
-              ! --- inconsistent with the residual it is paired with.
-              drift_bc_u = 0.d0
+            if ( drift_max .gt. 0.d0 ) then
+              drift_tnh  = tanh( drift_bc / drift_max )
+              drift_bc_u = drift_bc_u * ( 1.d0 - drift_tnh**2 )   ! d/du, using the OLD drift_bc
+              drift_bc   = drift_max * drift_tnh
             endif
 
             drift_bc   = factor * drift_bc
