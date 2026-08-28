@@ -102,6 +102,8 @@ subroutine preset_parameters
   sheath_u_relax     =  1.d0
   sheath_u_relax_time= -1.d0  ! <= 0: use the per-step fraction sheath_u_relax instead
   sheath_wall_vel    =  0.d0  ! 0 = psi frozen at the wall (previous behaviour)
+  bohm_drift_compatible = .false. ! drift-compatible Bohm condition on vpar (Mach1BC); .false. reproduces the previous behaviour exactly
+  bohm_drift_clip       = 2.d0    ! bound on the drift correction in units of c_s, as in SOLPS BCMOM=13
   sheath_u_align_psi = .false.
   sheath_u_value_only= .false.
 

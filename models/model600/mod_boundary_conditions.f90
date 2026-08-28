@@ -44,7 +44,8 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        bcs, loop_voltage, central_density, central_mass,                                                    &
        sheath_Lambda, sheath_V_wall, sheath_u_exp_max, sheath_u_exp_min, sheath_u_relax, sheath_min_bn, &
        sheath_u_relax_time, sheath_wall_vel, sheath_u_align_psi, sheath_u_value_only, &
-       sheath_zj_relax, sheath_ramp_time, t_start, sheath_zj_ratio_max, diag_mach1
+       sheath_zj_relax, sheath_ramp_time, t_start, sheath_zj_ratio_max, diag_mach1, &
+       bohm_drift_compatible, bohm_drift_clip
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -137,6 +138,7 @@ real*8  :: QPs0,QPs0_s,QPs0_t,QPs0_st,QPs0_ss,QPs0_tt
 integer :: ifail, i_elm
 
 real*8  ::   Mach1BC,   Mach1BC_v,   Mach1BC_T,   Mach1BC_u
+real*8  ::  drift_bc, drift_bc_u, drift_bc_bb, drift_bc_ubb, drift_max
 real*8  ::  dMach1BC,  dMach1BC_v,  dMach1BC_T,  dMach1BC_Ti, dMach1BC_Te,  dMach1BC_Tb, dMach1BC_ubb
 real*8  :: d2Mach1BC, d2Mach1BC_v, d2Mach1BC_T, d2Mach1BC_Tb, d2Mach1BC_Tbb
 
@@ -614,10 +616,51 @@ do i=1, n_local_elms !=== do elements
           cs0_TT   = - 0.25d0 * gamma**2 / cs0**3 
           cs0_TTT  = 3.d0/8.d0* gamma**3 / cs0**5 
 
-          Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0               + factor / Btot * BigR**2 * U0_b/ps0_b 
+          ! --- Drift term of the Bohm condition. The identity
+          ! ---     R^2 * d_b(u)/d_b(psi) = -(v_ExB.n)/(b_n*Btot)
+          ! --- (d_b is the TANGENTIAL derivative; see doc/jorek_vpar_bc_drifts.pdf) says this
+          ! --- expression is ALREADY in Vpar units, Vpar = v_par/|B| - the Btot is generated
+          ! --- internally by the d_b(psi) in the denominator. cs0 is a physical speed and
+          ! --- genuinely needs the /Btot next to it; this term does not. Dividing it again,
+          ! --- as the historical form does, leaves the drift correction short by |B| ~ 2.
+          ! --- bohm_drift_compatible = .true. drops that second conversion, giving
+          ! ---     v_par = sigma*c_s - (v_ExB.n)/b_n
+          ! --- which is SOLPS-ITER BCMOM=13, "Drift-compatible Bohm-Chodura sheath entrance
+          ! --- condition", where the ExB enters at coefficient 1 (b2stbc_cbc = 1.0).
+          ! --- .false. reproduces the previous behaviour bit for bit.
+          if ( bohm_drift_compatible ) then
+            drift_bc   = BigR**2 * U0_b/ps0_b
+            drift_bc_u = BigR**2 * element_size_0/ps0_b
+
+            ! --- Clip, as SOLPS restricts its poloidal ExB to +-2*c_s*|b_x|. Not optional:
+            ! --- the correction goes as 1/b_n, and diag_mach1 measured it exceeding c_s on
+            ! --- ~0.9% of the boundary weight, where it would reverse v_par. In Vpar units
+            ! --- the bound is clip*cs0/Btot, since the v_par value of drift_bc is Btot times
+            ! --- it. Clipped BEFORE `factor` is applied, because `factor` is JOREK's
+            ! --- obliqueness smoothing and the physical quantity SOLPS bounds is the drift.
+            drift_max = bohm_drift_clip * cs0 / Btot
+            if ( abs(drift_bc) .gt. drift_max ) then
+              drift_bc   = sign(drift_max, drift_bc)
+              ! --- Saturated: the constraint no longer depends on u there, so the Jacobian
+              ! --- entry is zero. That is the derivative of a clipped function, not an
+              ! --- approximation - keeping the unclipped slope would leave the Newton row
+              ! --- inconsistent with the residual it is paired with.
+              drift_bc_u = 0.d0
+            endif
+
+            drift_bc   = factor * drift_bc
+            drift_bc_u = factor * drift_bc_u
+          else
+            ! --- Historical form, written out literally so the default path is bit-identical
+            ! --- to the previous code rather than merely algebraically equal.
+            drift_bc   = factor / Btot * BigR**2 * U0_b/ps0_b
+            drift_bc_u = factor / Btot * BigR**2 * element_size_0/ps0_b
+          endif
+
+          Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0               + drift_bc
           Mach1BC_v   = - 1.0
           Mach1BC_T   =           + direction / Btot * factor  * cs0_T 
-          Mach1BC_u   =                                                            + factor / Btot * BigR**2 * element_size_0/ps0_b 
+          Mach1BC_u   =                                                            + drift_bc_u 
           dMach1BC    = - Vpar0_b + direction / Btot * factor  * cs0_T * (Ti0_b+Te0_b)  &
                                   + direction / Btot * Hfact_b * cs0         
           dMach1BC_v  = - element_size_0
@@ -652,8 +695,18 @@ do i=1, n_local_elms !=== do elements
 
 
           if (n_order .ge. 5) then
-            dMach1BC     = dMach1BC + factor / Btot * BigR**2 * U0_bb/ps0_b
-            dMach1BC_ubb = + factor / Btot * BigR**2 * element_size_3/ps0_b
+            ! --- Same conversion as the value row. No clip here: this row is only reached
+            ! --- at n_order >= 5, and a clipped value row would need its derivative row
+            ! --- clipped consistently, which is not attempted until there is a case to test it.
+            if ( bohm_drift_compatible ) then
+              drift_bc_bb  = factor * BigR**2 * U0_bb/ps0_b
+              drift_bc_ubb = factor * BigR**2 * element_size_3/ps0_b
+            else
+              drift_bc_bb  = factor / Btot * BigR**2 * U0_bb/ps0_b
+              drift_bc_ubb = factor / Btot * BigR**2 * element_size_3/ps0_b
+            endif
+            dMach1BC     = dMach1BC + drift_bc_bb
+            dMach1BC_ubb = + drift_bc_ubb
             d2Mach1BC    = - Vpar0_bb + direction / Btot * factor   * cs0_TT * (Ti0_b+Te0_b)**2   &
                                       + direction / Btot * factor   * cs0_T  * (Ti0_bb+Te0_bb)   !&
                                       !+ direction / Btot * Hfact_b  * cs0_T  * T0_b *2.0 !&

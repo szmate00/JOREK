@@ -69,6 +69,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 sheath_u_relax_time,                                &
                 sheath_wall_vel,                                    &
                 sheath_u_align_psi,                                 &
+                bohm_drift_compatible, bohm_drift_clip,             &
                 sheath_u_value_only,                                &
                 sheath_u_exp_max, sheath_u_exp_min,                 &
                 sheath_Lambda_local, sheath_X_min, sheath_smooth_dX,&
@@ -369,6 +370,14 @@ if (my_id .eq. 0) then
       write(*,*) '      saturation limit and it sits at Phi = 0 when it equals -Lambda, which is'
       write(*,*) '      where electron saturation physically is. Present setting caps |j| at'
       write(*,*) '      (exp(-sheath_u_exp_min)-1) =', exp(-sheath_u_exp_min)-1.d0, ' times j_sat.'
+    endif
+
+    if ( bohm_drift_compatible ) then
+      write(*,*) 'NOTE: bohm_drift_compatible: the Mach-1 BC imposes the DRIFT-COMPATIBLE Bohm'
+      write(*,*) '      condition, v_par = sigma*c_s - (v_ExB.n)/b_n, i.e. the TOTAL normal'
+      write(*,*) '      velocity reaches the Bohm flux rather than the parallel part alone.'
+      write(*,*) '      The drift term is no longer divided by |B| a second time; it is already'
+      write(*,*) '      in Vpar units. Matches SOLPS-ITER BCMOM=13. Clip at', bohm_drift_clip, '* c_s.'
     endif
 
     if ( sheath_wall_vel .gt. 0.d0 ) then

@@ -854,6 +854,8 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,REAL_FMT) 'sheath_u_relax_time   ', sheath_u_relax_time
     write(*,REAL_FMT) 'sheath_wall_vel       ', sheath_wall_vel
     write(*,LOGI_FMT) 'sheath_u_align_psi    ', sheath_u_align_psi
+    write(*,LOGI_FMT) 'bohm_drift_compatible ', bohm_drift_compatible
+    write(*,REAL_FMT) 'bohm_drift_clip       ', bohm_drift_clip
     write(*,LOGI_FMT) 'sheath_u_value_only   ', sheath_u_value_only
   end if
 
