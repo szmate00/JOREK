@@ -33,7 +33,8 @@ use mod_assembly, only : boundary_conditions_add_one_entry, boundary_conditions_
 use data_structure
 use vacuum, ONLY: is_freebound
 use corr_neg, only: corr_neg_temp, corr_neg_dens, dcorr_neg_dens_drho1
-use mod_sheath_bc, only: sheath_get_lambda, sheath_current, sheath_V_wall_at, sheath_temp_floor
+use mod_sheath_bc, only: sheath_get_lambda, sheath_current, sheath_V_wall_at, sheath_temp_floor, &
+                         sheath_norm
 use mod_sheath_diag, only: sheath_psi0, sheath_store_psi0, sheath_diag_add_nodal
 use mod_sheath_trace, only: sheath_trace_apply, sheath_trace_report
 use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_cos_dR, dpsi_RMP_cos_dZ, &
@@ -96,7 +97,7 @@ logical :: apply_sheath_u
 logical :: apply_natural_u
 
 ! --- Sheath j-V boundary condition for the electric potential
-real*8  :: u0, sh_a_n, sh_c_sat, sh_vw, sh_rho, sh_zj, sh_Ti, sh_Te, sh_T, sh_cs, sh_jsat
+real*8  :: u0, sh_a_n, sh_c_sat, sh_vw, sh_rho, sh_zj, sh_Ti, sh_Te, sh_T, sh_cs
 real*8  :: sh_lam, sh_dlam_dTi, sh_dlam_dTe
 real*8  :: sh_g, sh_C, sh_dr_dzj
 real*8  :: sh_relax
@@ -936,17 +937,13 @@ do i=1, n_local_elms !=== do elements
             if ( sheath_u_relax_time .gt. 0.d0 ) &
               sh_relax = min( 1.d0, tstep / sheath_u_relax_time )
 
-            ! --- Normalisation constants (Artola eqs. 5 and 8; c_sat = -a_n/2 identically).
-            ! --- NOTE the leading minus: the electrostatic potential is Phi = -F0*u in the code's
-            ! --- variables. The JOREK reference paper (Hoelzl et al 2021 eq. 26) defines u = Phi/F0
-            ! --- for v_pol = -R grad(u) x e_phi, while model600 implements v_pol = +R grad(u) x e_phi,
-            ! --- so the code's u is minus the paper's. Flipping a_n propagates the correct sign to
-            ! --- c_sat, to u_target and to every coefficient below, since all of them derive from it.
-            sh_a_n   = - 2.d0 * EL_CHG * F0 * sqrt(MU_ZERO * central_density * 1.d20 * central_mass * ATOMIC_MASS_UNIT) &
-                     / (central_mass * ATOMIC_MASS_UNIT)
-            sh_c_sat = - 0.5d0 * sh_a_n
-            ! --- local wall potential, so an antisymmetric bias between the targets is felt
-            sh_vw    = EL_CHG * sheath_V_wall_at(BigR) * MU_ZERO * central_density * 1.d20
+            ! --- Normalisation constants (Artola eqs. 5 and 8; c_sat = -a_n/2 identically), taken
+            ! --- from the single definition in mod_sheath_bc so this legacy nodal route can never
+            ! --- drift from the weak and diagnostic routes. The leading minus and its justification
+            ! --- (Phi = -F0*u in the code's variables, so the code's u is minus the reference
+            ! --- paper's) live with the formula in sheath_norm. The LOCAL wall potential is passed,
+            ! --- so an antisymmetric bias between the targets is felt.
+            call sheath_norm(sh_a_n, sh_c_sat, sh_vw, sheath_V_wall_at(BigR))
 
             ! --- State at the boundary node (axisymmetric component)
             sh_rho   = max( node_list%node(inode)%values(1,1,var_rho), sheath_rho_floor )
@@ -968,7 +965,6 @@ do i=1, n_local_elms !=== do elements
             ! --- field projection is carried by factor alone, so both are needed here.
             sh_g     = direction * factor
             sh_C     = sh_c_sat * sh_rho * sh_cs / Btot
-            sh_jsat  = sh_C * sh_g
 
             ! --- Grazing incidence. Through a point where the field goes tangent to the wall g(b_n)
             ! --- passes through zero and changes sign, so the ratio r = zj/j_sat runs to +infinity

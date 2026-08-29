@@ -256,11 +256,17 @@ subroutine sheath_diag_add_weak(res_over_D, ref_over_D, diag)
   implicit none
   real*8, intent(in) :: res_over_D, ref_over_D, diag
 
+  ! --- Called per Gauss point from the SAME OpenMP-threaded boundary element loop as
+  ! --- sheath_diag_add, onto module-level accumulators, so it needs the same protection. Its own
+  ! --- critical name, not sheath_diag_accumulate: the two variable sets are independent, so a
+  ! --- separate lock keeps the threads out of each other's way.
+  !$omp critical (sheath_diag_weak_accumulate)
   sd_wk_res2 = sd_wk_res2 + res_over_D**2
   sd_wk_ref2 = sd_wk_ref2 + ref_over_D**2
   sd_wk_n    = sd_wk_n    + 1.d0
   sd_wk_dmin = min(sd_wk_dmin, diag)
   sd_wk_dmax = max(sd_wk_dmax, diag)
+  !$omp end critical (sheath_diag_weak_accumulate)
 
 end subroutine sheath_diag_add_weak
 

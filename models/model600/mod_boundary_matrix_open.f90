@@ -945,18 +945,10 @@ if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
   do wk_i = 1, 2
     do wk_j = 1, 2
       if ( wk_D(wk_i,wk_j,1) .le. 0.d0 ) cycle
-      tr_nc = 0
-      do tr_k = 1, 2
-        do tr_l = 1, 2
-          tr_nc = tr_nc + 1
-          tr_col(tr_nc) = nodes(tr_k)%index(direction(tr_l))
-        enddo
-      enddo
       ! --- one variable at a time: the column list is the same four trace DOFs for each
       do tr_k = 1, n_var
         if ( (tr_k .ne. var_zj) .and. (tr_k .ne. var_u) .and. (tr_k .ne. var_rho) .and.  &
              (tr_k .ne. var_Ti) .and. (tr_k .ne. var_Te) .and. (tr_k .ne. var_T) ) cycle
-        if ( tr_k .eq. 0 ) cycle
         tr_nc = 0
         do tr_l = 1, 2
           do wk_m = 1, 2

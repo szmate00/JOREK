@@ -278,6 +278,10 @@ subroutine sheath_trace_report(my_id)
     write(*,*) 'ERROR: the sheath trace accumulator overflowed. A truncated row is a WRONG'
     write(*,*) '       equation, not a missing one, so this cannot be allowed to continue.'
     write(*,*) '       Raise st_max_row / st_max_col in mod_sheath_trace.f90.'
+    ! --- MPI_Abort, not a bare stop: only rank 0 gets here (the other ranks returned above), and
+    ! --- a bare STOP on one rank leaves the rest blocked in the next collective instead of ending
+    ! --- the run - the same hang the WRITE descriptor count above is counted to avoid.
+    call MPI_Abort(MPI_COMM_WORLD, 3, ierr)
     stop
   endif
 
