@@ -330,9 +330,10 @@ end subroutine sheath_x_limited
 !! @param x_out  the exponent X actually used, after limiting (diagnostic)
 subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
                           zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, &
-                          zj_sat, x_out, V_wall_loc)
+                          zj_sat, x_out, V_wall_loc, vpar, dzj_dvpar)
 
-  use phys_module, only: GAMMA, sheath_min_bn, sheath_sat_slope
+  use phys_module, only: GAMMA, sheath_min_bn, sheath_sat_slope, &
+                         sheath_jsat_from_vpar, sheath_jsat_vpar_min
 
   implicit none
 
@@ -340,9 +341,15 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
   real*8, intent(out) :: zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe
   real*8, intent(out) :: zj_sat, x_out
   real*8, intent(in), optional :: V_wall_loc
+  !> Parallel velocity at the wall in Vpar units (v_par/|B|), i.e. the model's own var_vpar.
+  !> Only consulted when sheath_jsat_from_vpar is set; absent restores the Mach 1 behaviour.
+  real*8, intent(in),  optional :: vpar
+  real*8, intent(out), optional :: dzj_dvpar
 
   real*8 :: a_n, c_sat, vw
   real*8 :: rho_l, Ti_l, Te_l, T_l, cs, g_eff
+  real*8  :: v_mach, v_eff, v_flr, dveff_dvpar, dlnv_dT
+  logical :: use_vpar
   real*8 :: lam, dlam_dTi, dlam_dTe
   real*8  :: x, x_lim, dxlim_dx, expmx, f, fp, sp, dsp
   real*8  :: dx_du, dx_dTi, dx_dTe
@@ -370,7 +377,59 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
   ! --- the smooth obliqueness weight b_n^2/(b_n^2 + sheath_min_bn^2).
   g_eff = g_bn
 
-  zj_sat = c_sat * rho_l * g_eff * cs / Btot
+  ! --- Parallel velocity that carries the ion saturation current.
+  ! ---
+  ! --- v_mach = g(b_n)*cs/|B| is EXACTLY what bcs(...)%mach1 imposes on Vpar at this same wall
+  ! --- (Mach1BC = -Vpar0 + direction/Btot*factor*cs0 + drift, and direction*factor is g(b_n)),
+  ! --- so the default below is consistent with the Mach 1 condition by construction - which is
+  ! --- what the module header asserts.
+  ! ---
+  ! --- It is also an ASSUMPTION: it fixes the ion flux at the Bohm value. A detaching target is
+  ! --- sub-sonic, and there the Mach 1 value overestimates the flux and with it j_sat, which is
+  ! --- the wrong direction for a leg one is trying to detach. sheath_jsat_from_vpar swaps in the
+  ! --- Vpar the solution actually has - same units, so it is a one-symbol change - and it
+  ! --- inherits whatever drift correction Mach1BC carries into Vpar.
+  ! --- Whether to consult the solution's Vpar at all. vpar == 0 exactly means the caller has
+  ! --- none to offer (a model built without var_vpar hands over a hard zero), NOT a stagnation
+  ! --- point, which is measure-zero in a continuous field.
+  dveff_dvpar = 0.d0
+  use_vpar    = sheath_jsat_from_vpar .and. present(vpar)
+  if ( use_vpar ) then
+    if ( vpar .eq. 0.d0 ) use_vpar = .false.
+  endif
+
+  if ( use_vpar ) then
+    ! --- v_mach = g(b_n)*cs/|B| is EXACTLY what bcs(...)%mach1 imposes on Vpar at this same wall
+    ! --- (Mach1BC = -Vpar0 + direction/Btot*factor*cs0 + drift, and direction*factor is g(b_n)),
+    ! --- so the default below is consistent with the Mach 1 condition by construction. It is also
+    ! --- an ASSUMPTION: it fixes the ion flux at the Bohm value, and a detaching target is
+    ! --- SUB-SONIC, where the Mach 1 value overestimates the flux and with it j_sat - the wrong
+    ! --- direction for a leg one is trying to detach. Swapping in the Vpar the solution actually
+    ! --- has is a one-symbol change (same units) and inherits Mach1BC's drift correction.
+    v_mach = g_eff * cs / Btot
+    v_flr  = sheath_jsat_vpar_min * abs(v_mach)
+    ! --- Take Vpar only where it flows INTO the wall and clears the floor. The floor is not
+    ! --- optional: zj_sat -> 0 asks the characteristic for f = zj0/zj_sat -> inf, which has no
+    ! --- solution. Below it, and for flow directed away from the wall, fall back to the floor -
+    ! --- a hard clip, so like the rho and T floors it drops its own sensitivity.
+    if ( abs(v_mach) .gt. 1.d-300 .and. vpar * v_mach .gt. 0.d0 &
+         .and. abs(vpar) .gt. v_flr ) then
+      v_eff       = vpar
+      dveff_dvpar = 1.d0
+      dlnv_dT     = 0.d0        ! v_eff no longer carries the cs temperature dependence
+    else
+      v_eff       = sign(v_flr, v_mach)
+      dlnv_dT     = 0.5d0 / T_l
+    endif
+    zj_sat = c_sat * rho_l * v_eff
+  else
+    ! --- DEFAULT PATH, written out literally rather than as a special case of the above, so that
+    ! --- sheath_jsat_from_vpar = .false. is BIT-IDENTICAL to the pre-flag code and not merely
+    ! --- algebraically equal. A 1e-16 re-association is enough to change which side of a marginal
+    ! --- configuration a long run falls on, which makes an A/B uninterpretable.
+    zj_sat  = c_sat * rho_l * g_eff * cs / Btot
+    dlnv_dT = 0.d0              ! unused on this path; the derivative below is written out too
+  endif
 
   call sheath_get_lambda(Ti_l, Te_l, lam, dlam_dTi, dlam_dTe)
 
@@ -433,8 +492,16 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
   zj_sh    = zj_sat * f
   dzj_du   = zj_sat * fp * dx_du
   dzj_drho = zj_sat * f / rho_l
-  dzj_dTi  = zj_sat * f / (2.d0 * T_l) + zj_sat * fp * dx_dTi
-  dzj_dTe  = zj_sat * f / (2.d0 * T_l) + zj_sat * fp * dx_dTe
+  if ( use_vpar ) then
+    dzj_dTi = zj_sat * f * dlnv_dT + zj_sat * fp * dx_dTi
+    dzj_dTe = zj_sat * f * dlnv_dT + zj_sat * fp * dx_dTe
+  else
+    ! --- original form, byte for byte
+    dzj_dTi = zj_sat * f / (2.d0 * T_l) + zj_sat * fp * dx_dTi
+    dzj_dTe = zj_sat * f / (2.d0 * T_l) + zj_sat * fp * dx_dTe
+  endif
+  ! --- new column: zj_sat is linear in v_eff, so this is exact where the floor is not active
+  if ( present(dzj_dvpar) ) dzj_dvpar = c_sat * rho_l * dveff_dvpar * f
 
   ! --- the floors are hard clips, so drop the corresponding sensitivity to stay consistent
   if ( rho .lt. sheath_rho_floor ) dzj_drho = 0.d0

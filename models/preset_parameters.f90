@@ -112,6 +112,8 @@ subroutine preset_parameters
   sheath_X_min       = -3.d0  ! electron saturation limit; ~ -Lambda_0, i.e. Phi >= 0
   sheath_sat_slope   =  0.d0  ! 0 = exact saturation at j_sat (see phys_module)
   sheath_wall_pen    =  0.d0  ! 0 = no tangential-wall fallback (see phys_module)
+  sheath_jsat_from_vpar = .false. ! .false. = j_sat from the Mach 1 velocity (see phys_module)
+  sheath_jsat_vpar_min  =  0.1d0  ! floor on |Vpar| as a fraction of the Mach 1 value
   sheath_zj_relax    =  1.d0  ! strength of bcs%sheath_zj; 0 reproduces the Dirichlet freeze
   sheath_zj_ratio_max=  0.d0  ! 0 = no validity gate on the demanded current ratio
   sheath_smooth_dX   =  0.5d0

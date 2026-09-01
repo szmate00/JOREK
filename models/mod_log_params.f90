@@ -870,6 +870,8 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,REAL_FMT) 'sheath_X_min          ', sheath_X_min
     write(*,REAL_FMT) 'sheath_sat_slope      ', sheath_sat_slope
     write(*,REAL_FMT) 'sheath_wall_pen       ', sheath_wall_pen
+    write(*,LOGI_FMT) 'sheath_jsat_from_vpar ', sheath_jsat_from_vpar
+    write(*,REAL_FMT) 'sheath_jsat_vpar_min  ', sheath_jsat_vpar_min
     write(*,REAL_FMT) 'sheath_zj_relax       ', sheath_zj_relax
     write(*,REAL_FMT) 'sheath_zj_ratio_max   ', sheath_zj_ratio_max
     write(*,REAL_FMT) 'sheath_smooth_dX      ', sheath_smooth_dX

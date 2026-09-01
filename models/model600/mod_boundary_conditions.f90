@@ -575,8 +575,10 @@ do i=1, n_local_elms !=== do elements
             Te0_b = T0_b / 2.d0
           end if
 
-          ! --- the sheath BC does not need vpar, so this block can be reached without it
-          ! --- (var_Vpar is 0 in that case, which would index out of bounds)
+          ! --- the sheath BC does not REQUIRE vpar - it can be reached without it, and var_Vpar
+          ! --- is 0 in that case, which would index out of bounds. It does CONSUME it when
+          ! --- sheath_jsat_from_vpar is set, and Vpar0 = 0 from the else branch below is treated
+          ! --- as "no parallel velocity available" there, falling back to the Mach 1 value.
           if ( with_vpar ) then
             Vpar0   = node_list%node(inode)%values(1,1,var_vpar)
             Vpar0_b = node_list%node(inode)%values(1,iv_dir,var_Vpar) * element_size_0
@@ -1184,7 +1186,7 @@ do i=1, n_local_elms !=== do elements
                                  sheath_temp_floor(Ti0), sheath_temp_floor(Te0),      &
                                  szj_g, sign(1.d0, bn), Btot,                         &
                                  szj_sh, szj_du, szj_drho, szj_dTi, szj_dTe,          &
-                                 szj_sat, szj_x, sheath_V_wall_at(BigR) )
+                                 szj_sat, szj_x, sheath_V_wall_at(BigR), Vpar0 )
 
             ! --- Effective strength. The diagonal below is never relaxed, so this factor going to
             ! --- zero leaves the row as d(zj) = 0, i.e. exactly the Dirichlet freeze this

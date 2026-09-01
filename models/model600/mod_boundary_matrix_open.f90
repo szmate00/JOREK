@@ -97,10 +97,10 @@ integer    :: wk_i, wk_j, wk_m
 real*8     :: tr_J(2,2,2,2,n_var), tr_F(2,2)
 integer    :: tr_col(4), tr_var(4), tr_k, tr_l, tr_nc
 real*8     :: tr_vals(4)
-real*8     :: dzj_sh, dzj_sat, dzj_x, dzj_d1, dzj_d2, dzj_d3, dzj_d4, dzj_wgt
+real*8     :: dzj_sh, dzj_sat, dzj_x, dzj_d1, dzj_d2, dzj_d3, dzj_d4, dzj_d5, dzj_wgt
 real*8     :: sh_duf_dTi, sh_duf_dTe
 real*8     :: gradu0dotn, gradps0dotn, gradudotn, gradpsidotn
-real*8     :: zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, zj_sat_g, x_sheath
+real*8     :: zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, dzj_dvpar, zj_sat_g, x_sheath
 real*8     :: sheath_alpha, sh_d_pol, sh_d_robin
 
 type (type_node)         :: tmp_node
@@ -428,10 +428,11 @@ do ms=1, n_gauss
     sheath_ramp = sh_ramp_t
 
     zj_sh = 0.d0; dzj_du = 0.d0; dzj_drho = 0.d0; dzj_dTi = 0.d0; dzj_dTe = 0.d0
+    dzj_dvpar = 0.d0
     if ( apply_natural_bc(var_u) ) then
       call sheath_current(u0, r0_corr, Ti0_sh, Te0_sh, g_bn, normal_sign, Btot, &
                           zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, zj_sat_g, x_sheath, &
-                          sheath_V_wall_at(BigR))
+                          sheath_V_wall_at(BigR), Vpar0, dzj_dvpar)
       ! --- chain rule through the corr_neg corrections, so the Jacobian stays exact where the
       ! --- density and temperature floors are active (which is exactly the cold divertor)
       dzj_drho = dzj_drho * dcorr_neg_dens_drho1(r0)
@@ -518,13 +519,13 @@ do ms=1, n_gauss
     ! --- Zeroed unconditionally: the weak sheath term below reads these, and they are only
     ! --- filled when the nodal/diagnostic branch runs. A hard zero makes the term vanish rather
     ! --- than pick up whatever the previous Gauss point left behind.
-    dzj_sh = 0.d0; dzj_d1 = 0.d0; dzj_d2 = 0.d0; dzj_d3 = 0.d0; dzj_d4 = 0.d0
+    dzj_sh = 0.d0; dzj_d1 = 0.d0; dzj_d2 = 0.d0; dzj_d3 = 0.d0; dzj_d4 = 0.d0; dzj_d5 = 0.d0
     dzj_sat = 0.d0; wk_res = 0.d0; wk_dfac = 0.d0; wk_wgt = 0.d0; wk_wrx = 0.d0
 
     if ( diag_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
       call sheath_current(u0, r0_corr, Ti0_sh, Te0_sh, g_bn, normal_sign, Btot, &
                           dzj_sh, dzj_d1, dzj_d2, dzj_d3, dzj_d4, dzj_sat, dzj_x,      &
-                          sheath_V_wall_at(BigR))
+                          sheath_V_wall_at(BigR), Vpar0, dzj_d5)
       dzj_wgt = 1.d0
       if ( sheath_min_bn .gt. 0.d0 ) &
         dzj_wgt = bdotn**2 / ( bdotn**2 + sheath_min_bn**2 )
@@ -747,6 +748,11 @@ do ms=1, n_gauss
                                             * psi * dl * theta * tstep
                   amat(var_u,var_zj ) = - v * BigR             * psi * sh_Bn * dl * theta * tstep * sheath_ramp
                   amat(var_u,var_rho) = + v * BigR * dzj_drho * psi * sh_Bn * dl * theta * tstep * sheath_ramp
+                  ! --- j_sat built from Vpar (sheath_jsat_from_vpar) makes the row depend on the
+                  ! --- parallel velocity too; dzj_dvpar is identically zero otherwise, so this
+                  ! --- entry is inert in the default configuration.
+                  if ( var_vpar .gt. 0 ) &
+                    amat(var_u,var_vpar) = + v * BigR * dzj_dvpar * psi * sh_Bn * dl * theta * tstep * sheath_ramp
                   if ( with_TiTe ) then
                     amat(var_u,var_Ti) = + v * BigR * ( dzj_dTi * sh_Bn * sheath_ramp            &
                                                       - sh_pen_c * sh_duf_dTi )                &
@@ -791,6 +797,9 @@ do ms=1, n_gauss
                                         - v * dzj_d1 * psi * wk_wrx * ws * dl / BigR
                   tr_J(i,j,k,l,var_rho) = tr_J(i,j,k,l,var_rho)                        &
                                         - v * dzj_d2 * psi * wk_wrx * ws * dl / BigR
+                  if ( var_vpar .gt. 0 ) &
+                    tr_J(i,j,k,l,var_vpar) = tr_J(i,j,k,l,var_vpar)                    &
+                                        - v * dzj_d5 * psi * wk_wrx * ws * dl / BigR
                   if ( with_TiTe ) then
                     tr_J(i,j,k,l,var_Ti) = tr_J(i,j,k,l,var_Ti)                        &
                                          - v * dzj_d3 * psi * wk_wrx * ws * dl / BigR
@@ -955,7 +964,8 @@ if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
       ! --- one variable at a time: the column list is the same four trace DOFs for each
       do tr_k = 1, n_var
         if ( (tr_k .ne. var_zj) .and. (tr_k .ne. var_u) .and. (tr_k .ne. var_rho) .and.  &
-             (tr_k .ne. var_Ti) .and. (tr_k .ne. var_Te) .and. (tr_k .ne. var_T) ) cycle
+             (tr_k .ne. var_Ti) .and. (tr_k .ne. var_Te) .and. (tr_k .ne. var_T)  .and.  &
+             ( (tr_k .ne. var_vpar) .or. (.not. sheath_jsat_from_vpar) ) ) cycle
         if ( tr_k .eq. 0 ) cycle
         tr_nc = 0
         do tr_l = 1, 2
