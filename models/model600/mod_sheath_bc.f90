@@ -292,7 +292,7 @@ end subroutine sheath_get_lambda
 !! form of the characteristic.
 pure subroutine sheath_x_limited(x, x_lim, dxlim_dx)
 
-  use phys_module, only: sheath_X_min, sheath_smooth_dX, sheath_sat_slope_e
+  use phys_module, only: sheath_X_min, sheath_smooth_dX
 
   implicit none
   real*8, intent(in)  :: x
@@ -314,23 +314,6 @@ pure subroutine sheath_x_limited(x, x_lim, dxlim_dx)
     dxlim_dx = 1.d0 / ( 1.d0 + exp(-z) )
   endif
 
-  ! --- Electron-side slope, the TWO-SURFACE fix. Everything above drives dxlim_dx -> 0 as
-  ! --- X -> -inf, which is correct for the current (the electron branch does saturate) but
-  ! --- fatal for the linear system: the replaced row loses its u column entirely, so u is
-  ! --- unconstrained there. With ONE sheath type that is harmless - the Dirichlet gauge on the
-  ! --- other types still anchors u. With TWO, u closes a circuit between them whose only
-  ! --- impedance is the sheath, and an impedance with zero differential conductance does not
-  ! --- damp anything. Blend the clamped exponent back towards the raw one so the row always
-  ! --- keeps a u column:
-  ! ---     x_lim := x_lim + s_e*(X - x_lim),  dxlim_dx := dxlim_dx + s_e*(1 - dxlim_dx)
-  ! --- a convex combination, so dxlim_dx -> s_e as X -> -inf and -> 1 as X -> +inf. The ion
-  ! --- branch and the fixed point are untouched to O(s_e). s_e = 0 reproduces the previous
-  ! --- behaviour bit for bit.
-  if ( sheath_sat_slope_e .gt. 0.d0 ) then
-    x_lim    = x_lim    + sheath_sat_slope_e * ( x    - x_lim    )
-    dxlim_dx = dxlim_dx + sheath_sat_slope_e * ( 1.d0 - dxlim_dx )
-  endif
-
 end subroutine sheath_x_limited
 
 
@@ -349,7 +332,7 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
                           zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, &
                           zj_sat, x_out, V_wall_loc, vpar, dzj_dvpar)
 
-  use phys_module, only: GAMMA, sheath_min_bn, sheath_sat_slope, &
+  use phys_module, only: GAMMA, sheath_min_bn, sheath_sat_slope, sheath_sat_slope_e, &
                          sheath_jsat_from_vpar, sheath_jsat_vpar_min
 
   implicit none
@@ -499,6 +482,25 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
     endif
     f = f + sheath_sat_slope * sp
     if ( .not. x_frozen ) fp = fp + sheath_sat_slope * dsp * dxlim_dx
+  endif
+
+  ! --- Finite conductance on the ELECTRON side, the exact mirror of the block above and the
+  ! --- prerequisite for TWO sheath surfaces. As X -> -inf the limiter drives dxlim_dx -> 0, so
+  ! --- fp -> 0 and the replaced zj row loses its u column: the sheath keeps no authority over u
+  ! --- there, and with two floating patches nothing damps the exchange between them.
+  ! ---
+  ! --- (x - x_lim) is exactly the amount the limiter clipped: identically 0 on the ion branch,
+  ! --- and -> x - X_min (linear, NEGATIVE) deep on the electron branch. Its derivative is
+  ! --- (1 - dxlim_dx). So f acquires a LINEAR tail and fp -> s_e /= 0, while the ion branch and
+  ! --- the fixed point are untouched to O(s_e).
+  ! ---
+  ! --- NOT to be done by blending x_lim itself: f and fp are EXPONENTIAL in x_lim (see expmx
+  ! --- above), so blending inside the exponent multiplies the demanded electron current by
+  ! --- exp(s_e*|X|) - at X = -19.6, s_e = 0.1 that is -104*j_sat instead of -19.1*j_sat. That
+  ! --- was tried, and it made the two-surface blow-up worse rather than better.
+  if ( sheath_sat_slope_e .gt. 0.d0 ) then
+    f  = f  + sheath_sat_slope_e * ( x - x_lim )
+    fp = fp + sheath_sat_slope_e * ( 1.d0 - dxlim_dx )
   endif
 
   ! --- derivatives of X (Lambda contributes through Ti and Te when sheath_Lambda_local)
