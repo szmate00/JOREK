@@ -40,7 +40,7 @@ module mod_sheath_trace
 
   public :: sheath_trace_reset, sheath_trace_add, sheath_trace_apply, sheath_trace_report
 
-  integer, parameter :: st_max_row = 4000    !< trace DOFs per rank; 204 observed, so ample
+  integer, parameter :: st_max_row = 8000    !< trace DOFs per rank; 424 observed on two types
   !> Columns per row. Only the variables the characteristic actually depends on appear: zj (the
   !! unit diagonal), u, rho and Ti/Te - or T without WITH_TiTe. vpar and w are absent because
   !! sheath_current takes neither, so their derivatives are identically zero; psi is absent by
@@ -49,7 +49,7 @@ module mod_sheath_trace
   !! A shared trace DOF collects columns from BOTH adjacent edges: 3 distinct nodes x 2 trace DOFs
   !! x 5 variables = 30, and a junction where three boundary segments meet takes 4 nodes = 40.
   !! 64 leaves headroom; the overflow is fatal rather than silent, so being generous costs memory.
-  integer, parameter :: st_max_col = 64
+  integer, parameter :: st_max_col = 96
 
   integer, save :: st_n = 0
   integer, save :: st_row(st_max_row)

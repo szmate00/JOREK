@@ -292,7 +292,7 @@ end subroutine sheath_get_lambda
 !! form of the characteristic.
 pure subroutine sheath_x_limited(x, x_lim, dxlim_dx)
 
-  use phys_module, only: sheath_X_min, sheath_smooth_dX
+  use phys_module, only: sheath_X_min, sheath_smooth_dX, sheath_sat_slope_e
 
   implicit none
   real*8, intent(in)  :: x
@@ -312,6 +312,23 @@ pure subroutine sheath_x_limited(x, x_lim, dxlim_dx)
   else
     x_lim    = sheath_X_min + dx * log( 1.d0 + exp(z) )
     dxlim_dx = 1.d0 / ( 1.d0 + exp(-z) )
+  endif
+
+  ! --- Electron-side slope, the TWO-SURFACE fix. Everything above drives dxlim_dx -> 0 as
+  ! --- X -> -inf, which is correct for the current (the electron branch does saturate) but
+  ! --- fatal for the linear system: the replaced row loses its u column entirely, so u is
+  ! --- unconstrained there. With ONE sheath type that is harmless - the Dirichlet gauge on the
+  ! --- other types still anchors u. With TWO, u closes a circuit between them whose only
+  ! --- impedance is the sheath, and an impedance with zero differential conductance does not
+  ! --- damp anything. Blend the clamped exponent back towards the raw one so the row always
+  ! --- keeps a u column:
+  ! ---     x_lim := x_lim + s_e*(X - x_lim),  dxlim_dx := dxlim_dx + s_e*(1 - dxlim_dx)
+  ! --- a convex combination, so dxlim_dx -> s_e as X -> -inf and -> 1 as X -> +inf. The ion
+  ! --- branch and the fixed point are untouched to O(s_e). s_e = 0 reproduces the previous
+  ! --- behaviour bit for bit.
+  if ( sheath_sat_slope_e .gt. 0.d0 ) then
+    x_lim    = x_lim    + sheath_sat_slope_e * ( x    - x_lim    )
+    dxlim_dx = dxlim_dx + sheath_sat_slope_e * ( 1.d0 - dxlim_dx )
   endif
 
 end subroutine sheath_x_limited

@@ -111,6 +111,7 @@ subroutine preset_parameters
   sheath_Lambda_local= .true. ! Lambda = Lambda_0 - ln sqrt(gamma*(1+Ti/Te)), consistent with c_s
   sheath_X_min       = -3.d0  ! electron saturation limit; ~ -Lambda_0, i.e. Phi >= 0
   sheath_sat_slope   =  0.d0  ! 0 = exact saturation at j_sat (see phys_module)
+  sheath_sat_slope_e =  0.d0  ! 0 = electron branch loses its u column (see phys_module)
   sheath_wall_pen    =  0.d0  ! 0 = no tangential-wall fallback (see phys_module)
   sheath_jsat_from_vpar = .false. ! .false. = j_sat from the Mach 1 velocity (see phys_module)
   sheath_jsat_vpar_min  =  0.1d0  ! floor on |Vpar| as a fraction of the Mach 1 value

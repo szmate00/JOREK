@@ -381,6 +381,9 @@ do ms=1, n_gauss
     c_1 = vpar_smoothing_coef(1); c_2 = vpar_smoothing_coef(2); c_3 = vpar_smoothing_coef(3)
     if (vpar_smoothing) then
       factor = 0.25d0 * ( 1.d0 + tanh( (abs(bdotn) - c_1) / c_2 ) )**2 - c_3
+      ! --- Nothing bounded this below. c_3 larger than the tanh term makes factor negative, which
+      ! --- flips the sign of g_bn and swaps the ion and electron branches on the tangential wall.
+      factor = max( factor, 0.d0 )
     else
       factor = 1.d0
     endif
@@ -558,9 +561,16 @@ do ms=1, n_gauss
       ! --- the assembled equation. Smooth, monotone, 1 to within 6% for ratio < 0.5*max.
       wk_wgt = 1.d0
       if ( sheath_zj_ratio_max .gt. 0.d0 ) then
-        wk_rat = 0.d0
-        if ( abs(dzj_sat) .gt. 1.d-30 ) wk_rat = abs( zj0 / dzj_sat )
-        wk_wgt = 1.d0 / ( 1.d0 + (wk_rat/sheath_zj_ratio_max)**4 )
+        ! --- Guard inversion: if |zj_sat| underflows, wk_rat stayed 0 and wk_wgt came out 1 -
+        ! --- FULL weight at exactly the points where the gate should close hardest. A vanishing
+        ! --- j_sat means the ratio is effectively infinite, so the weight must go to 0, not 1.
+        if ( abs(dzj_sat) .gt. 1.d-30 ) then
+          wk_rat = abs( zj0 / dzj_sat )
+          wk_wgt = 1.d0 / ( 1.d0 + (wk_rat/sheath_zj_ratio_max)**4 )
+        else
+          wk_rat = 0.d0
+          wk_wgt = 0.d0
+        endif
       endif
 
       ! --- Under-relaxation. The replacement row is M*d(zj) - sum_x C_x*d(x) = F, which asks for

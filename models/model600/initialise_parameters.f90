@@ -72,7 +72,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 sheath_u_value_only,                                &
                 sheath_u_exp_max, sheath_u_exp_min,                 &
                 sheath_Lambda_local, sheath_X_min, sheath_smooth_dX,&
-                sheath_sat_slope, sheath_wall_pen, sheath_zj_relax, &
+                sheath_sat_slope, sheath_sat_slope_e, sheath_wall_pen, sheath_zj_relax, &
                 sheath_jsat_from_vpar, sheath_jsat_vpar_min,        &
                 sheath_zj_ratio_max,                                &
                 sheath_min_bn, sheath_ramp_time,                    &
@@ -545,6 +545,19 @@ if (my_id .eq. 0) then
           write(*,*) '         zj_sat -> 0 where the field grazes the wall and the penalty drives'
           write(*,*) '         zj toward a vanishing target there. ~0.005 keeps the target plate'
           write(*,*) '         in the pass band while still killing true tangency.'
+        endif
+        if ( sheath_sat_slope_e .lt. 0.d0 .or. sheath_sat_slope_e .ge. 1.d0 ) then
+          write(*,*) 'ERROR: sheath_sat_slope_e must lie in [0,1). It is the fraction of the raw'
+          write(*,*) '       exponent blended back past the electron clamp; 1 would remove the'
+          write(*,*) '       clamp entirely and let X run to -inf.'
+          stop
+        endif
+        if ( count(bcs(:)%sheath_zj_weak) .gt. 1 .and. sheath_sat_slope_e .le. 0.d0 ) then
+          write(*,*) 'WARNING: more than one sheath_zj_weak boundary type with'
+          write(*,*) '         sheath_sat_slope_e = 0. On the electron branch the replaced row'
+          write(*,*) '         keeps no u column, so u closes an undamped circuit between the two'
+          write(*,*) '         sheath surfaces. Every previous attempt at two surfaces blew up'
+          write(*,*) '         within ~10 steps. Try sheath_sat_slope_e = 0.05 - 0.2.'
         endif
         if ( sheath_sat_slope .le. 0.d0 ) then
           write(*,*) 'WARNING: bcs(', i, ')%sheath_zj_weak with sheath_sat_slope = 0 (the'
