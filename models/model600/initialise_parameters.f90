@@ -722,7 +722,11 @@ if (my_id .eq. 0) then
       ! --- first ~100 steps grew a current filament on the divertor leg before the term ever
       ! --- engaged. sheath_init_u serves the purpose the ramp was meant to serve, by starting u
       ! --- at the floating potential, which is the fixed point of the characteristic at j = 0.
-      if ( (sheath_ramp_time .gt. 0.d0) .and. (sheath_wall_pen .le. 0.d0) ) then
+      ! --- ...but only for the ROBIN route. On the weak route the ramp multiplies the RELAX
+      ! --- factor, not a surface term, and relax = 0 is exactly the Dirichlet freeze on zj, so
+      ! --- every stage of the continuation is well posed and no fallback is needed.
+      if ( (sheath_ramp_time .gt. 0.d0) .and. (sheath_wall_pen .le. 0.d0)                    &
+           .and. any(bcs(:)%natural%u) ) then
         write(*,*) 'ERROR: sheath_ramp_time > 0 needs sheath_wall_pen > 0. The surface term is the'
         write(*,*) '       ONLY condition on u here, so ramping it from zero without the fallback'
         write(*,*) '       leaves u unconstrained at the wall and it drags flux freely. With the'

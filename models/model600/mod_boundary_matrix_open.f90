@@ -619,7 +619,24 @@ do ms=1, n_gauss
       ! --- (no psi column, so |B| and g_bn are frozen within an iteration): the effective gain can
       ! --- exceed 1 and the state alternates between two branches on successive steps. relax = 1
       ! --- reproduces the un-relaxed row exactly.
-      wk_wrx = wk_wgt * sheath_weak_relax
+      ! --- Continuation on the WEAK route. sh_ramp_t rises 0 -> 1 over sheath_ramp_time and
+      ! --- until now reached only the Robin surface term, which the weak route cannot use
+      ! --- (initialise_parameters errors on sheath_ramp_time without sheath_wall_pen, and the
+      ! --- weak route forbids sheath_wall_pen). Ramping the RELAX factor is the right way for a
+      ! --- row replacement, and is what phys_module:83 already describes: the row is
+      ! ---     zj_new = zj_old + relax*(zj_sh_linearised - zj_old)
+      ! --- so relax = 0 is exactly the Dirichlet freeze on zj - well posed - and relax = 1 is the
+      ! --- full sheath, with every intermediate stage well posed too. Ramping a surface term
+      ! --- instead REMOVES the boundary condition rather than softening it, which is why the
+      ! --- Robin route needed sheath_wall_pen alongside.
+      ! ---
+      ! --- Motivation, measured on boundary type 4 at step 1, before anything has evolved:
+      ! --- I_sheath = -9.07 A against I_Ampere = +160.0 A over 0.594 m^2 - an 18x mismatch of
+      ! --- OPPOSITE sign. The row is asked to close ~285 A/m^2 in one step, overshoots onto the
+      ! --- electron branch, and e-limited reaches 100 % of the area by step 3. Type 1 starts at
+      ! --- -51.2 vs +14.9 on the same step and survives. A restart built without this boundary
+      ! --- condition has no reason to satisfy it, so the first step is the hardest one.
+      wk_wrx = wk_wgt * sheath_weak_relax * sh_ramp_t
 
       wk_res  = dzj_sh - zj0
       wk_dfac = 1.d0
