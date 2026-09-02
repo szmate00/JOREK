@@ -17,10 +17,12 @@ AGREE     -> the proposed fix is WRONG. Do not apply it.
 Sampling filters, all of which matter - a point that fails any of them cannot settle the
 question and is excluded rather than counted as a disagreement.
 """
-import sys, re, argparse
+import sys, re, argparse, pathlib
 import numpy as np
 
-BLOCK_RE = re.compile(r"step\s*=?\s*(\d+).*?t(?:_now)?\s*=?\s*([-\d.eE+]+)")
+# --- copied verbatim from util/analyse_targets.py, which is known to parse real
+# --- jorek2_postproc output. The marker line is "# time step #  N ... t_now = X".
+BLOCK_RE = re.compile(r"time step #\s*(\d+).*?t_now\s*=\s*([-\dEe.+]+)")
 
 
 def _isnum(t):
@@ -58,8 +60,16 @@ def read_boundary_file(path):
     flush()
     if names is None:
         sys.exit(f"{path}: no header line (need header=.true.)")
+    if not blocks and rows:
+        # --- No "time step #" marker anywhere, but the file does have data: it is a
+        # --- single-step export. Take the step from the filename and use it as one block.
+        m = re.search(r"s0*(\d+)", pathlib.Path(path).name)
+        a = np.asarray(rows, float)
+        blocks = [(int(m.group(1)) if m else 0, 0.0,
+                   {n: a[:, i] for i, n in enumerate(names)})]
     if not blocks:
-        sys.exit(f"{path}: no data blocks")
+        sys.exit(f"{path}: no data blocks. First lines of the file were:\n  " +
+                 "\n  ".join(open(path).read().splitlines()[:8]))
     return blocks
 
 
