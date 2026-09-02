@@ -35,6 +35,17 @@ module mod_sheath_diag
   real*8,  save :: sd_I_sheath(max_bnd_types) = 0.d0  !< current through the wall, sheath value [A]
   real*8,  save :: sd_I_amp(max_bnd_types)    = 0.d0  !< the same with the interior Ampere current [A]
   real*8,  save :: sd_area(max_bnd_types)     = 0.d0  !< wetted area [m^2], for averages
+  ! --- Geometry of each boundary type, to separate two failure modes that no magnitude gate can
+  ! --- tell apart. b_n SIGN REVERSAL within one type flips zj_sat mid-face, so the constraint
+  ! --- drives zj opposite ways on the two halves and the integrated I_sheath partially cancels.
+  ! --- Cell size shows whether a type is resolved on a very different scale from the others -
+  ! --- zj = Delta*psi amplifies an interpolated psi by 1/h^2.
+  real*8,  save :: sd_bn_min(max_bnd_types)   =  1.d30 !< min SIGNED b_n = B.n/|B|
+  real*8,  save :: sd_bn_max(max_bnd_types)   = -1.d30 !< max SIGNED b_n
+  real*8,  save :: sd_area_bn_neg(max_bnd_types) = 0.d0 !< area with b_n < 0
+  real*8,  save :: sd_I_bn_neg(max_bnd_types)    = 0.d0 !< I_sheath over that area
+  real*8,  save :: sd_ds_min(max_bnd_types)   =  1.d30 !< smallest area element on this type
+  real*8,  save :: sd_ds_max(max_bnd_types)   = -1.d30
   real*8,  save :: sd_phi_min                 =  1.d30
   real*8,  save :: sd_phi_max                 = -1.d30
   real*8,  save :: sd_phi_sum                 = 0.d0  !< area weighted, for the mean
@@ -104,6 +115,9 @@ subroutine sheath_diag_reset()
   sd_I_sheath = 0.d0
   sd_I_amp    = 0.d0
   sd_area     = 0.d0
+  sd_bn_min      =  1.d30 ; sd_bn_max      = -1.d30
+  sd_area_bn_neg =  0.d0  ; sd_I_bn_neg    =  0.d0
+  sd_ds_min      =  1.d30 ; sd_ds_max      = -1.d30
   sd_phi_min  =  1.d30
   sd_phi_max  = -1.d30
   sd_phi_sum  = 0.d0
@@ -181,6 +195,17 @@ subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, 
   sd_I_sheath(bnd_type)  = sd_I_sheath(bnd_type) + jn_sheath * dS
   sd_I_amp(bnd_type)     = sd_I_amp(bnd_type)    + jn_amp    * dS
   sd_area(bnd_type)      = sd_area(bnd_type)     + dS
+
+  ! --- b_n here is SIGNED. Bdotn is B.n and the |B| that normalises it is folded into the
+  ! --- caller's g_bn, so use the sign and magnitude of Bdotn directly as the discriminator.
+  sd_bn_min(bnd_type) = min(sd_bn_min(bnd_type), Bdotn)
+  sd_bn_max(bnd_type) = max(sd_bn_max(bnd_type), Bdotn)
+  sd_ds_min(bnd_type) = min(sd_ds_min(bnd_type), dS)
+  sd_ds_max(bnd_type) = max(sd_ds_max(bnd_type), dS)
+  if ( Bdotn .lt. 0.d0 ) then
+    sd_area_bn_neg(bnd_type) = sd_area_bn_neg(bnd_type) + dS
+    sd_I_bn_neg(bnd_type)    = sd_I_bn_neg(bnd_type)    + jn_sheath * dS
+  endif
   sd_phi_sum             = sd_phi_sum            + phi_over_te * dS
   sd_phi_min             = min(sd_phi_min, phi_over_te)
   sd_phi_max             = max(sd_phi_max, phi_over_te)
@@ -284,6 +309,9 @@ subroutine sheath_diag_report(my_id)
   integer :: io, ib0
   character(len=5), parameter :: io_name(2) = (/ 'INNER', 'OUTER' /)
   integer :: ierr, i, i0, i1, i2
+  real*8  :: gbn_min(max_bnd_types), gbn_max(max_bnd_types)
+  real*8  :: gds_min(max_bnd_types), gds_max(max_bnd_types)
+  real*8  :: gan_neg(max_bnd_types), gin_neg(max_bnd_types)
 
   i0 = 0                      ! offsets into the packed reduction buffer
   i1 =   max_bnd_types
@@ -343,6 +371,16 @@ subroutine sheath_diag_report(my_id)
   ! --- report within one matrix construction, so zeroing at reset would wipe the pass we want.
   sd_zjrel_sum = 0.d0; sd_zjrel_n = 0.d0; sd_zjratio_sum = 0.d0; sd_zjrel_min = 1.d30
   sd_worst_ratio = -1.d0; sd_worst_RZ = 0.d0; sd_res_node = 0.d0
+
+  ! --- These are COLLECTIVE and must be called on every rank, so they belong above the
+  ! --- my_id/=0 return. Placing them below it would have rank 0 enter a reduction alone and
+  ! --- hang every other rank at the next collective.
+  call MPI_Reduce(sd_bn_min,      gbn_min, max_bnd_types, MPI_REAL8, MPI_MIN, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(sd_bn_max,      gbn_max, max_bnd_types, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(sd_ds_min,      gds_min, max_bnd_types, MPI_REAL8, MPI_MIN, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(sd_ds_max,      gds_max, max_bnd_types, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(sd_area_bn_neg, gan_neg, max_bnd_types, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(sd_I_bn_neg,    gin_neg, max_bnd_types, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
 
   if ( my_id .ne. 0 ) return
 
@@ -426,6 +464,23 @@ subroutine sheath_diag_report(my_id)
     write(*,'(A,i3,A,es11.3,A,es11.3,A,es10.3,A)')                                &
       '         bnd type', i, ': I_sheath=', glo_sum(i0+i), ' A  I_Ampere=',      &
       glo_sum(i1+i), ' A  area=', glo_sum(i2+i), ' m^2'
+  enddo
+
+  ! --- Geometry per boundary type. Two things this separates that nothing else does:
+  ! ---  * b_n range straddling zero => the field REVERSES through the face, so zj_sat flips sign
+  ! ---    mid-type, the constraint drives zj opposite ways on the two halves and the integrated
+  ! ---    I_sheath partially cancels. A magnitude gate (sheath_min_bn) cannot see this.
+  ! ---  * dS spread => how finely this type is resolved. zj = Delta*psi amplifies an interpolated
+  ! ---    psi by 1/h^2, so a type packed into a short chord is far more sensitive than a type
+  ! ---    spread over the aligned grid.
+
+  do i = 1, max_bnd_types
+      if ( glo_sum(i2+i) .le. 0.d0 ) cycle
+      write(*,'(A,i3,A,es10.2,A,es10.2,A,f6.1,A,es9.2,A,es9.2,A,es10.2,A)')        &
+        '         bnd type', i, ' geom: b_n ', gbn_min(i), ' ..', gbn_max(i),      &
+        '   area(b_n<0) ', 1.d2*gan_neg(i)/max(glo_sum(i2+i),1.d-30), ' %   dS ', &
+        gds_min(i), ' ..', gds_max(i),                                             &
+        '   I(b_n<0)=', gin_neg(i), ' A'
   enddo
 
 end subroutine sheath_diag_report
