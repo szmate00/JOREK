@@ -1,0 +1,44 @@
+! -----------------------------------------------------------------------------
+! THE SHEATH SIGN TEST. Decides whether a_n's sign is wrong before any code is
+! changed. See doc/sheath_sign_review.md section 9.
+!
+! Run:  jorek2_postproc < postproc_sheath_sign.in
+! Then: util/analyse_sheath_sign.py boundary_quantities_*.dat
+!
+! THE TEST. At a strike point in ion saturation the conventional ion current and
+! the ion parallel velocity point the same way along B, so with F0 > 0
+!
+!     sign(Jpar) == sign(Jpar_ionsat)
+!
+! Jpar is built from Jtor = -zj0/R (mod_expression.f90:1354-1356); Jpar_ionsat is
+! rho*vpar*Btot = e*n*v_par (:1357). NEITHER goes through mod_sheath_bc, so this is
+! independent of the coefficient under suspicion.
+!
+! PREDICTION: they are OPPOSITE today and agree after reverting a_n. If they
+! ALREADY AGREE, the proposed fix is wrong - do not apply it.
+!
+! SECONDARY: Phi (:1757) contains no a_n. At a near-floating strike point it must
+! read ~ +Lambda*Te[eV] volts, i.e. POSITIVE, order +30..60 V. It should read
+! negative today.
+!
+! Both Jpar and Jpar_ionsat are BOUNDARY-ONLY expressions, hence
+! boundary_quantities rather than pol_line.
+! -----------------------------------------------------------------------------
+
+namelist input
+
+si-units
+set nsub_bnd 2
+
+for step 900 to 900 do
+
+  ! R Z            - to exclude the X-point neighbourhood
+  ! Bnorm B_abs    - to exclude grazing incidence (|Bnorm|/B_abs above sheath_min_bn)
+  ! ne T_e T_i     - to exclude the density and temperature floors
+  ! Jpar Jpar_ionsat - THE TEST
+  ! Phi            - the secondary test
+  expressions R Z Bnorm B_abs ne T_e T_i Jpar Jpar_ionsat Phi
+
+  boundary_quantities
+
+done

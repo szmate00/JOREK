@@ -151,8 +151,20 @@ pure subroutine sheath_norm(a_n, c_sat, vw, V_wall_loc)
   m_i  = central_mass * ATOMIC_MASS_UNIT
   rho0 = central_density * 1.d20 * m_i
 
-  ! --- NOTE the minus sign: Phi = -F0*u in the code's variables (see the module header)
-  a_n   = - 2.d0 * EL_CHG * F0 * sqrt(MU_ZERO * rho0) / m_i
+  ! --- Phi = +F0*u. This reverts 0f6c8b881, which flipped a_n on the reasoning that model600
+  ! --- implements v_pol = +R grad(u) x e_phi against the reference paper's minus. That inference
+  ! --- mistook a BASIS difference for a variable redefinition: JOREK's (R,Z,phi) is right-handed
+  ! --- (x = R cos(phi), y = -R sin(phi), see diagnostics/jorek2_povray.f90:102 and
+  ! --- vacuum/mod_vacuum_fields.f90:1172), so its e_phi is minus the standard one and the SAME
+  ! --- components read as -R grad(u) x e_phi here and +R grad(u) x e_phi in the standard basis.
+  ! --- In JOREK's own basis the code implements the paper's ansatz exactly, so u = Phi/F0.
+  ! --- The original implementation (bb5d7fc31) had it right, and its derivation survives at
+  ! --- mod_boundary_conditions.f90:842-854: "In JOREK units, with Phi = F0*u, a_n = 2*e*F0*
+  ! --- sqrt(mu0*rho0)/m_i, c_sat = -e*F0*n0*sqrt(mu0/rho0) = -a_n/2".
+  ! --- c_sat = -a_n/2 is a SIGNED identity in that convention, not a magnitude relation: c_sat
+  ! --- is negative, and it follows a_n automatically. Do not decouple them.
+  ! --- Full evidence and the falsification test: doc/sheath_sign_review.md
+  a_n   = + 2.d0 * EL_CHG * F0 * sqrt(MU_ZERO * rho0) / m_i
   c_sat = - 0.5d0 * a_n
   vw    =   EL_CHG * V_wall_use * MU_ZERO * central_density * 1.d20
 

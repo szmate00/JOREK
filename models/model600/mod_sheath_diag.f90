@@ -156,9 +156,15 @@ subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, 
 
   if ( bnd_type .lt. 1 .or. bnd_type .gt. max_bnd_types ) return
 
-  ! --- J.n = J_par*(b.n) = zj*(B.n)/(F0*mu0)   [A/m^2]
-  jn_sheath = zj_sh * Bdotn / (F0 * MU_ZERO)
-  jn_amp    = zj0   * Bdotn / (F0 * MU_ZERO)
+  ! --- J.n = J_par*(b.n) = -zj*(B.n)/(F0*mu0)   [A/m^2]
+  ! --- NOTE the minus, added with the a_n correction and required WITH it. Ampere in JOREK's
+  ! --- right-handed (R,Z,phi) basis gives mu0*j_phi = -Delta*psi/R = -zj/R - which is what the
+  ! --- code's own Jtor = -zj0/BigR and currdens = -zj0/R/mu0 report - so a field-aligned current
+  ! --- is j = (j_phi/B_phi)*B = -(zj/(mu0*F0))*B. This line previously had a compensating sign
+  ! --- error: with the old (also wrong) positive c_sat the two cancelled and I_sheath printed
+  ! --- correctly, which is why neither was noticed. Fixing one alone inverts the reported current.
+  jn_sheath = - zj_sh * Bdotn / (F0 * MU_ZERO)
+  jn_amp    = - zj0   * Bdotn / (F0 * MU_ZERO)
 
   if ( present(V_wall_loc) ) then
     call sheath_norm(a_n, c_sat, vw, V_wall_loc)
