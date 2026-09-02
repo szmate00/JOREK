@@ -55,6 +55,8 @@ module mod_sheath_trace
   integer, save :: st_row(st_max_row)
   real*8,  save :: st_D(st_max_row)
   real*8,  save :: st_F(st_max_row)
+  real*8,  save :: st_S(st_max_row)     !< scale S_a, so |F_a/S_a| is the row residual in j_sat
+  integer, save :: st_bnd(st_max_row)   !< boundary type of the row's OWN node (not the element's)
   integer, save :: st_nc(st_max_row)
   integer, save :: st_col(st_max_col, st_max_row)
   integer, save :: st_var(st_max_col, st_max_row)
@@ -101,6 +103,8 @@ integer function st_slot(irow)
   st_row(st_n)    = irow
   st_D(st_n)      = 0.d0
   st_F(st_n)      = 0.d0
+  st_S(st_n)      = 0.d0
+  st_bnd(st_n)    = 0
   st_nc(st_n)     = 0
   st_slot         = st_n
 
@@ -110,16 +114,18 @@ end function st_slot
 !> Accumulate one element's contribution to one trace row.
 !!
 !! @param irow  global DOF index of the test function
+!! @param ibnd  boundary type of the node owning this row (nodes(i)%boundary, NOT bnd_type1)
 !! @param dD    contribution to D_a = int N_a N_a dS
+!! @param dS    contribution to the scale S_a, so |F_a/S_a| is the residual in units of j_sat
 !! @param dF    contribution to F_a = int N_a (zj_sh - zj) dS   (note the sign: this is the RHS)
 !! @param nc    number of columns in this contribution
 !! @param icol  global DOF indices of the trial functions
 !! @param ivar  variable index of each column
 !! @param vals  contribution to int N_a (d(residual)/d x) N_b dS for each column
-subroutine sheath_trace_add(irow, dD, dF, nc, icol, ivar, vals)
+subroutine sheath_trace_add(irow, ibnd, dD, dF, dS, nc, icol, ivar, vals)
   implicit none
-  integer, intent(in) :: irow, nc
-  real*8,  intent(in) :: dD, dF
+  integer, intent(in) :: irow, ibnd, nc
+  real*8,  intent(in) :: dD, dF, dS
   integer, intent(in) :: icol(nc), ivar(nc)
   real*8,  intent(in) :: vals(nc)
 
@@ -140,6 +146,10 @@ subroutine sheath_trace_add(irow, dD, dF, nc, icol, ivar, vals)
 
     st_D(is) = st_D(is) + dD
     st_F(is) = st_F(is) + dF
+    st_S(is) = st_S(is) + dS
+    ! --- The row's OWN node type, not the element's bnd_type1: at a seam between two covered
+    ! --- types the element label is ambiguous and every per-type number built from it is wrong.
+    st_bnd(is) = max(st_bnd(is), ibnd)
 
   do ic = 1, nc
     found = .false.
@@ -244,8 +254,10 @@ subroutine sheath_trace_report(my_id)
   implicit none
   integer, intent(in) :: my_id
 
-  integer :: ierr
+  integer :: ierr, is, ib
   real*8  :: loc(4), glo(4), dloc(2), dglo(2)
+  integer, parameter :: nbt = 16
+  real*8  :: tloc(nbt,4), tglo(nbt,4), r
 
   loc(1) = dble(st_n)
   loc(2) = dble(st_n_applied)
@@ -259,11 +271,36 @@ subroutine sheath_trace_report(my_id)
     dloc(2) = maxval(st_D(1:st_n))
   endif
 
+  ! --- per-type: count (SUM), max|F/S| (MAX), D min (as -D, so one MAX reduce), D max (MAX)
+  tloc = 0.d0
+  tglo = 0.d0          ! MPI_Reduce fills this on rank 0 only; the debug build inits reals to
+                       ! signalling NaN, so an untouched tglo on any other rank would trap
+  tloc(:,3) = -1.d30
+  tloc(:,4) = -1.d30
+  do is = 1, st_n
+    ib = st_bnd(is)
+    if ( ib .lt. 1 .or. ib .gt. nbt ) cycle
+    tloc(ib,1) = tloc(ib,1) + 1.d0
+    if ( abs(st_S(is)) .gt. 1.d-300 ) then
+      r = abs( st_F(is) / st_S(is) )
+      tloc(ib,2) = max(tloc(ib,2), r)
+    endif
+    if ( st_D(is) .gt. 0.d0 ) then
+      tloc(ib,3) = max(tloc(ib,3), -st_D(is))
+      tloc(ib,4) = max(tloc(ib,4),  st_D(is))
+    endif
+  enddo
+
+  call MPI_Reduce(tloc(1,1), tglo(1,1), nbt, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(tloc(1,2), tglo(1,2), nbt*3, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
+
   call MPI_Reduce(loc,  glo,  4, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
   call MPI_Reduce(dloc(1), dglo(1), 1, MPI_REAL8, MPI_MIN, 0, MPI_COMM_WORLD, ierr)
   call MPI_Reduce(dloc(2), dglo(2), 1, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
 
   if ( my_id .ne. 0 ) return
+
+  tglo(:,3) = -tglo(:,3)      ! D min was reduced as -D through a single MAX
 
   ! --- 10 edit descriptors, 10 output items. Counted, because getting this wrong is a run-time
   ! --- severe(61) that kills rank 0 mid-write and hangs every other rank in the next collective.
@@ -273,6 +310,21 @@ subroutine sheath_trace_report(my_id)
     ' replaced, ',                 nint(glo(4)),                                 &
     ' below the floor;  D min=',   dglo(1),                                      &
     ' max=',                       dglo(2)
+
+  ! --- PER BOUNDARY TYPE. Every aggregate number in this campaign has been un-attributed:
+  ! --- a single global |F/D| cannot say whether the residual lives on the target, on a corner,
+  ! --- or on one type of a two-type configuration, and three parameter scans were run without
+  ! --- that being answerable. |F_a/S_a| is the row residual in units of j_sat - near 0 is a
+  ! --- converged row, order 19 is a row pinned at electron saturation with no voltage feedback.
+  do ib = 1, nbt
+    if ( nint(tglo(ib,1)) .le. 0 ) cycle
+    write(*,'(A,i2,A,i0,A,es9.2,A,es9.2,A,es9.2)')                                &
+      '           bnd type ', ib,                                                  &
+      ': rows=',              nint(tglo(ib,1)),                                     &
+      '  max|F/S|=',          tglo(ib,2),                                           &
+      '  D min=',             tglo(ib,3),                                           &
+      ' max=',                tglo(ib,4)
+  enddo
 
   if ( glo(3) .gt. 0.d0 ) then
     write(*,*) 'ERROR: the sheath trace accumulator overflowed. A truncated row is a WRONG'
