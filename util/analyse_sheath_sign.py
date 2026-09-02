@@ -101,7 +101,12 @@ def analyse(d, a):
     keep = np.ones_like(jp, bool)
     for label, c in cuts:
         keep &= c
-        print(f"    after cut  {label:<38s} : {keep.sum():5d}")
+        if keep.sum():
+            Rs, Zs = d["R"][keep], d["Z"][keep]
+            print(f"    after cut  {label:<38s} : {keep.sum():5d}"
+                  f"   R {Rs.min():.3f}..{Rs.max():.3f}  Z {Zs.min():+.3f}..{Zs.max():+.3f}")
+        else:
+            print(f"    after cut  {label:<38s} : {keep.sum():5d}")
 
     n = int(keep.sum())
     if n < a.minpts:
@@ -126,6 +131,17 @@ def analyse(d, a):
                   f"({100*agree[m].mean():5.1f} %)")
         else:
             print(f"    {label:<20s}: no qualifying points")
+
+    edges = np.linspace(Rk.min(), Rk.max(), 9)
+    print("    agreement vs R (look for TWO separated clusters = two targets):")
+    for b in range(len(edges) - 1):
+        m = (Rk >= edges[b]) & (Rk <= edges[b + 1] if b == len(edges) - 2 else Rk < edges[b + 1])
+        bar = "#" * int(round(20 * m.sum() / max(1, len(Rk))))
+        if m.sum():
+            print(f"      R {edges[b]:.3f}-{edges[b+1]:.3f} : {agree[m].sum():4d}/{m.sum():<4d}"
+                  f" ({100*agree[m].mean():5.1f} %) {bar}")
+        else:
+            print(f"      R {edges[b]:.3f}-{edges[b+1]:.3f} :    -        (empty)")
 
     if "Phi" in d:
         print(f"  Phi over the same points: median {np.median(d['Phi'][keep]):+.2f} V"
