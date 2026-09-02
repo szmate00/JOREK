@@ -112,7 +112,20 @@ def analyse(d, a):
     agree = np.sign(jp[keep]) == np.sign(js[keep])
     frac = agree.mean()
     print(f"\n  sign(Jpar) == sign(Jpar_ionsat) on {agree.sum()}/{n} points  ({100*frac:.1f} %)")
-    print(f"  median |Jpar|/|Jpar_ionsat| = {np.median(ratio[keep]):.3f}")
+    print(f"  median |Jpar|/|Jpar_ionsat| = {np.median(ratio[keep]):.3f}"
+          "   (near 1 => the two are the same physical quantity)")
+
+    # --- Split by target. A CONVENTION error is global: both targets disagree at
+    # --- about the same rate. A target-asymmetric result means something else
+    # --- (a local j_sat collapse, one leg detached) and does NOT implicate a_n.
+    Rk = d["R"][keep]
+    for label, m in (("inner (R < %.2f)" % a.rsplit, Rk < a.rsplit),
+                     ("outer (R > %.2f)" % a.rsplit, Rk >= a.rsplit)):
+        if m.sum():
+            print(f"    {label:<20s}: {agree[m].sum():4d}/{m.sum():<4d} agree "
+                  f"({100*agree[m].mean():5.1f} %)")
+        else:
+            print(f"    {label:<20s}: no qualifying points")
 
     if "Phi" in d:
         print(f"  Phi over the same points: median {np.median(d['Phi'][keep]):+.2f} V"
@@ -136,6 +149,8 @@ def main():
     p.add_argument("--rmin",  type=float, default=0.3, help="lower bound on |Jpar/Jpar_ionsat|")
     p.add_argument("--rmax",  type=float, default=3.0, help="upper bound on |Jpar/Jpar_ionsat|")
     p.add_argument("--minpts", type=int,  default=20)
+    p.add_argument("--rsplit", type=float, default=1.42,
+                   help="R dividing inner from outer target [m], as sheath_diag_R_split")
     a = p.parse_args()
 
     results = []
@@ -151,11 +166,11 @@ def main():
 
     m = float(np.mean(results))
     print("\n" + "=" * 72)
-    if m < 0.1:
-        print("VERDICT: the two DISAGREE almost everywhere.")
+    if m < 0.25:
+        print(f"VERDICT: the two DISAGREE ({100*(1-m):.0f} % of qualifying points).")
         print("  => a_n's sign is wrong. Revert it (c_sat = -0.5*a_n follows automatically)")
         print("     AND add the missing minus in mod_sheath_diag.f90:159-160. Apply together.")
-    elif m > 0.9:
+    elif m > 0.75:
         print("VERDICT: the two AGREE almost everywhere.")
         print("  => the proposed fix is WRONG. Do NOT apply it. The +zj convention in")
         print("     mod_sheath_diag.f90:160 is right and the derivation needs revisiting.")
