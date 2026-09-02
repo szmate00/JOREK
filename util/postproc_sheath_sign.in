@@ -30,7 +30,12 @@ namelist input
 si-units
 set nsub_bnd 2
 
-for step 900 to 900 do
+! Early steps are fine, and preferable: neither Jpar nor Jpar_ionsat depends on the
+! sheath BC or on convergence - Jpar comes from psi, Jpar_ionsat from rho and vpar - and
+! the restart state already has the targets in ion saturation. A later step risks
+! measuring a diverging solution instead. Adjust to steps you actually have (nout = 10).
+! The analysis script handles several blocks and averages them.
+for step 0 to 30 do
 
   ! R Z            - to exclude the X-point neighbourhood
   ! Bnorm B_abs    - to exclude grazing incidence (|Bnorm|/B_abs above sheath_min_bn)
