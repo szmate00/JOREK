@@ -962,6 +962,21 @@ endif
 ! --- nodal route uses. Axisymmetric only: one toroidal index, checked at setup.
 if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
   do wk_i = 1, 2
+
+    ! --- A j-V relation needs a free V. weak_sheath_zj is an OR over the edge's two nodes (:183),
+    ! --- which is right for a surface integral but writes a REPLACED row on both nodes, corners
+    ! --- included. sheath_trace_apply runs after the Dirichlet loop and add_one_entry ASSIGNS,
+    ! --- so on a node whose u is frozen the sheath row overwrites the Dirichlet zj row and
+    ! --- becomes a pure current source with no feedback: u = 0 gives X = -Lambda exactly, hence
+    ! --- f = 1 - exp(Lambda) = -19.1, i.e. -19*j_sat hard-wired at zbig. MEASURED on the type-3
+    ! --- corner: 2508 A/m^2 against 12.9 A/m^2 on type 1, present from step 1 and independent of
+    ! --- every sheath parameter - which is why three parameter scans gave identical trajectories.
+    ! ---
+    ! --- Skip rather than pick a policy: release dirichlet%u on the corner and the row IS written
+    ! --- (the corner then carries a real sheath); leave it frozen and the corner keeps its
+    ! --- Dirichlet zj row. Both are self-consistent. Only the mixture was not.
+    if ( bcs(nodes(wk_i)%boundary)%dirichlet%u ) cycle
+
     do wk_j = 1, 2
       if ( wk_D(wk_i,wk_j,1) .le. 0.d0 ) cycle
       tr_nc = 0
