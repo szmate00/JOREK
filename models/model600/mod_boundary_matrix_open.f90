@@ -86,6 +86,7 @@ real*8     :: wk_res            ! bounded sheath residual driving the weak term
 real*8     :: wk_dfac           ! d(bounded)/d(raw), the factor every Jacobian column carries
 real*8     :: wk_cap, wk_den   ! the cap itself and the saturating denominator
 real*8     :: wk_wgt, wk_rat  ! validity weight and the ratio it is built from
+real*8     :: sh_ufree(2)     ! 1 where this node's u can respond, 0 where it is frozen
 real*8     :: wk_wrx          ! wk_wgt * sheath_weak_relax, for the under-relaxed columns
 ! --- Galerkin trace diagnostics: D_a = int N_a N_a dS, F_a = int N_a (zj - zj_sh) dS,
 ! --- S_a = int N_a zj_sat dS. Purely diagnostic - see sheath_diag_add_weak.
@@ -187,6 +188,15 @@ weak_sheath_zj      = .false.
 
 bnd_type1 = nodes(1)%boundary 
 bnd_type2 = nodes(2)%boundary 
+
+! --- A j-V relation is a statement about a surface FREE to respond. At a node whose u is
+! --- Dirichlet-frozen with u = 0 and V_wall = 0, X = -Lambda exactly, so f = 1 - exp(Lambda)
+! --- = -19.1: the Gauss points near it demand -19*j_sat of electron current and no potential
+! --- change can answer. Skipping the ROW on that node (further down) does not remove those
+! --- Gauss points from its FREE neighbour's row, because wk_F/wk_D/wk_S/tr_J are accumulated
+! --- over the whole edge - so the neighbour gets dragged onto the electron branch.
+sh_ufree(1) = 1.d0 ; if ( bcs(bnd_type1)%dirichlet%u ) sh_ufree(1) = 0.d0
+sh_ufree(2) = 1.d0 ; if ( bcs(bnd_type2)%dirichlet%u ) sh_ufree(2) = 0.d0
 
 ! --- If one of the nodes has a boundary type where natural BCs are applied, apply boundary integral for the full bnd element
 diag_sheath_zj = bcs(bnd_type1)%sheath_zj .or. bcs(bnd_type2)%sheath_zj
@@ -603,13 +613,26 @@ do ms=1, n_gauss
         ! --- FULL weight at exactly the points where the gate should close hardest. A vanishing
         ! --- j_sat means the ratio is effectively infinite, so the weight must go to 0, not 1.
         if ( abs(dzj_sat) .gt. 1.d-30 ) then
+          ! --- Both sides of the mismatch. The gate was built from the PLASMA demand alone, so a
+          ! --- Gauss point pinned at f = -19 by a frozen u reported a ratio of 2.39 and sailed
+          ! --- through at full weight - which is why W came out 1.000 while the row was poisoned.
           wk_rat = abs( zj0 / dzj_sat )
+          if ( sheath_weak_ufade ) wk_rat = max( wk_rat, abs( dzj_sh / dzj_sat ) )
           wk_wgt = 1.d0 / ( 1.d0 + (wk_rat/sheath_zj_ratio_max)**4 )
         else
           wk_rat = 0.d0
           wk_wgt = 0.d0
         endif
       endif
+
+      ! --- Fade toward a frozen-u node. H1(i,1,ms) are the two VALUE basis functions along the
+      ! --- edge and form a partition of unity, so this is 1 at a free node, 0 at a frozen one and
+      ! --- linear-in-basis between. It varies WITHIN the row, which is the point: a weight that is
+      ! --- uniform over a row's support cancels exactly out of F_a/D_a and J_ab/D_a and can fade
+      ! --- nothing (see mod_sheath_trace). wk_D0 is deliberately left unweighted so W = D_a/D0_a
+      ! --- reports the fade instead of hiding it.
+      if ( sheath_weak_ufade )                                                             &
+        wk_wgt = wk_wgt * ( sh_ufree(1)*H1(1,1,ms) + sh_ufree(2)*H1(2,1,ms) )
 
       ! --- Under-relaxation. The replacement row is M*d(zj) - sum_x C_x*d(x) = F, which asks for
       ! --- the FULL step onto the linearised characteristic every time. Scaling C_x and F - but
