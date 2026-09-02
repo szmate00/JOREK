@@ -72,7 +72,8 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 sheath_u_value_only,                                &
                 sheath_u_exp_max, sheath_u_exp_min,                 &
                 sheath_Lambda_local, sheath_X_min, sheath_smooth_dX,&
-                sheath_sat_slope, sheath_sat_slope_e, sheath_wall_pen, sheath_zj_relax, &
+                sheath_sat_slope, sheath_sat_slope_e, sheath_weak_wmin, &
+                sheath_wall_pen, sheath_zj_relax, &
                 sheath_jsat_from_vpar, sheath_jsat_vpar_min,        &
                 sheath_zj_ratio_max,                                &
                 sheath_min_bn, sheath_ramp_time,                    &

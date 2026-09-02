@@ -90,6 +90,11 @@ real*8     :: wk_wrx          ! wk_wgt * sheath_weak_relax, for the under-relaxe
 ! --- Galerkin trace diagnostics: D_a = int N_a N_a dS, F_a = int N_a (zj - zj_sh) dS,
 ! --- S_a = int N_a zj_sat dS. Purely diagnostic - see sheath_diag_add_weak.
 real*8     :: wk_D(2,2,n_tor), wk_F(2,2,n_tor), wk_S(2,2,n_tor)
+real*8     :: wk_D0(2,2,n_tor)   !< D_a with wk_wgt forced to 1: the row's UNWEIGHTED
+                                 !! support, so W_a = D_a/D0_a is the mean validity
+                                 !! weight over that support - scale free, and the
+                                 !! only thing wk_wgt can still act through, since it
+                                 !! cancels out of J_ab/D_a and F_a/D_a exactly.
 integer    :: wk_i, wk_j, wk_m
 ! --- Galerkin trace block for the WEAK sheath row: J(a,b,var) = int N_a * dres/dvar * N_b dS,
 ! --- with a = (i,j) the test trace DOF and b = (k,l) the trial one. Axisymmetric only, so no
@@ -248,7 +253,7 @@ delta_s = delta_s * tstep / tstep_prev
 
 n_tor_local = i_tor_max - i_tor_min +1
 
-wk_D = 0.d0; wk_F = 0.d0; wk_S = 0.d0; tr_J = 0.d0; tr_F = 0.d0
+wk_D = 0.d0; wk_D0 = 0.d0; wk_F = 0.d0; wk_S = 0.d0; tr_J = 0.d0; tr_F = 0.d0
 
 !--------------------------------------------------- sum over the Gaussian integration points
 do ms=1, n_gauss
@@ -641,6 +646,8 @@ do ms=1, n_gauss
           if ( diag_sheath_zj ) then
             wk_D(i,j,im-i_tor_min+1) = wk_D(i,j,im-i_tor_min+1)                        &
                                      + v * v * wk_wgt       * ws * dl / BigR
+            wk_D0(i,j,im-i_tor_min+1) = wk_D0(i,j,im-i_tor_min+1)                      &
+                                     + v * v                * ws * dl / BigR
             wk_F(i,j,im-i_tor_min+1) = wk_F(i,j,im-i_tor_min+1)                        &
                                      + v * ( zj0 - dzj_sh ) * wk_wgt * ws * dl / BigR
             wk_S(i,j,im-i_tor_min+1) = wk_S(i,j,im-i_tor_min+1)                        &
@@ -1003,12 +1010,13 @@ if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
         enddo
         if ( tr_k .eq. var_zj ) then
           call sheath_trace_add( nodes(wk_i)%index(direction(wk_j)), nodes(wk_i)%boundary, &
-                                 wk_D(wk_i,wk_j,1), tr_F(wk_i,wk_j),                     &
+                                 wk_D(wk_i,wk_j,1), wk_D0(wk_i,wk_j,1),                 &
+                                 tr_F(wk_i,wk_j),                                         &
                                  wk_F(wk_i,wk_j,1), wk_S(wk_i,wk_j,1),                    &
                                  tr_nc, tr_col, tr_var, tr_vals )
         else
           call sheath_trace_add( nodes(wk_i)%index(direction(wk_j)), nodes(wk_i)%boundary, &
-                                 0.d0, 0.d0, 0.d0, 0.d0,                                  &
+                                 0.d0, 0.d0, 0.d0, 0.d0, 0.d0,                            &
                                  tr_nc, tr_col, tr_var, tr_vals )
         endif
       enddo

@@ -55,6 +55,7 @@ module mod_sheath_trace
   integer, save :: st_row(st_max_row)
   real*8,  save :: st_D(st_max_row)
   real*8,  save :: st_F(st_max_row)
+  real*8,  save :: st_D0(st_max_row)    !< UNWEIGHTED diagonal; W_a = st_D/st_D0 in [0,1]
   real*8,  save :: st_Fd(st_max_row)    !< DIAGNOSTIC residual: raw (zj0-zj_sh), weight wk_wgt.
                                         !! NOT st_F, which is the trust-region-bounded residual
                                         !! carrying a different weight (wk_wrx) and is what the
@@ -108,6 +109,7 @@ integer function st_slot(irow)
   st_row(st_n)    = irow
   st_D(st_n)      = 0.d0
   st_F(st_n)      = 0.d0
+  st_D0(st_n)     = 0.d0
   st_Fd(st_n)     = 0.d0
   st_S(st_n)      = 0.d0
   st_bnd(st_n)    = 0
@@ -121,7 +123,8 @@ end function st_slot
 !!
 !! @param irow  global DOF index of the test function
 !! @param ibnd  boundary type of the node owning this row (nodes(i)%boundary, NOT bnd_type1)
-!! @param dD    contribution to D_a = int N_a N_a dS
+!! @param dD    contribution to D_a = int N_a N_a dS   (carries wk_wgt)
+!! @param dD0   the same integral with wk_wgt forced to 1, for the validity weight W_a
 !! @param dFd   DIAGNOSTIC residual (raw, weight wk_wgt) - report only, never written to the row
 !! @param dS    contribution to the scale S_a, so |Fd_a/S_a| is the residual in units of j_sat
 !! @param dF    contribution to F_a = int N_a (zj_sh - zj) dS   (note the sign: this is the RHS)
@@ -129,10 +132,10 @@ end function st_slot
 !! @param icol  global DOF indices of the trial functions
 !! @param ivar  variable index of each column
 !! @param vals  contribution to int N_a (d(residual)/d x) N_b dS for each column
-subroutine sheath_trace_add(irow, ibnd, dD, dF, dFd, dS, nc, icol, ivar, vals)
+subroutine sheath_trace_add(irow, ibnd, dD, dD0, dF, dFd, dS, nc, icol, ivar, vals)
   implicit none
   integer, intent(in) :: irow, ibnd, nc
-  real*8,  intent(in) :: dD, dF, dFd, dS
+  real*8,  intent(in) :: dD, dD0, dF, dFd, dS
   integer, intent(in) :: icol(nc), ivar(nc)
   real*8,  intent(in) :: vals(nc)
 
@@ -151,7 +154,8 @@ subroutine sheath_trace_add(irow, ibnd, dD, dF, dFd, dS, nc, icol, ivar, vals)
 
   if ( is .gt. 0 ) then
 
-    st_D(is) = st_D(is) + dD
+    st_D(is)  = st_D(is)  + dD
+    st_D0(is) = st_D0(is) + dD0
     st_F(is) = st_F(is) + dF
     st_Fd(is) = st_Fd(is) + dFd
     st_S(is)  = st_S(is)  + dS
@@ -191,6 +195,7 @@ end subroutine sheath_trace_add
 !! replacing the incomplete boundary zj equation. Called after the element loop, from
 !! boundary_conditions, which owns a_mat and RHS_loc.
 subroutine sheath_trace_apply(in, zbig, index_min, index_max, a_mat, RHS_loc)
+  use phys_module, only: sheath_weak_wmin
 
   use mod_parameters
   use data_structure, only: type_SP_MATRIX
@@ -203,7 +208,7 @@ subroutine sheath_trace_apply(in, zbig, index_min, index_max, a_mat, RHS_loc)
   real*8,               intent(inout) :: RHS_loc(*)
 
   integer :: is, ic
-  real*8  :: sc, d_max
+  real*8  :: sc
 
   st_n_applied = 0
   st_n_skipped = 0
@@ -213,17 +218,24 @@ subroutine sheath_trace_apply(in, zbig, index_min, index_max, a_mat, RHS_loc)
   ! --- normalising it is exactly the point, so the floor must be far below that - it is here only
   ! --- to catch a row that received essentially no boundary support, where 1/D_a would manufacture
   ! --- an enormous row out of numerical noise.
-  d_max = 0.d0
-  do is = 1, st_n
-    d_max = max(d_max, st_D(is))
-  enddo
-
   do is = 1, st_n
 
     ! --- A row with no diagonal received no boundary-edge contribution at all; writing zbig into
     ! --- it would create a singular equation, so leave the assembled row alone.
-    if ( st_D(is) .le. 0.d0 ) cycle
-    if ( st_D(is) .lt. 1.d-14 * d_max ) then
+    if ( st_D(is) .le. 0.d0 .or. st_D0(is) .le. 0.d0 ) cycle
+
+    ! --- THE VALIDITY GATE. wk_wgt multiplies D_a, F_a and every J_ab identically, and the row is
+    ! --- written as J/D and F/D, so a wk_wgt uniform over a row's support cancels EXACTLY - it
+    ! --- cannot fade a row that is written with zbig, it only shrinks D_a. Measured: the divertor
+    ! --- leg-end faces, whose whole support sits outside the characteristic's validity range,
+    ! --- diverge in 4-8 steps with D collapsing 8-10 orders, while the near-tangential wall at
+    ! --- 42 % gated area is fine, because there the weight VARIES within each row and does not
+    ! --- cancel. Row replacement is binary, so the fade has to be the decision whether to write
+    ! --- the row at all. W_a = D_a/D0_a is the mean validity weight over this row's own support:
+    ! --- dimensionless, mesh independent, and identical on every rank - unlike the 1e-14*d_max
+    ! --- floor it replaces, which was RANK-LOCAL, so whether a given DOF was enforced depended on
+    ! --- which other rows happened to land on that rank and on which types were enabled.
+    if ( st_D(is) .lt. sheath_weak_wmin * st_D0(is) ) then
       st_n_skipped = st_n_skipped + 1
       cycle
     endif
@@ -246,7 +258,12 @@ subroutine sheath_trace_apply(in, zbig, index_min, index_max, a_mat, RHS_loc)
              0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
     endif
 
-    st_n_applied = st_n_applied + 1
+    ! --- Count only rows this rank actually WROTE. boundary_conditions_add_one_entry
+    ! --- silently returns for a row outside [index_min,index_max], so a halo DOF that
+    ! --- local elements touched was being accumulated, counted as replaced, and written
+    ! --- nowhere - inflating 'N accumulated, N replaced' into false reassurance.
+    if ( st_row(is) .ge. index_min .and. st_row(is) .le. index_max ) &
+      st_n_applied = st_n_applied + 1
 
   enddo
 
@@ -265,7 +282,10 @@ subroutine sheath_trace_report(my_id)
   integer :: ierr, is, ib
   real*8  :: loc(4), glo(4), dloc(2), dglo(2)
   integer, parameter :: nbt = 16
-  real*8  :: tloc(nbt,4), tglo(nbt,4), r
+  ! --- cols 1-2 reduce with SUM, cols 3-6 with MAX, so each group is contiguous in memory
+  ! --- (Fortran column-major) and travels in one call: 1 count, 2 sum(W), 3 max|Fd/S|,
+  ! --- 4 -min(D), 5 max(D), 6 -min(W).
+  real*8  :: tloc(nbt,6), tglo(nbt,6), r, w
 
   loc(1) = dble(st_n)
   loc(2) = dble(st_n_applied)
@@ -283,24 +303,30 @@ subroutine sheath_trace_report(my_id)
   tloc = 0.d0
   tglo = 0.d0          ! MPI_Reduce fills this on rank 0 only; the debug build inits reals to
                        ! signalling NaN, so an untouched tglo on any other rank would trap
-  tloc(:,3) = -1.d30
   tloc(:,4) = -1.d30
+  tloc(:,5) = -1.d30
+  tloc(:,6) = -1.d30
   do is = 1, st_n
     ib = st_bnd(is)
     if ( ib .lt. 1 .or. ib .gt. nbt ) cycle
     tloc(ib,1) = tloc(ib,1) + 1.d0
     if ( abs(st_S(is)) .gt. 1.d-300 ) then
       r = abs( st_Fd(is) / st_S(is) )
-      tloc(ib,2) = max(tloc(ib,2), r)
+      tloc(ib,3) = max(tloc(ib,3), r)
     endif
     if ( st_D(is) .gt. 0.d0 ) then
-      tloc(ib,3) = max(tloc(ib,3), -st_D(is))
-      tloc(ib,4) = max(tloc(ib,4),  st_D(is))
+      tloc(ib,4) = max(tloc(ib,4), -st_D(is))
+      tloc(ib,5) = max(tloc(ib,5),  st_D(is))
+    endif
+    if ( st_D0(is) .gt. 0.d0 ) then
+      w = st_D(is) / st_D0(is)
+      tloc(ib,2) = tloc(ib,2) + w
+      tloc(ib,6) = max(tloc(ib,6), -w)
     endif
   enddo
 
-  call MPI_Reduce(tloc(1,1), tglo(1,1), nbt, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
-  call MPI_Reduce(tloc(1,2), tglo(1,2), nbt*3, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(tloc(1,1), tglo(1,1), nbt*2, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(tloc(1,3), tglo(1,3), nbt*4, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
 
   call MPI_Reduce(loc,  glo,  4, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
   call MPI_Reduce(dloc(1), dglo(1), 1, MPI_REAL8, MPI_MIN, 0, MPI_COMM_WORLD, ierr)
@@ -308,7 +334,8 @@ subroutine sheath_trace_report(my_id)
 
   if ( my_id .ne. 0 ) return
 
-  tglo(:,3) = -tglo(:,3)      ! D min was reduced as -D through a single MAX
+  tglo(:,4) = -tglo(:,4)      ! D min and W min were reduced as negatives through MAX
+  tglo(:,6) = -tglo(:,6)
 
   ! --- 10 edit descriptors, 10 output items. Counted, because getting this wrong is a run-time
   ! --- severe(61) that kills rank 0 mid-write and hangs every other rank in the next collective.
@@ -326,12 +353,18 @@ subroutine sheath_trace_report(my_id)
   ! --- converged row, order 19 is a row pinned at electron saturation with no voltage feedback.
   do ib = 1, nbt
     if ( nint(tglo(ib,1)) .le. 0 ) cycle
-    write(*,'(A,i2,A,i0,A,es9.2,A,es9.2,A,es9.2)')                                &
+    ! --- 12 edit descriptors, 12 output items. Counted: a mismatch is a runtime severe(61)
+    ! --- that kills rank 0 mid-write and hangs every other rank in the next collective.
+    ! --- W is the validity weight D_a/D0_a. W near 1 = the characteristic is valid over the whole
+    ! --- row; W -> 0 = the row is being written where the characteristic has no solution, which
+    ! --- the wk_wgt weighting CANNOT fade because it cancels out of J/D and F/D.
+    write(*,'(A,i2,A,i0,A,f6.3,A,f6.3,A,es9.2,A,es9.2)')                          &
       '           bnd type ', ib,                                                  &
       ': rows=',              nint(tglo(ib,1)),                                     &
-      '  max|F/S|=',          tglo(ib,2),                                           &
-      '  D min=',             tglo(ib,3),                                           &
-      ' max=',                tglo(ib,4)
+      '  W min=',             tglo(ib,6),                                           &
+      ' mean=',               tglo(ib,2)/max(tglo(ib,1),1.d0),                      &
+      '  |Fd/S|max=',         tglo(ib,3),                                           &
+      '  D min=',             tglo(ib,4)
   enddo
 
   if ( glo(3) .gt. 0.d0 ) then
