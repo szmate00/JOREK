@@ -100,6 +100,11 @@ integer    :: wk_i, wk_j, wk_m
 ! --- with a = (i,j) the test trace DOF and b = (k,l) the trial one. Axisymmetric only, so no
 ! --- toroidal index - initialise_parameters refuses n_tor_local > 1 with sheath_zj_weak.
 real*8     :: tr_J(2,2,2,2,n_var), tr_F(2,2)
+real*8     :: tr_Jp(2,2,2,2)      !< psi column of the weak sheath row, on the
+                                  !! direction_perp DOFs (the ones dirichlet%psi
+                                  !! leaves free). Separate array because the
+                                  !! existing tr_J columns all sit on direction().
+real*8     :: dzj_dpt, dpx_dpt, dpy_dpt, dB_dpt, dbn_dpt, dfac_dbn, zt_arg
 integer    :: tr_col(4), tr_var(4), tr_k, tr_l, tr_nc
 real*8     :: tr_vals(4)
 real*8     :: dzj_sh, dzj_sat, dzj_x, dzj_d1, dzj_d2, dzj_d3, dzj_d4, dzj_d5, dzj_wgt
@@ -254,6 +259,7 @@ delta_s = delta_s * tstep / tstep_prev
 n_tor_local = i_tor_max - i_tor_min +1
 
 wk_D = 0.d0; wk_D0 = 0.d0; wk_F = 0.d0; wk_S = 0.d0; tr_J = 0.d0; tr_F = 0.d0
+tr_Jp = 0.d0
 
 !--------------------------------------------------- sum over the Gaussian integration points
 do ms=1, n_gauss
@@ -529,6 +535,7 @@ do ms=1, n_gauss
     ! --- than pick up whatever the previous Gauss point left behind.
     dzj_sh = 0.d0; dzj_d1 = 0.d0; dzj_d2 = 0.d0; dzj_d3 = 0.d0; dzj_d4 = 0.d0; dzj_d5 = 0.d0
     dzj_sat = 0.d0; wk_res = 0.d0; wk_dfac = 0.d0; wk_wgt = 0.d0; wk_wrx = 0.d0
+    dzj_dpt = 0.d0   ! must not survive from the previous Gauss point
 
     if ( diag_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
       call sheath_current(u0, r0_corr, Ti0_sh, Te0_sh, g_bn, normal_sign, Btot, &
@@ -546,6 +553,32 @@ do ms=1, n_gauss
       dzj_d2 = dzj_d2 * dcorr_neg_dens_drho1(r0)
       dzj_d3 = dzj_d3 * dsheath_temp_floor_dT(Ti0)
       dzj_d4 = dzj_d4 * dsheath_temp_floor_dT(Te0)
+
+      ! --- d(zj_sh)/d(psi). zj_sh = zj_sat*f with zj_sat proportional to g_bn/Btot and f a
+      ! --- function of X alone, so the whole psi dependence is the field geometry:
+      ! ---     Btot  = sqrt(F0^2 + ps0_x^2 + ps0_y^2)/BigR
+      ! ---     bdotn = (ps0_y*n_R - ps0_x*n_Z)/(R*Btot)
+      ! --- and dirichlet%psi pins psi's VALUE and TANGENTIAL derivative while leaving the NORMAL
+      ! --- derivative free, so the only live DOFs are direction_perp, reached through ps0_t.
+      ! --- Omitting this column was justified as "the geometry is frozen within a Newton
+      ! --- iteration", but there is no Newton iteration - one construct_matrix and one solve per
+      ! --- step - so it is a systematic per-step error that compounds with the sheath area.
+      if ( sheath_psi_jacobian .and. abs(g_bn) .gt. 1.d-30 .and. Btot .gt. 1.d-30 ) then
+        dpx_dpt = - y_s(ms) / xjac
+        dpy_dpt = + x_s(ms) / xjac
+        dB_dpt  = ( ps0_x*dpx_dpt + ps0_y*dpy_dpt ) / ( BigR**2 * Btot )
+        dbn_dpt = ( dpy_dpt*normal(1) - dpx_dpt*normal(2) ) / ( x_g(ms) * Btot )               &
+                  - bdotn * dB_dpt / Btot
+        ! --- d(g_bn)/d(bdotn). g_bn = normal_sign*factor(|bdotn|) and normal_sign = sign(bdotn),
+        ! --- so the two sign factors cancel and this is just d(factor)/d|bdotn|. Zero where the
+        ! --- factor was clipped at 0, and zero without vpar_smoothing (factor is then constant).
+        dfac_dbn = 0.d0
+        if ( vpar_smoothing .and. factor .gt. 0.d0 ) then
+          zt_arg   = ( abs(bdotn) - c_1 ) / c_2
+          dfac_dbn = 0.5d0 * ( 1.d0 + tanh(zt_arg) ) * ( 1.d0 - tanh(zt_arg)**2 ) / c_2
+        endif
+        dzj_dpt = dzj_sh * ( dfac_dbn * dbn_dpt / g_bn - dB_dpt / Btot )
+      endif
 
       ! --- Trust region on the residual. zj_sh - zj is unbounded on the electron branch - at
       ! --- u = 0 the characteristic sits at X = -Lambda, f = 1-exp(Lambda) ~ -19 - so from a
@@ -812,6 +845,11 @@ do ms=1, n_gauss
                                         + v * psi * wk_wgt * ws * dl / BigR
                   tr_J(i,j,k,l,var_u  ) = tr_J(i,j,k,l,var_u  )                        &
                                         - v * dzj_d1 * psi * wk_wrx * ws * dl / BigR
+                  ! --- psi enters only through ps0_t, whose trial factor is psi_t. The DOF is
+                  ! --- direction_perp, not direction, so it needs its own array and its own
+                  ! --- column list at emission.
+                  tr_Jp(i,j,k,l)        = tr_Jp(i,j,k,l)                                   &
+                                        - v * dzj_dpt * psi_t * wk_wrx * ws * dl / BigR
                   tr_J(i,j,k,l,var_rho) = tr_J(i,j,k,l,var_rho)                        &
                                         - v * dzj_d2 * psi * wk_wrx * ws * dl / BigR
                   if ( var_vpar .gt. 0 ) &
@@ -1020,6 +1058,23 @@ if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
                                  tr_nc, tr_col, tr_var, tr_vals )
         endif
       enddo
+
+      ! --- The psi column, on the direction_perp DOFs (the ones dirichlet%psi leaves free).
+      ! --- D/D0/F/Fd/S are already accumulated by the loop above, so this call adds columns only.
+      if ( sheath_psi_jacobian ) then
+        tr_nc = 0
+        do tr_l = 1, 2
+          do wk_m = 1, 2
+            tr_nc = tr_nc + 1
+            tr_col(tr_nc)  = nodes(tr_l)%index(direction_perp(wk_m))
+            tr_var(tr_nc)  = var_psi
+            tr_vals(tr_nc) = tr_Jp(wk_i,wk_j,tr_l,wk_m)
+          enddo
+        enddo
+        call sheath_trace_add( nodes(wk_i)%index(direction(wk_j)), nodes(wk_i)%boundary, &
+                               0.d0, 0.d0, 0.d0, 0.d0, 0.d0,                            &
+                               tr_nc, tr_col, tr_var, tr_vals )
+      endif
     enddo
   enddo
 endif
