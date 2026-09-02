@@ -333,6 +333,7 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
                           zj_sat, x_out, V_wall_loc, vpar, dzj_dvpar)
 
   use phys_module, only: GAMMA, sheath_min_bn, sheath_sat_slope, sheath_sat_slope_e, &
+                         sheath_v_perp, &
                          sheath_jsat_from_vpar, sheath_jsat_vpar_min
 
   implicit none
@@ -348,7 +349,7 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
 
   real*8 :: a_n, c_sat, vw
   real*8 :: rho_l, Ti_l, Te_l, T_l, cs, g_eff
-  real*8  :: v_mach, v_eff, v_flr, dveff_dvpar, dlnv_dT
+  real*8  :: v_mach, v_eff, v_flr, dveff_dvpar, dlnv_dT, v_par_sat
   logical :: use_vpar
   real*8 :: lam, dlam_dTi, dlam_dTe
   real*8  :: x, x_lim, dxlim_dx, expmx, f, fp, sp, dsp
@@ -427,8 +428,21 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
     ! --- sheath_jsat_from_vpar = .false. is BIT-IDENTICAL to the pre-flag code and not merely
     ! --- algebraically equal. A 1e-16 re-association is enough to change which side of a marginal
     ! --- configuration a long run falls on, which makes an A/B uninterpretable.
-    zj_sat  = c_sat * rho_l * g_eff * cs / Btot
-    dlnv_dT = 0.d0              ! unused on this path; the derivative below is written out too
+    if ( sheath_v_perp .gt. 0.d0 ) then
+      ! --- CROSS-FIELD FLUX FLOOR. j_sat = e*n*(c_s*g(b_n) + v_perp). The parallel flux vanishes
+      ! --- where the field grazes the wall, but perpendicular transport still delivers particles,
+      ! --- so the saturation current does not go to zero at tangency and the characteristic stays
+      ! --- solvable there. sgn_bn rather than sign(g_eff) so the direction is still defined at
+      ! --- exact tangency, where g_eff = 0. Only the magnitude gets the floor.
+      v_par_sat = abs(g_eff) * cs
+      zj_sat    = c_sat * rho_l * sgn_bn * ( v_par_sat + sheath_v_perp ) / Btot
+      ! --- d(ln zj_sat)/dT: only the parallel part carries the c_s ~ sqrt(T) dependence, so the
+      ! --- 1/(2T) is diluted by the floor and -> 0 as the floor dominates.
+      dlnv_dT   = 0.5d0 / T_l * v_par_sat / max( v_par_sat + sheath_v_perp, 1.d-300 )
+    else
+      zj_sat  = c_sat * rho_l * g_eff * cs / Btot
+      dlnv_dT = 0.d0            ! unused on this path; the derivative below is written out too
+    endif
   endif
 
   call sheath_get_lambda(Ti_l, Te_l, lam, dlam_dTi, dlam_dTe)
@@ -511,7 +525,7 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
   zj_sh    = zj_sat * f
   dzj_du   = zj_sat * fp * dx_du
   dzj_drho = zj_sat * f / rho_l
-  if ( use_vpar ) then
+  if ( use_vpar .or. sheath_v_perp .gt. 0.d0 ) then
     dzj_dTi = zj_sat * f * dlnv_dT + zj_sat * fp * dx_dTi
     dzj_dTe = zj_sat * f * dlnv_dT + zj_sat * fp * dx_dTe
   else

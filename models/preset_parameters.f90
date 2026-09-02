@@ -114,6 +114,7 @@ subroutine preset_parameters
   sheath_sat_slope_e =  0.d0  ! 0 = electron branch loses its u column (see phys_module)
   sheath_weak_wmin   =  0.d0  ! 0 = write every weak row (previous behaviour); 0.5 gates
   sheath_psi_jacobian = .false. ! .false. = no psi column (previous behaviour)
+  sheath_v_perp      =  0.d0  ! 0 = j_sat vanishes at tangency (previous behaviour)
   sheath_wall_pen    =  0.d0  ! 0 = no tangential-wall fallback (see phys_module)
   sheath_jsat_from_vpar = .false. ! .false. = j_sat from the Mach 1 velocity (see phys_module)
   sheath_jsat_vpar_min  =  0.1d0  ! floor on |Vpar| as a fraction of the Mach 1 value
