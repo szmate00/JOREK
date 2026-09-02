@@ -1003,11 +1003,12 @@ if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
         enddo
         if ( tr_k .eq. var_zj ) then
           call sheath_trace_add( nodes(wk_i)%index(direction(wk_j)), nodes(wk_i)%boundary, &
-                                 wk_D(wk_i,wk_j,1), tr_F(wk_i,wk_j), wk_S(wk_i,wk_j,1),   &
+                                 wk_D(wk_i,wk_j,1), tr_F(wk_i,wk_j),                     &
+                                 wk_F(wk_i,wk_j,1), wk_S(wk_i,wk_j,1),                    &
                                  tr_nc, tr_col, tr_var, tr_vals )
         else
           call sheath_trace_add( nodes(wk_i)%index(direction(wk_j)), nodes(wk_i)%boundary, &
-                                 0.d0, 0.d0, 0.d0,                                        &
+                                 0.d0, 0.d0, 0.d0, 0.d0,                                  &
                                  tr_nc, tr_col, tr_var, tr_vals )
         endif
       enddo

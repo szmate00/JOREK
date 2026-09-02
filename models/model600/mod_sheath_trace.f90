@@ -55,7 +55,12 @@ module mod_sheath_trace
   integer, save :: st_row(st_max_row)
   real*8,  save :: st_D(st_max_row)
   real*8,  save :: st_F(st_max_row)
-  real*8,  save :: st_S(st_max_row)     !< scale S_a, so |F_a/S_a| is the row residual in j_sat
+  real*8,  save :: st_Fd(st_max_row)    !< DIAGNOSTIC residual: raw (zj0-zj_sh), weight wk_wgt.
+                                        !! NOT st_F, which is the trust-region-bounded residual
+                                        !! carrying a different weight (wk_wrx) and is what the
+                                        !! row actually asks for. Only st_Fd/st_S is comparable
+                                        !! to the printed global |F_a/D_a|/|S_a/D_a|.
+  real*8,  save :: st_S(st_max_row)     !< scale S_a, so |Fd_a/S_a| is the row residual in j_sat
   integer, save :: st_bnd(st_max_row)   !< boundary type of the row's OWN node (not the element's)
   integer, save :: st_nc(st_max_row)
   integer, save :: st_col(st_max_col, st_max_row)
@@ -103,6 +108,7 @@ integer function st_slot(irow)
   st_row(st_n)    = irow
   st_D(st_n)      = 0.d0
   st_F(st_n)      = 0.d0
+  st_Fd(st_n)     = 0.d0
   st_S(st_n)      = 0.d0
   st_bnd(st_n)    = 0
   st_nc(st_n)     = 0
@@ -116,16 +122,17 @@ end function st_slot
 !! @param irow  global DOF index of the test function
 !! @param ibnd  boundary type of the node owning this row (nodes(i)%boundary, NOT bnd_type1)
 !! @param dD    contribution to D_a = int N_a N_a dS
-!! @param dS    contribution to the scale S_a, so |F_a/S_a| is the residual in units of j_sat
+!! @param dFd   DIAGNOSTIC residual (raw, weight wk_wgt) - report only, never written to the row
+!! @param dS    contribution to the scale S_a, so |Fd_a/S_a| is the residual in units of j_sat
 !! @param dF    contribution to F_a = int N_a (zj_sh - zj) dS   (note the sign: this is the RHS)
 !! @param nc    number of columns in this contribution
 !! @param icol  global DOF indices of the trial functions
 !! @param ivar  variable index of each column
 !! @param vals  contribution to int N_a (d(residual)/d x) N_b dS for each column
-subroutine sheath_trace_add(irow, ibnd, dD, dF, dS, nc, icol, ivar, vals)
+subroutine sheath_trace_add(irow, ibnd, dD, dF, dFd, dS, nc, icol, ivar, vals)
   implicit none
   integer, intent(in) :: irow, ibnd, nc
-  real*8,  intent(in) :: dD, dF, dS
+  real*8,  intent(in) :: dD, dF, dFd, dS
   integer, intent(in) :: icol(nc), ivar(nc)
   real*8,  intent(in) :: vals(nc)
 
@@ -146,7 +153,8 @@ subroutine sheath_trace_add(irow, ibnd, dD, dF, dS, nc, icol, ivar, vals)
 
     st_D(is) = st_D(is) + dD
     st_F(is) = st_F(is) + dF
-    st_S(is) = st_S(is) + dS
+    st_Fd(is) = st_Fd(is) + dFd
+    st_S(is)  = st_S(is)  + dS
     ! --- The row's OWN node type, not the element's bnd_type1: at a seam between two covered
     ! --- types the element label is ambiguous and every per-type number built from it is wrong.
     st_bnd(is) = max(st_bnd(is), ibnd)
@@ -282,7 +290,7 @@ subroutine sheath_trace_report(my_id)
     if ( ib .lt. 1 .or. ib .gt. nbt ) cycle
     tloc(ib,1) = tloc(ib,1) + 1.d0
     if ( abs(st_S(is)) .gt. 1.d-300 ) then
-      r = abs( st_F(is) / st_S(is) )
+      r = abs( st_Fd(is) / st_S(is) )
       tloc(ib,2) = max(tloc(ib,2), r)
     endif
     if ( st_D(is) .gt. 0.d0 ) then
