@@ -858,7 +858,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   end if
 
   if ( any(bcs(:)%natural%u) .or. any(bcs(:)%natural%w) .or. any(bcs(:)%natural%zj) &
-       .or. any(bcs(:)%sheath_zj) ) then
+       .or. any(bcs(:)%sheath_zj) .or. any(bcs(:)%sheath_zj_weak) ) then
     if ( any(bcs(:)%sheath_zj) ) &
       write(*,'(A,30(1x,i0))') ' sheath_zj bnd types   :', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%sheath_zj )
     write(*,'(A,30(1x,i0))') ' natural%u  bnd types  :', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%natural%u  )

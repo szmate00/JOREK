@@ -434,7 +434,7 @@ if (my_id .eq. 0) then
   ! --- (mod_boundary_conditions). sheath_zj MUST be in this guard - it is a nodal row, so it needs
   ! --- none of the natural flags, and leaving it out meant none of its checks ever ran.
   if ( any(bcs(:)%natural%u) .or. any(bcs(:)%natural%w) .or. any(bcs(:)%natural%zj) &
-       .or. any(bcs(:)%sheath_zj) ) then
+       .or. any(bcs(:)%sheath_zj) .or. any(bcs(:)%sheath_zj_weak) ) then
 
     ! --- only the SURFACE terms live in that branch; the nodal sheath_zj rows do not
     if ( ( any(bcs(:)%natural%u) .or. any(bcs(:)%natural%w) .or. any(bcs(:)%natural%zj) ) &
