@@ -318,6 +318,7 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   use mod_simulation_data, only: type_MHD_SIM
 #if JOREK_MODEL == 600
   use mod_sheath_diag, only: sheath_diag_reset, sheath_diag_report
+  use mod_sheath_geom_diag, only: sheath_geom_reset, sheath_geom_report
   use mod_sheath_trace, only: sheath_trace_reset
 #endif
   use global_distributed_matrix, only: global_matrix_structure_vacuum
@@ -471,6 +472,7 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   ! --- and reported after the element loop below (only for the real matrix, not the harmonic
   ! --- preconditioner matrix, which would otherwise double count)
   if ( (.not. harmonic_matrix) .and. ( any(bcs(:)%natural%u) .or. any(bcs(:)%sheath_zj) .or. any(bcs(:)%sheath_zj_weak) ) ) call sheath_diag_reset()
+  if ( (.not. harmonic_matrix) .and. ( any(bcs(:)%natural%u) .or. any(bcs(:)%sheath_zj) .or. any(bcs(:)%sheath_zj_weak) ) ) call sheath_geom_reset()
   if ( (.not. harmonic_matrix) .and. any(bcs(:)%sheath_zj_weak) ) call sheath_trace_reset()
 #endif
 
@@ -762,6 +764,7 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   ! --- the guard is evaluated identically on every rank (bcs is broadcast), so the
   ! --- collective inside the report is either entered by all ranks or by none
   if ( (.not. harmonic_matrix) .and. ( any(bcs(:)%natural%u) .or. any(bcs(:)%sheath_zj) .or. any(bcs(:)%sheath_zj_weak) ) ) call sheath_diag_report(my_id)
+  if ( (.not. harmonic_matrix) .and. ( any(bcs(:)%natural%u) .or. any(bcs(:)%sheath_zj) .or. any(bcs(:)%sheath_zj_weak) ) ) call sheath_geom_report(my_id)
 #endif
  
   ! --- Memory tracking

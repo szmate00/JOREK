@@ -22,6 +22,7 @@ use mod_sheath_bc, only: sheath_current, sheath_norm, sheath_get_lambda, sheath_
                          sheath_temp_floor, dsheath_temp_floor_dT
 use mod_sheath_diag, only: sheath_diag_add, sheath_diag_add_weak
 use mod_sheath_trace, only: sheath_trace_add
+use mod_sheath_geom_diag, only: sheath_geom_add
 
 implicit none
 
@@ -581,6 +582,14 @@ do ms=1, n_gauss
       call sheath_diag_add(bnd_type1, dzj_sh, zj0, dzj_sat, dzj_x, u0, Te0_corr, sh_Bn, &
                            ws * dl * BigR * TWOPI / dble(n_plane), dzj_wgt,             &
                            sheath_V_wall_at(BigR), BigR)
+
+      ! --- DIAGNOSTIC ONLY (mod_sheath_geom_diag): the element mapping Jacobian and the local
+      ! --- state at this Gauss point. Nothing here feeds back into the row. bdotn is dimensional
+      ! --- B.n, so normalise it here - the whole point of this record is to separate "grazing"
+      ! --- from "low density" as the reason zj_sat vanishes, and that needs the ANGLE.
+      call sheath_geom_add(bnd_type1, xjac, x_s(ms), y_s(ms), x_t(ms), y_t(ms),          &
+                           x_g(ms), y_g(ms), r0_corr, Ti0_corr, Te0_corr,                &
+                           abs(bdotn) / max(Btot, 1.d-300), cs0, zj0, dzj_sat)
 
       ! --- sheath_current differentiates w.r.t. the FLOORED state, so chain the floors through
       ! --- before these are used as Jacobian entries against the solution variables.
