@@ -40,7 +40,7 @@ module mod_sheath_diag
   ! --- drives zj opposite ways on the two halves and the integrated I_sheath partially cancels.
   ! --- Cell size shows whether a type is resolved on a very different scale from the others -
   ! --- zj = Delta*psi amplifies an interpolated psi by 1/h^2.
-  real*8,  save :: sd_bn_min(max_bnd_types)   =  1.d30 !< min SIGNED b_n = B.n/|B|
+  real*8,  save :: sd_bn_min(max_bnd_types)   =  1.d30 !< min SIGNED B.n
   real*8,  save :: sd_bn_max(max_bnd_types)   = -1.d30 !< max SIGNED b_n
   real*8,  save :: sd_area_bn_neg(max_bnd_types) = 0.d0 !< area with b_n < 0
   real*8,  save :: sd_I_bn_neg(max_bnd_types)    = 0.d0 !< I_sheath over that area
@@ -196,8 +196,8 @@ subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, 
   sd_I_amp(bnd_type)     = sd_I_amp(bnd_type)    + jn_amp    * dS
   sd_area(bnd_type)      = sd_area(bnd_type)     + dS
 
-  ! --- b_n here is SIGNED. Bdotn is B.n and the |B| that normalises it is folded into the
-  ! --- caller's g_bn, so use the sign and magnitude of Bdotn directly as the discriminator.
+  ! --- Bdotn is the signed, dimensional B.n. Its sign is the discriminator here; the magnitude
+  ! --- printed below is in JOREK's magnetic-field units, not the dimensionless b_n=B.n/|B|.
   sd_bn_min(bnd_type) = min(sd_bn_min(bnd_type), Bdotn)
   sd_bn_max(bnd_type) = max(sd_bn_max(bnd_type), Bdotn)
   sd_ds_min(bnd_type) = min(sd_ds_min(bnd_type), dS)
@@ -467,7 +467,7 @@ subroutine sheath_diag_report(my_id)
   enddo
 
   ! --- Geometry per boundary type. Two things this separates that nothing else does:
-  ! ---  * b_n range straddling zero => the field REVERSES through the face, so zj_sat flips sign
+  ! ---  * B.n range straddling zero => the field REVERSES through the face, so zj_sat flips sign
   ! ---    mid-type, the constraint drives zj opposite ways on the two halves and the integrated
   ! ---    I_sheath partially cancels. A magnitude gate (sheath_min_bn) cannot see this.
   ! ---  * dS spread => how finely this type is resolved. zj = Delta*psi amplifies an interpolated
@@ -477,7 +477,7 @@ subroutine sheath_diag_report(my_id)
   do i = 1, max_bnd_types
       if ( glo_sum(i2+i) .le. 0.d0 ) cycle
       write(*,'(A,i3,A,es10.2,A,es10.2,A,f6.1,A,es9.2,A,es9.2,A,es10.2,A)')        &
-        '         bnd type', i, ' geom: b_n ', gbn_min(i), ' ..', gbn_max(i),      &
+        '         bnd type', i, ' geom: B.n ', gbn_min(i), ' ..', gbn_max(i),      &
         '   area(b_n<0) ', 1.d2*gan_neg(i)/max(glo_sum(i2+i),1.d-30), ' %   dS ', &
         gds_min(i), ' ..', gds_max(i),                                             &
         '   I(b_n<0)=', gin_neg(i), ' A'

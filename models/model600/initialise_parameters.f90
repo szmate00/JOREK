@@ -542,12 +542,16 @@ if (my_id .eq. 0) then
           write(*,*) '       and keep a Dirichlet on u on at least one other type as the gauge.'
           stop
         endif
-        if ( sheath_min_bn .le. 0.d0 ) then
-          write(*,*) 'WARNING: bcs(', i, ')%sheath_zj_weak with sheath_min_bn = 0 (the DEFAULT).'
-          write(*,*) '         sheath_current then puts no floor on the obliqueness factor, so'
-          write(*,*) '         zj_sat -> 0 where the field grazes the wall and the penalty drives'
-          write(*,*) '         zj toward a vanishing target there. ~0.005 keeps the target plate'
-          write(*,*) '         in the pass band while still killing true tangency.'
+        if ( sheath_v_perp .le. 0.d0 ) then
+          write(*,*) 'WARNING: bcs(', i, ')%sheath_zj_weak with sheath_v_perp = 0 (the DEFAULT).'
+          write(*,*) '         zj_sat can then vanish where the field grazes the wall. The weak'
+          write(*,*) '         replacement row cannot be switched off continuously by a uniform'
+          write(*,*) '         weight, because that weight cancels during row normalisation.'
+        endif
+        if ( sheath_min_bn .gt. 0.d0 ) then
+          write(*,*) 'NOTE: sheath_min_bn does not gate a weak replacement row. On this route it'
+          write(*,*) '      only sets the active-area weight in the sheath diagnostics; use it to'
+          write(*,*) '      interpret the output, not as a weak-row stabilisation parameter.'
         endif
         if ( sheath_sat_slope_e .lt. 0.d0 .or. sheath_sat_slope_e .ge. 1.d0 ) then
           write(*,*) 'ERROR: sheath_sat_slope_e must lie in [0,1). It is the fraction of the raw'

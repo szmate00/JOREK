@@ -328,11 +328,14 @@ end subroutine sheath_x_limited
 !! @param zj_sh  sheath current, expressed as the zj value that carries it
 !! @param zj_sat ion saturation current in the same units (diagnostic)
 !! @param x_out  the exponent X actually used, after limiting (diagnostic)
+!! @param dzj_dg derivative of zj_sh with respect to g_bn, holding the state and Btot fixed
+!! @param dzj_dB derivative of zj_sh with respect to Btot, holding the state and g_bn fixed
 subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
                           zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, &
-                          zj_sat, x_out, V_wall_loc, vpar, dzj_dvpar)
+                          zj_sat, x_out, V_wall_loc, vpar, dzj_dvpar, &
+                          dzj_dg, dzj_dB)
 
-  use phys_module, only: GAMMA, sheath_min_bn, sheath_sat_slope, sheath_sat_slope_e, &
+  use phys_module, only: GAMMA, sheath_sat_slope, sheath_sat_slope_e, &
                          sheath_v_perp, sheath_dfdx_min, &
                          sheath_jsat_from_vpar, sheath_jsat_vpar_min
 
@@ -346,10 +349,12 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
   !> Only consulted when sheath_jsat_from_vpar is set; absent restores the Mach 1 behaviour.
   real*8, intent(in),  optional :: vpar
   real*8, intent(out), optional :: dzj_dvpar
+  real*8, intent(out), optional :: dzj_dg, dzj_dB
 
   real*8 :: a_n, c_sat, vw
   real*8 :: rho_l, Ti_l, Te_l, T_l, cs, g_eff
   real*8  :: v_mach, v_eff, v_flr, dveff_dvpar, dlnv_dT, v_par_sat
+  real*8  :: dzsat_dg, dzsat_dB
   logical :: use_vpar
   real*8 :: lam, dlam_dTi, dlam_dTe
   real*8  :: x, x_lim, dxlim_dx, expmx, f, fp, sp, dsp
@@ -394,6 +399,8 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
   ! --- none to offer (a model built without var_vpar hands over a hard zero), NOT a stagnation
   ! --- point, which is measure-zero in a continuous field.
   dveff_dvpar = 0.d0
+  dzsat_dg    = 0.d0
+  dzsat_dB    = 0.d0
   use_vpar    = sheath_jsat_from_vpar .and. present(vpar)
   if ( use_vpar ) then
     if ( vpar .eq. 0.d0 ) use_vpar = .false.
@@ -418,11 +425,18 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
       v_eff       = vpar
       dveff_dvpar = 1.d0
       dlnv_dT     = 0.d0        ! v_eff no longer carries the cs temperature dependence
+      ! --- The solution variable Vpar is independent of the magnetic geometry in this branch.
+      ! --- In particular, do not reuse the Mach-1 g/B derivative for it.
+      dzsat_dg    = 0.d0
+      dzsat_dB    = 0.d0
     else
       v_eff       = sign(v_flr, v_mach)
       dlnv_dT     = 0.5d0 / T_l
+      ! --- v_eff = sheath_jsat_vpar_min*g_bn*cs/Btot on the fallback branch.
+      dzsat_dg    = c_sat * rho_l * sheath_jsat_vpar_min * cs / Btot
     endif
     zj_sat = c_sat * rho_l * v_eff
+    if ( dveff_dvpar .eq. 0.d0 ) dzsat_dB = - zj_sat / Btot
   else
     ! --- DEFAULT PATH, written out literally rather than as a special case of the above, so that
     ! --- sheath_jsat_from_vpar = .false. is BIT-IDENTICAL to the pre-flag code and not merely
@@ -443,6 +457,12 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
       zj_sat  = c_sat * rho_l * g_eff * cs / Btot
       dlnv_dT = 0.d0            ! unused on this path; the derivative below is written out too
     endif
+    ! --- On either Mach-1 branch, d[sgn(g)*(|g|*cs+v_perp)]/dg = cs away
+    ! --- from the sign-change point. This direct derivative remains finite as g -> 0; forming it
+    ! --- as zj_sat/g would spuriously create a v_perp/g singularity when the cross-field floor is
+    ! --- active. The caller sets dg/dpsi=0 where the clipped Chodura factor is exactly zero.
+    dzsat_dg = c_sat * rho_l * cs / Btot
+    dzsat_dB = - zj_sat / Btot
   endif
 
   call sheath_get_lambda(Ti_l, Te_l, lam, dlam_dTi, dlam_dTe)
@@ -517,11 +537,10 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
     fp = fp + sheath_sat_slope_e * ( 1.d0 - dxlim_dx )
   endif
 
-  ! --- Levenberg-Marquardt floor on the slope. sheath_weak_rmax bounds the RESIDUAL, but the step
-  ! --- is F/J and nothing bounds it when J = df/dX collapses - and it does, on BOTH plateaus:
-  ! --- df/dX -> sheath_sat_slope on the ion side and -> 0 through the x-limiter on the electron
-  ! --- side. A capped residual over a vanishing slope is an unbounded step. Flooring the slope caps
-  ! --- it at |dX| <= rmax/sheath_dfdx_min.
+  ! --- Quasi-Newton slope floor. sheath_weak_rmax bounds the RESIDUAL, while a small df/dX weakens
+  ! --- the potential column on both plateaus. Flooring fp regularises that column. This is not a
+  ! --- Levenberg-Marquardt update and, because the replacement row also contains a free zj column
+  ! --- and other coupled variables, it is not by itself a strict bound on the global delta-X.
   ! ---
   ! --- Applied to fp ONLY, never to f, so the fixed point is exactly where it was: at convergence
   ! --- the residual vanishes and the Jacobian's magnitude no longer matters. That is the advantage
@@ -549,6 +568,8 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
   endif
   ! --- new column: zj_sat is linear in v_eff, so this is exact where the floor is not active
   if ( present(dzj_dvpar) ) dzj_dvpar = c_sat * rho_l * dveff_dvpar * f
+  if ( present(dzj_dg) )    dzj_dg    = dzsat_dg * f
+  if ( present(dzj_dB) )    dzj_dB    = dzsat_dB * f
 
   ! --- the floors are hard clips, so drop the corresponding sensitivity to stay consistent
   if ( rho .lt. sheath_rho_floor ) dzj_drho = 0.d0

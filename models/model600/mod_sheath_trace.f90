@@ -42,10 +42,8 @@ module mod_sheath_trace
 
   integer, parameter :: st_max_row = 8000    !< trace DOFs per rank; 424 observed on two types
   !> Columns per row. Only the variables the characteristic actually depends on appear: zj (the
-  !! unit diagonal), u, rho and Ti/Te - or T without WITH_TiTe. vpar and w are absent because
-  !! sheath_current takes neither, so their derivatives are identically zero; psi is absent by
-  !! CHOICE, since zj_sat ~ 1/Btot and g_bn do depend on the field but sheath_current returns no
-  !! d(zj_sh)/d(psi) - the geometry is frozen within a Newton iteration (quasi-Newton).
+  !! unit diagonal), u, rho, Ti/Te (or T), optionally vpar, and the normal-derivative psi DOFs that
+  !! change g(B.n) and |B|. w is absent because the characteristic does not depend on it.
   !! A shared trace DOF collects columns from BOTH adjacent edges: 3 distinct nodes x 2 trace DOFs
   !! x 5 variables = 30, and a junction where three boundary segments meet takes 4 nodes = 40.
   !! 64 leaves headroom; the overflow is fatal rather than silent, so being generous costs memory.
@@ -220,10 +218,6 @@ subroutine sheath_trace_apply(in, zbig, index_min, index_max, a_mat, RHS_loc)
   ! --- an enormous row out of numerical noise.
   do is = 1, st_n
 
-    ! --- A row with no diagonal received no boundary-edge contribution at all; writing zbig into
-    ! --- it would create a singular equation, so leave the assembled row alone.
-    if ( st_D(is) .le. 0.d0 .or. st_D0(is) .le. 0.d0 ) cycle
-
     ! --- THE VALIDITY GATE. wk_wgt multiplies D_a, F_a and every J_ab identically, and the row is
     ! --- written as J/D and F/D, so a wk_wgt uniform over a row's support cancels EXACTLY - it
     ! --- cannot fade a row that is written with zbig, it only shrinks D_a. Measured: the divertor
@@ -242,16 +236,32 @@ subroutine sheath_trace_apply(in, zbig, index_min, index_max, a_mat, RHS_loc)
     ! --- an enormous row out of numerical noise. Keyed on the row's OWN unweighted support D0_a it
     ! --- is rank-independent and treats value and derivative rows alike, which the old d_max form
     ! --- did not. wmin is an optional STRONGER gate on top; it can never disable this.
-    if ( st_D(is) .lt. max(sheath_weak_wmin, 1.d-12) * st_D0(is) ) then
+    if ( st_D(is) .le. 0.d0 .or. st_D0(is) .le. 0.d0 .or.                         &
+         st_D(is) .lt. max(sheath_weak_wmin, 1.d-12) * st_D0(is) ) then
       st_n_skipped = st_n_skipped + 1
+
+      ! --- A rejected sheath projection still needs a controlled boundary row. Falling through
+      ! --- to the assembled current-definition row changes the boundary condition abruptly as W
+      ! --- crosses the floor and was the last step in every observed D-collapse runaway. Freeze
+      ! --- this increment instead: the unit self-column is nonsingular, bounds zj while the local
+      ! --- characteristic is unusable, and recovers the pre-sheath Dirichlet behaviour for that
+      ! --- row. Other assembled entries are O(1) beside zbig and therefore inactive, exactly as
+      ! --- for the ordinary Dirichlet rows written by boundary_conditions.
+      call boundary_conditions_add_one_entry(                                    &
+             st_row(is), var_zj, in, st_row(is), var_zj, in, zbig,               &
+             index_min, index_max, a_mat)
+      call boundary_conditions_add_RHS(                                           &
+             st_row(is), var_zj, in, index_min, index_max, RHS_loc, 0.d0,         &
+             a_mat%i_tor_min, a_mat%i_tor_max)
+      if ( st_row(is) .ge. index_min .and. st_row(is) .le. index_max )            &
+        st_n_applied = st_n_applied + 1
       cycle
     endif
 
     ! --- Belt and braces on the same failure. sc multiplies st_val AND st_F uniformly, so clamping
-    ! --- it rescales the row in the matrix without changing the equation it states - unlike the
-    ! --- skip above, which deletes the equation entirely (measured catastrophic: wmin = 0.5 took a
-    ! --- 305-step case to 2). The floor makes this unreachable today; it is here so that a future
-    ! --- change to the floor cannot resurrect the 1/D_a overflow.
+    ! --- it rescales the row in the matrix without changing the equation it states. The fallback
+    ! --- above makes this unreachable today; it is here so that a future change to the floor
+    ! --- cannot resurrect the 1/D_a overflow.
     sc = 1.d0 / max( st_D(is), 1.d-12 * st_D0(is) )
 
     do ic = 1, st_nc(is)
@@ -287,13 +297,14 @@ end subroutine sheath_trace_apply
 subroutine sheath_trace_report(my_id)
 
   use mpi_mod
+  use phys_module, only: max_bnd_types
 
   implicit none
   integer, intent(in) :: my_id
 
   integer :: ierr, is, ib
   real*8  :: loc(4), glo(4), dloc(2), dglo(2)
-  integer, parameter :: nbt = 16
+  integer, parameter :: nbt = max_bnd_types
   ! --- cols 1-2 reduce with SUM, cols 3-6 with MAX, so each group is contiguous in memory
   ! --- (Fortran column-major) and travels in one call: 1 count, 2 sum(W), 3 max|Fd/S|,
   ! --- 4 -min(D), 5 max(D), 6 -min(W).

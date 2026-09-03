@@ -105,7 +105,8 @@ real*8     :: tr_Jp(2,2,2,2)      !< psi column of the weak sheath row, on the
                                   !! direction_perp DOFs (the ones dirichlet%psi
                                   !! leaves free). Separate array because the
                                   !! existing tr_J columns all sit on direction().
-real*8     :: dzj_dpt, dpx_dpt, dpy_dpt, dB_dpt, dbn_dpt, dfac_dbn, zt_arg
+real*8     :: dzj_dpt, dzj_dg, dzj_dB, dpx_dpt, dpy_dpt, dB_dpt, dbn_dpt
+real*8     :: dg_dpt, dfac_dbn, zt_arg
 integer    :: tr_col(4), tr_var(4), tr_k, tr_l, tr_nc
 real*8     :: tr_vals(4)
 real*8     :: dzj_sh, dzj_sat, dzj_x, dzj_d1, dzj_d2, dzj_d3, dzj_d4, dzj_d5, dzj_wgt
@@ -545,12 +546,12 @@ do ms=1, n_gauss
     ! --- than pick up whatever the previous Gauss point left behind.
     dzj_sh = 0.d0; dzj_d1 = 0.d0; dzj_d2 = 0.d0; dzj_d3 = 0.d0; dzj_d4 = 0.d0; dzj_d5 = 0.d0
     dzj_sat = 0.d0; wk_res = 0.d0; wk_dfac = 0.d0; wk_wgt = 0.d0; wk_wrx = 0.d0
-    dzj_dpt = 0.d0   ! must not survive from the previous Gauss point
+    dzj_dpt = 0.d0; dzj_dg = 0.d0; dzj_dB = 0.d0 ! must not survive from the previous Gauss point
 
     if ( diag_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
       call sheath_current(u0, r0_corr, Ti0_sh, Te0_sh, g_bn, normal_sign, Btot, &
                           dzj_sh, dzj_d1, dzj_d2, dzj_d3, dzj_d4, dzj_sat, dzj_x,      &
-                          sheath_V_wall_at(BigR), Vpar0, dzj_d5)
+                          sheath_V_wall_at(BigR), Vpar0, dzj_d5, dzj_dg, dzj_dB)
       dzj_wgt = 1.d0
       if ( sheath_min_bn .gt. 0.d0 ) &
         dzj_wgt = bdotn**2 / ( bdotn**2 + sheath_min_bn**2 )
@@ -564,8 +565,7 @@ do ms=1, n_gauss
       dzj_d3 = dzj_d3 * dsheath_temp_floor_dT(Ti0)
       dzj_d4 = dzj_d4 * dsheath_temp_floor_dT(Te0)
 
-      ! --- d(zj_sh)/d(psi). zj_sh = zj_sat*f with zj_sat proportional to g_bn/Btot and f a
-      ! --- function of X alone, so the whole psi dependence is the field geometry:
+      ! --- d(zj_sh)/d(psi). The whole psi dependence is through the field geometry:
       ! ---     Btot  = sqrt(F0^2 + ps0_x^2 + ps0_y^2)/BigR
       ! ---     bdotn = (ps0_y*n_R - ps0_x*n_Z)/(R*Btot)
       ! --- and dirichlet%psi pins psi's VALUE and TANGENTIAL derivative while leaving the NORMAL
@@ -573,7 +573,7 @@ do ms=1, n_gauss
       ! --- Omitting this column was justified as "the geometry is frozen within a Newton
       ! --- iteration", but there is no Newton iteration - one construct_matrix and one solve per
       ! --- step - so it is a systematic per-step error that compounds with the sheath area.
-      if ( sheath_psi_jacobian .and. abs(g_bn) .gt. 1.d-30 .and. Btot .gt. 1.d-30 ) then
+      if ( sheath_psi_jacobian .and. Btot .gt. 1.d-30 ) then
         dpx_dpt = - y_s(ms) / xjac
         dpy_dpt = + x_s(ms) / xjac
         dB_dpt  = ( ps0_x*dpx_dpt + ps0_y*dpy_dpt ) / ( BigR**2 * Btot )
@@ -587,7 +587,8 @@ do ms=1, n_gauss
           zt_arg   = ( abs(bdotn) - c_1 ) / c_2
           dfac_dbn = 0.5d0 * ( 1.d0 + tanh(zt_arg) ) * ( 1.d0 - tanh(zt_arg)**2 ) / c_2
         endif
-        dzj_dpt = dzj_sh * ( dfac_dbn * dbn_dpt / g_bn - dB_dpt / Btot )
+        dg_dpt  = dfac_dbn * dbn_dpt
+        dzj_dpt = dzj_dg * dg_dpt + dzj_dB * dB_dpt
       endif
 
       ! --- Trust region on the residual. zj_sh - zj is unbounded on the electron branch - at
