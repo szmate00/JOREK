@@ -235,12 +235,24 @@ subroutine sheath_trace_apply(in, zbig, index_min, index_max, a_mat, RHS_loc)
     ! --- dimensionless, mesh independent, and identical on every rank - unlike the 1e-14*d_max
     ! --- floor it replaces, which was RANK-LOCAL, so whether a given DOF was enforced depended on
     ! --- which other rows happened to land on that rank and on which types were enabled.
-    if ( st_D(is) .lt. sheath_weak_wmin * st_D0(is) ) then
+    ! --- DEGENERACY FLOOR, RESTORED. This gate replaced a `st_D < 1e-14*d_max` floor, and at the
+    ! --- default sheath_weak_wmin = 0 the test reads `st_D < 0`, which the check above already
+    ! --- excludes - so the floor was silently unreachable. Its purpose, per the original comment,
+    ! --- is to catch a row that received essentially no boundary support, where 1/D_a manufactures
+    ! --- an enormous row out of numerical noise. Keyed on the row's OWN unweighted support D0_a it
+    ! --- is rank-independent and treats value and derivative rows alike, which the old d_max form
+    ! --- did not. wmin is an optional STRONGER gate on top; it can never disable this.
+    if ( st_D(is) .lt. max(sheath_weak_wmin, 1.d-12) * st_D0(is) ) then
       st_n_skipped = st_n_skipped + 1
       cycle
     endif
 
-    sc = 1.d0 / st_D(is)
+    ! --- Belt and braces on the same failure. sc multiplies st_val AND st_F uniformly, so clamping
+    ! --- it rescales the row in the matrix without changing the equation it states - unlike the
+    ! --- skip above, which deletes the equation entirely (measured catastrophic: wmin = 0.5 took a
+    ! --- 305-step case to 2). The floor makes this unreachable today; it is here so that a future
+    ! --- change to the floor cannot resurrect the 1/D_a overflow.
+    sc = 1.d0 / max( st_D(is), 1.d-12 * st_D0(is) )
 
     do ic = 1, st_nc(is)
       call boundary_conditions_add_one_entry(                                   &
