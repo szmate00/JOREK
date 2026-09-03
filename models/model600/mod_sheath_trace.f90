@@ -64,6 +64,11 @@ module mod_sheath_trace
                                         !! row actually asks for. Only st_Fd/st_S is comparable
                                         !! to the printed global |F_a/D_a|/|S_a/D_a|.
   real*8,  save :: st_S(st_max_row)     !< scale S_a, so |Fd_a/S_a| is the row residual in j_sat
+  real*8,  save :: st_det(st_max_row)   !< node-frame determinant |x2 x x3| of the row's OWN
+                                        !! node: |sin(angle)| between the two first-derivative
+                                        !! DOF directions. A STATIC property of the mesh, so
+                                        !! unlike every other gate here it is fixed from step 1
+                                        !! and cannot respond to the solution.
   integer, save :: st_bnd(st_max_row)   !< boundary type of the row's OWN node (not the element's)
   integer, save :: st_nc(st_max_row)
   integer, save :: st_col(st_max_col, st_max_row)
@@ -74,6 +79,7 @@ module mod_sheath_trace
   logical, save :: st_over_col = .false.     !< ran out of columns in some row
   integer, save :: st_n_applied = 0
   integer, save :: st_n_skipped = 0
+  integer, save :: st_n_detgate = 0          !< of those, how many the determinant gate took
 
 contains
 
@@ -115,6 +121,9 @@ integer function st_slot(irow)
   st_Dv(st_n)     = 0.d0
   st_Fd(st_n)     = 0.d0
   st_S(st_n)      = 0.d0
+  ! --- Large, so a row that is never told its determinant is never gated: an unknown frame
+  ! --- must recover the previous behaviour, not silently delete the row.
+  st_det(st_n)    = 1.d30
   st_bnd(st_n)    = 0
   st_nc(st_n)     = 0
   st_slot         = st_n
@@ -131,15 +140,17 @@ end function st_slot
 !! @param dDv   the same integral with the VALIDITY weight only, excluding the u-fade
 !! @param dFd   DIAGNOSTIC residual (raw, weight wk_wgt) - report only, never written to the row
 !! @param dS    contribution to the scale S_a, so |Fd_a/S_a| is the residual in units of j_sat
+!! @param dnod  node-frame determinant of the row's own node (see st_det). A per-node constant,
+!!              so every call for a given row carries the same value.
 !! @param dF    contribution to F_a = int N_a (zj_sh - zj) dS   (note the sign: this is the RHS)
 !! @param nc    number of columns in this contribution
 !! @param icol  global DOF indices of the trial functions
 !! @param ivar  variable index of each column
 !! @param vals  contribution to int N_a (d(residual)/d x) N_b dS for each column
-subroutine sheath_trace_add(irow, ibnd, dD, dD0, dDv, dF, dFd, dS, nc, icol, ivar, vals)
+subroutine sheath_trace_add(irow, ibnd, dD, dD0, dDv, dF, dFd, dS, dnod, nc, icol, ivar, vals)
   implicit none
   integer, intent(in) :: irow, ibnd, nc
-  real*8,  intent(in) :: dD, dD0, dDv, dF, dFd, dS
+  real*8,  intent(in) :: dD, dD0, dDv, dF, dFd, dS, dnod
   integer, intent(in) :: icol(nc), ivar(nc)
   real*8,  intent(in) :: vals(nc)
 
@@ -164,6 +175,9 @@ subroutine sheath_trace_add(irow, ibnd, dD, dD0, dDv, dF, dFd, dS, nc, icol, iva
     st_F(is) = st_F(is) + dF
     st_Fd(is) = st_Fd(is) + dFd
     st_S(is)  = st_S(is)  + dS
+    ! --- A per-node constant, so every contribution carries the same value and this is an
+    ! --- assignment in all but name; min() is the conservative reading if that ever changes.
+    st_det(is) = min(st_det(is), dnod)
     ! --- The row's OWN node type, not the element's bnd_type1: at a seam between two covered
     ! --- types the element label is ambiguous and every per-type number built from it is wrong.
     st_bnd(is) = max(st_bnd(is), ibnd)
@@ -200,7 +214,7 @@ end subroutine sheath_trace_add
 !! replacing the incomplete boundary zj equation. Called after the element loop, from
 !! boundary_conditions, which owns a_mat and RHS_loc.
 subroutine sheath_trace_apply(in, zbig, index_min, index_max, a_mat, RHS_loc)
-  use phys_module, only: sheath_weak_wmin
+  use phys_module, only: sheath_weak_wmin, sheath_weak_detmin
 
   use mod_parameters
   use data_structure, only: type_SP_MATRIX
@@ -217,6 +231,7 @@ subroutine sheath_trace_apply(in, zbig, index_min, index_max, a_mat, RHS_loc)
 
   st_n_applied = 0
   st_n_skipped = 0
+  st_n_detgate = 0
 
   ! --- Degeneracy floor, relative to the largest diagonal on this rank. The spread between value
   ! --- and derivative rows is genuine element-size scaling (measured 2.6e10 on this mesh) and
@@ -247,10 +262,27 @@ subroutine sheath_trace_apply(in, zbig, index_min, index_max, a_mat, RHS_loc)
     ! --- 1/D_a normalisation and that uses st_D. The user-facing validity gate is on st_Dv, which
     ! --- excludes the u-fade: a row beside a Dirichlet-u seam is faded deliberately and gating it
     ! --- as though its physics had failed would freeze the seam rows first, for the wrong reason.
-    if ( st_D(is) .le. 0.d0 .or. st_D0(is) .le. 0.d0 .or.                         &
-         st_D(is)  .lt. 1.d-12 * st_D0(is) .or.                                   &
-         st_Dv(is) .lt. sheath_weak_wmin * st_D0(is) ) then
+    ! --- THE FRAME GATE. Every other test here keys on the SOLUTION, so it can close in
+    ! --- response to the very divergence it exists to prevent - measured, sheath_weak_wmin =
+    ! --- 0.5 took a 305-step case to 2 by deleting 706 of 920 rows at step 2. This one keys on
+    ! --- a STATIC property of the mesh: the node-frame determinant is fixed before the run
+    ! --- starts, identical on every rank, and the exact set of rows it removes is knowable in
+    ! --- advance (util/check_boundary_frames.py prints it from a restart file). It cannot feed
+    ! --- back.
+    ! ---
+    ! --- What it does NOT do is restore a boundary condition on u at the nodes it gates: on a
+    ! --- weak type dirichlet%u and natural%u are both required .false., so u there is left to
+    ! --- the interior equation and its neighbours. On boundary type 5 that is 8 rows among
+    ! --- 354; on type 4 it would be 37 of 88, and a type fragmented that far may fail for that
+    ! --- reason instead. Read the gated count in the report before reading a null result.
+    if ( st_D(is) .le. 0.d0 .or. st_D0(is) .le. 0.d0 .or.                          &
+         st_D(is)  .lt. 1.d-12 * st_D0(is) .or.                                    &
+         st_Dv(is) .lt. sheath_weak_wmin * st_D0(is) .or.                          &
+         ( sheath_weak_detmin .gt. 0.d0 .and.                                      &
+           st_det(is) .lt. sheath_weak_detmin ) ) then
       st_n_skipped = st_n_skipped + 1
+      if ( sheath_weak_detmin .gt. 0.d0 .and. st_det(is) .lt. sheath_weak_detmin ) &
+        st_n_detgate = st_n_detgate + 1
 
       ! --- A rejected sheath projection still needs a controlled boundary row. Falling through
       ! --- to the assembled current-definition row changes the boundary condition abruptly as W
@@ -315,18 +347,19 @@ subroutine sheath_trace_report(my_id)
   integer, intent(in) :: my_id
 
   integer :: ierr, is, ib
-  real*8  :: loc(4), glo(4), dloc(2), dglo(2)
+  real*8  :: loc(5), glo(5), dloc(2), dglo(2)
   integer, parameter :: nbt = max_bnd_types
   ! --- cols 1-2 reduce with SUM, cols 3-6 with MAX, so each group is contiguous in memory
   ! --- (Fortran column-major) and travels in one call: 1 count, 2 sum(W), 3 max|Fd/S|,
   ! --- 4 -min(D), 5 max(D), 6 -min(W).
-  real*8  :: tloc(nbt,7), tglo(nbt,7), r, w
+  real*8  :: tloc(nbt,8), tglo(nbt,8), r, w
 
   loc(1) = dble(st_n)
   loc(2) = dble(st_n_applied)
   loc(3) = 0.d0
   if ( st_over_row .or. st_over_col ) loc(3) = 1.d0
   loc(4) = dble(st_n_skipped)
+  loc(5) = dble(st_n_detgate)
 
   dloc(1) = 1.d30; dloc(2) = -1.d30
   if ( st_n .gt. 0 ) then
@@ -342,6 +375,7 @@ subroutine sheath_trace_report(my_id)
   tloc(:,5) = -1.d30
   tloc(:,6) = -1.d30
   tloc(:,7) = -1.d30
+  tloc(:,8) = -1.d30
   do is = 1, st_n
     ib = st_bnd(is)
     if ( ib .lt. 1 .or. ib .gt. nbt ) cycle
@@ -360,28 +394,34 @@ subroutine sheath_trace_report(my_id)
       tloc(ib,6) = max(tloc(ib,6), -w)
       tloc(ib,7) = max(tloc(ib,7), -st_Dv(is) / st_D0(is))   ! min W_valid, as a negative
     endif
+    ! --- min node-frame determinant, as a negative so it rides the same MAX reduce. 1.d30
+    ! --- means no row on this type was ever told its frame, which cannot happen on the weak
+    ! --- route but would otherwise print as a spurious 1e30.
+    if ( st_det(is) .lt. 1.d29 ) tloc(ib,8) = max(tloc(ib,8), -st_det(is))
   enddo
 
   call MPI_Reduce(tloc(1,1), tglo(1,1), nbt*2, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
-  call MPI_Reduce(tloc(1,3), tglo(1,3), nbt*5, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(tloc(1,3), tglo(1,3), nbt*6, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
 
-  call MPI_Reduce(loc,  glo,  4, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(loc,  glo,  5, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
   call MPI_Reduce(dloc(1), dglo(1), 1, MPI_REAL8, MPI_MIN, 0, MPI_COMM_WORLD, ierr)
   call MPI_Reduce(dloc(2), dglo(2), 1, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
 
   if ( my_id .ne. 0 ) return
 
-  tglo(:,4) = -tglo(:,4)      ! D min and W min were reduced as negatives through MAX
+  tglo(:,4) = -tglo(:,4)      ! D min, W min and det min were reduced as negatives through MAX
   tglo(:,6) = -tglo(:,6)
   tglo(:,7) = -tglo(:,7)
+  tglo(:,8) = -tglo(:,8)
 
-  ! --- 10 edit descriptors, 10 output items. Counted, because getting this wrong is a run-time
+  ! --- 12 edit descriptors, 12 output items. Counted, because getting this wrong is a run-time
   ! --- severe(61) that kills rank 0 mid-write and hangs every other rank in the next collective.
-  write(*,'(A,i0,A,i0,A,i0,A,es9.2,A,es9.2)')                                   &
+  write(*,'(A,i0,A,i0,A,i0,A,i0,A,es9.2,A,es9.2)')                              &
     '         sheath trace rows: ', nint(glo(1)),                                &
     ' accumulated, ',              nint(glo(2)),                                 &
     ' replaced, ',                 nint(glo(4)),                                 &
-    ' below the floor;  D min=',   dglo(1),                                      &
+    ' below the floor (',          nint(glo(5)),                                 &
+    ' frame-gated);  D min=',      dglo(1),                                      &
     ' max=',                       dglo(2)
 
   ! --- PER BOUNDARY TYPE. Every aggregate number in this campaign has been un-attributed:
@@ -396,14 +436,18 @@ subroutine sheath_trace_report(my_id)
     ! --- W is the validity weight D_a/D0_a. W near 1 = the characteristic is valid over the whole
     ! --- row; W -> 0 = the row is being written where the characteristic has no solution, which
     ! --- the wk_wgt weighting CANNOT fade because it cancels out of J/D and F/D.
-    write(*,'(A,i2,A,i0,A,f6.3,A,f6.3,A,f6.3,A,es9.2,A,es9.2)')                          &
+    ! --- det min is the node-frame determinant, a STATIC mesh property: it is the same at
+    ! --- every step of every run on this grid, so it belongs here as the label that says
+    ! --- WHY a type is or is not solvable, not as something to watch evolve.
+    write(*,'(A,i2,A,i0,A,f6.3,A,f6.3,A,f6.3,A,es9.2,A,es9.2,A,f6.3)')                   &
       '           bnd type ', ib,                                                  &
       ': rows=',              nint(tglo(ib,1)),                                     &
       '  W min=',             tglo(ib,6),                                           &
       ' mean=',               tglo(ib,2)/max(tglo(ib,1),1.d0),                      &
       '  Wv min=',            tglo(ib,7),                                           &
       '  |Fd/S|max=',         tglo(ib,3),                                           &
-      '  D min=',             tglo(ib,4)
+      '  D min=',             tglo(ib,4),                                           &
+      '  det min=',           tglo(ib,8)
   enddo
 
   if ( glo(3) .gt. 0.d0 ) then

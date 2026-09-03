@@ -871,6 +871,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,REAL_FMT) 'sheath_sat_slope      ', sheath_sat_slope
     write(*,REAL_FMT) 'sheath_sat_slope_e    ', sheath_sat_slope_e
     write(*,REAL_FMT) 'sheath_weak_wmin      ', sheath_weak_wmin
+    write(*,REAL_FMT) 'sheath_weak_detmin    ', sheath_weak_detmin
     write(*,LOGI_FMT) 'sheath_psi_jacobian   ', sheath_psi_jacobian
     write(*,REAL_FMT) 'sheath_v_perp         ', sheath_v_perp
     write(*,LOGI_FMT) 'sheath_weak_ufade     ', sheath_weak_ufade

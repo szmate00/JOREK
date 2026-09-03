@@ -113,6 +113,7 @@ subroutine preset_parameters
   sheath_sat_slope   =  0.d0  ! 0 = exact saturation at j_sat (see phys_module)
   sheath_sat_slope_e =  0.d0  ! 0 = electron branch loses its u column (see phys_module)
   sheath_weak_wmin   =  0.d0  ! 0 = write every weak row (previous behaviour); 0.5 gates
+  sheath_weak_detmin =  0.d0  ! 0 = write every weak row; 0.3 gates the degenerate corners
   sheath_psi_jacobian = .false. ! .false. = no psi column (previous behaviour)
   sheath_v_perp      =  0.d0  ! 0 = j_sat vanishes at tangency (previous behaviour)
   sheath_weak_ufade  = .false. ! .false. = frozen-u Gauss points keep full weight

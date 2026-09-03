@@ -74,6 +74,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 sheath_Lambda_local, sheath_X_min, sheath_smooth_dX,&
                 sheath_sat_slope, sheath_sat_slope_e, sheath_weak_wmin, &
                 sheath_psi_jacobian, sheath_v_perp, sheath_weak_ufade, &
+                sheath_weak_detmin,                                 &
                 sheath_dfdx_min, &
                 sheath_wall_pen, sheath_zj_relax, &
                 sheath_jsat_from_vpar, sheath_jsat_vpar_min,        &
@@ -491,6 +492,14 @@ if (my_id .eq. 0) then
           write(*,*) '       coefficient wrecks the conditioning (beta = 1e9 died in one step).'
           write(*,*) '       Row normalisation by the trace mass diagonal replaces it. Remove the'
           write(*,*) '       parameter from the namelist.'
+          stop
+        endif
+        if ( sheath_weak_detmin .lt. 0.d0 .or. sheath_weak_detmin .ge. 1.d0 ) then
+          write(*,*) 'ERROR: sheath_weak_detmin must lie in [0,1). It is |sin(angle)| between'
+          write(*,*) '       the two first-derivative DOF directions of a boundary node, so 1'
+          write(*,*) '       would gate every row including the perfectly orthogonal ones.'
+          write(*,*) '       0 disables the gate. Run util/check_boundary_frames.py on a'
+          write(*,*) '       restart file to see what any threshold costs per boundary type.'
           stop
         endif
         if ( sheath_weak_relax .le. 0.d0 .or. sheath_weak_relax .gt. 1.d0 ) then

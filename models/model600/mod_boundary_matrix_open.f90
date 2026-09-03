@@ -121,6 +121,12 @@ real*8     :: dzj_sh, dzj_sat, dzj_x, dzj_d1, dzj_d2, dzj_d3, dzj_d4, dzj_d5, dz
 real*8     :: sh_duf_dTi, sh_duf_dTe
 real*8     :: gradu0dotn, gradps0dotn, gradudotn, gradpsidotn
 real*8     :: zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, dzj_dvpar, zj_sat_g, x_sheath
+!> Node-frame determinant |x(1,2,:) x x(1,3,:)| of the row's OWN node, normalised to unit
+!! vectors so it is |sin(angle between the two first-derivative DOF directions)|. The nodal
+!! derivative basis is conditioned as 1/det, and zj = Delta*psi is built from SECOND
+!! derivatives, so a near-degenerate frame inflates exactly the quantity the weak row
+!! replaces. Nothing in the grid builder requires the two frame vectors to be independent.
+real*8     :: sh_det, sh_dn2, sh_dn3
 real*8     :: sheath_alpha, sh_d_pol, sh_d_robin
 
 type (type_node)         :: tmp_node
@@ -1071,6 +1077,21 @@ if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
     ! --- Dirichlet zj row. Both are self-consistent. Only the mixture was not.
     if ( bcs(nodes(wk_i)%boundary)%dirichlet%u ) cycle
 
+    ! --- Node-frame determinant, for sheath_weak_detmin. In the ray-cast wall extension
+    ! --- x(1,2,:) is the ray to the wall and x(1,3,:) an interpolated along-wall angle
+    ! --- (grid_xpoint_wall.f90:1252, :1311), and where the extension meets the wall at
+    ! --- grazing incidence the two become PARALLEL. Normalised by both lengths so the
+    ! --- result is |sin(angle)| in [0,1] even if a grid ever stores non-unit frames.
+    sh_dn2 = sqrt( nodes(wk_i)%x(1,2,1)**2 + nodes(wk_i)%x(1,2,2)**2 )
+    sh_dn3 = sqrt( nodes(wk_i)%x(1,3,1)**2 + nodes(wk_i)%x(1,3,2)**2 )
+    if ( sh_dn2 .gt. 1.d-30 .and. sh_dn3 .gt. 1.d-30 ) then
+      sh_det = abs(   nodes(wk_i)%x(1,2,1) * nodes(wk_i)%x(1,3,2)      &
+                    - nodes(wk_i)%x(1,2,2) * nodes(wk_i)%x(1,3,1) )    &
+             / ( sh_dn2 * sh_dn3 )
+    else
+      sh_det = 0.d0
+    endif
+
     do wk_j = 1, 2
       if ( wk_D(wk_i,wk_j,1) .le. 0.d0 ) cycle
       tr_nc = 0
@@ -1100,11 +1121,11 @@ if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
                                  wk_D(wk_i,wk_j,1), wk_D0(wk_i,wk_j,1),                 &
                                  wk_Dv(wk_i,wk_j,1),                                    &
                                  tr_F(wk_i,wk_j),                                         &
-                                 wk_F(wk_i,wk_j,1), wk_S(wk_i,wk_j,1),                    &
+                                 wk_F(wk_i,wk_j,1), wk_S(wk_i,wk_j,1), sh_det,            &
                                  tr_nc, tr_col, tr_var, tr_vals )
         else
           call sheath_trace_add( nodes(wk_i)%index(direction(wk_j)), nodes(wk_i)%boundary, &
-                                 0.d0, 0.d0, 0.d0, 0.d0, 0.d0, 0.d0,                      &
+                                 0.d0, 0.d0, 0.d0, 0.d0, 0.d0, 0.d0, sh_det,              &
                                  tr_nc, tr_col, tr_var, tr_vals )
         endif
       enddo
@@ -1122,7 +1143,7 @@ if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
           enddo
         enddo
         call sheath_trace_add( nodes(wk_i)%index(direction(wk_j)), nodes(wk_i)%boundary, &
-                               0.d0, 0.d0, 0.d0, 0.d0, 0.d0, 0.d0,                      &
+                               0.d0, 0.d0, 0.d0, 0.d0, 0.d0, 0.d0, sh_det,              &
                                tr_nc, tr_col, tr_var, tr_vals )
       endif
     enddo
