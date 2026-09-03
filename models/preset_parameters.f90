@@ -116,6 +116,7 @@ subroutine preset_parameters
   sheath_psi_jacobian = .false. ! .false. = no psi column (previous behaviour)
   sheath_v_perp      =  0.d0  ! 0 = j_sat vanishes at tangency (previous behaviour)
   sheath_weak_ufade  = .false. ! .false. = frozen-u Gauss points keep full weight
+  sheath_dfdx_min    =  0.d0  ! 0 = no step bound; 0.25 caps |dX| at rmax/0.25
   sheath_wall_pen    =  0.d0  ! 0 = no tangential-wall fallback (see phys_module)
   sheath_jsat_from_vpar = .false. ! .false. = j_sat from the Mach 1 velocity (see phys_module)
   sheath_jsat_vpar_min  =  0.1d0  ! floor on |Vpar| as a fraction of the Mach 1 value

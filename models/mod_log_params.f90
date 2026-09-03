@@ -874,6 +874,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,LOGI_FMT) 'sheath_psi_jacobian   ', sheath_psi_jacobian
     write(*,REAL_FMT) 'sheath_v_perp         ', sheath_v_perp
     write(*,LOGI_FMT) 'sheath_weak_ufade     ', sheath_weak_ufade
+    write(*,REAL_FMT) 'sheath_dfdx_min       ', sheath_dfdx_min
     write(*,REAL_FMT) 'sheath_wall_pen       ', sheath_wall_pen
     write(*,LOGI_FMT) 'sheath_jsat_from_vpar ', sheath_jsat_from_vpar
     write(*,REAL_FMT) 'sheath_jsat_vpar_min  ', sheath_jsat_vpar_min

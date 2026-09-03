@@ -333,7 +333,7 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
                           zj_sat, x_out, V_wall_loc, vpar, dzj_dvpar)
 
   use phys_module, only: GAMMA, sheath_min_bn, sheath_sat_slope, sheath_sat_slope_e, &
-                         sheath_v_perp, &
+                         sheath_v_perp, sheath_dfdx_min, &
                          sheath_jsat_from_vpar, sheath_jsat_vpar_min
 
   implicit none
@@ -516,6 +516,20 @@ subroutine sheath_current(u, rho, Ti, Te, g_bn, sgn_bn, Btot,        &
     f  = f  + sheath_sat_slope_e * ( x - x_lim )
     fp = fp + sheath_sat_slope_e * ( 1.d0 - dxlim_dx )
   endif
+
+  ! --- Levenberg-Marquardt floor on the slope. sheath_weak_rmax bounds the RESIDUAL, but the step
+  ! --- is F/J and nothing bounds it when J = df/dX collapses - and it does, on BOTH plateaus:
+  ! --- df/dX -> sheath_sat_slope on the ion side and -> 0 through the x-limiter on the electron
+  ! --- side. A capped residual over a vanishing slope is an unbounded step. Flooring the slope caps
+  ! --- it at |dX| <= rmax/sheath_dfdx_min.
+  ! ---
+  ! --- Applied to fp ONLY, never to f, so the fixed point is exactly where it was: at convergence
+  ! --- the residual vanishes and the Jacobian's magnitude no longer matters. That is the advantage
+  ! --- over sheath_sat_slope_e, which alters f itself and therefore moves the solution. df/dX = 1
+  ! --- at the floating potential, so any floor below 1 is inactive in the regime of interest.
+  ! --- fp is non-negative by construction (exp(-x_lim)*dxlim_dx plus non-negative terms), so a
+  ! --- plain max is the right form.
+  if ( sheath_dfdx_min .gt. 0.d0 ) fp = max( fp, sheath_dfdx_min )
 
   ! --- derivatives of X (Lambda contributes through Ti and Te when sheath_Lambda_local)
   dx_du  =   0.5d0 * a_n / Te_l
