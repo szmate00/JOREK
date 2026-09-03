@@ -107,6 +107,7 @@ module mod_sheath_bc
 
   private
 
+  public :: sheath_frame_det, sheath_frame_frozen
   public :: sheath_norm, sheath_get_lambda, sheath_x_limited, sheath_current
   public :: sheath_V_wall_at
   public :: sheath_temp_floor, dsheath_temp_floor_dT
@@ -123,6 +124,58 @@ module mod_sheath_bc
   real*8, parameter :: sheath_exp_max = 30.d0
 
 contains
+
+!> Determinant of a boundary node's frame: |sin(angle)| between the two first-derivative DOF
+!! directions, normalised so the result is in [0,1] whatever the stored vector lengths.
+!!
+!! The grid builder never requires these two to be orthogonal or even independent. In the
+!! ray-cast wall extension x(1,2,:) is the ray to the wall and x(1,3,:) an interpolated
+!! along-wall angle (grid_xpoint_wall.f90:1252, :1311), and where the extension meets the wall
+!! at grazing incidence the two become PARALLEL. The nodal derivative basis is then conditioned
+!! as 1/det, and zj = Delta*psi - the very quantity the weak sheath row replaces - is built
+!! from SECOND derivatives.
+pure real*8 function sheath_frame_det(x2, x3)
+
+  implicit none
+  real*8, intent(in) :: x2(2), x3(2)
+  real*8 :: n2, n3
+
+  n2 = sqrt( x2(1)**2 + x2(2)**2 )
+  n3 = sqrt( x3(1)**2 + x3(2)**2 )
+
+  if ( n2 .gt. 1.d-30 .and. n3 .gt. 1.d-30 ) then
+    sheath_frame_det = abs( x2(1)*x3(2) - x2(2)*x3(1) ) / (n2 * n3)
+  else
+    sheath_frame_det = 0.d0
+  endif
+
+end function sheath_frame_det
+
+
+!> Is this node's frame too degenerate for the sheath to be imposed on it?
+!!
+!! A node that fails this test is treated as a FULLY frozen node - u Dirichlet as well as zj -
+!! exactly as the code already treats a Dirichlet-u corner. Freezing zj alone would leave u
+!! with no boundary condition at all on a weak type (dirichlet%u and natural%u are both
+!! required .false. there), which is the "u free, zj pinned" configuration that produced the
+!! boundary current filament. Freezing both is self-consistent: the node simply is not a
+!! sheath node.
+!!
+!! The corresponding residual leak into the free neighbour's row is what sheath_weak_ufade
+!! exists to remove, so that flag belongs on whenever this one is used.
+pure logical function sheath_frame_frozen(x2, x3)
+
+  use phys_module, only: sheath_weak_detmin
+
+  implicit none
+  real*8, intent(in) :: x2(2), x3(2)
+
+  sheath_frame_frozen = .false.
+  if ( sheath_weak_detmin .gt. 0.d0 ) &
+    sheath_frame_frozen = sheath_frame_det(x2, x3) .lt. sheath_weak_detmin
+
+end function sheath_frame_frozen
+
 
 !> Normalisation constants of the characteristic in JOREK units.
 !! @param a_n    -2*e*F0*sqrt(mu0*rho0)/m_i , so that e*Phi/(k*Te) = (a_n*u/2 - vw)/Te

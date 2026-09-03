@@ -34,6 +34,7 @@ use data_structure
 use vacuum, ONLY: is_freebound
 use corr_neg, only: corr_neg_temp, corr_neg_dens, dcorr_neg_dens_drho1
 use mod_sheath_bc, only: sheath_get_lambda, sheath_current, sheath_V_wall_at, sheath_temp_floor
+use mod_sheath_bc, only: sheath_frame_frozen
 use mod_sheath_diag, only: sheath_psi0, sheath_store_psi0, sheath_diag_add_nodal
 use mod_sheath_trace, only: sheath_trace_apply, sheath_trace_report
 use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_cos_dR, dpsi_RMP_cos_dZ, &
@@ -130,6 +131,8 @@ real*8  :: cs0, cs0_T, cs0_TT, cs0_TTT
 real*8  :: bn_b, bn_b_abs, hfact_b, hfact_bb, bn_1, bn_2, ps2_b, element_size_2
 integer :: ilarge_vp, ilarge_vp2, bnd_type
 integer :: kp, j, err, itest, i_mid, i_bnd, idir, iv_dir, iv_perp_dir, k_max
+!> This node's frame is too degenerate for the sheath: freeze u here as well as zj.
+logical :: frame_frozen_u
 integer :: n_rmp_harm, N_rmp_har_block_size
 
 real*8  :: R_out, Z_out, s_elm, t_elm, QR,QR_s,QR_t,QR_st,QR_ss,QR_tt,QZ,QZ_s,QZ_t,QZ_st,QZ_ss,QZ_tt
@@ -270,6 +273,18 @@ do i=1, n_local_elms !=== do elements
 
       bnd_type = node_list%node(inode)%boundary
 
+      ! --- sheath_weak_detmin: a node whose two first-derivative DOF directions are nearly
+      ! --- PARALLEL has a derivative basis conditioned as 1/det, and zj = Delta*psi is built
+      ! --- from second derivatives - so the weak sheath row would be constraining a quantity
+      ! --- that is numerically degraded there. Such a node is taken out of the sheath
+      ! --- ENTIRELY: mod_boundary_matrix_open skips its trace row (keeping its Dirichlet zj)
+      ! --- and fades its Gauss points out of the free neighbour's row, and here its u is
+      ! --- frozen as well. Freezing zj without freezing u would leave u with no boundary
+      ! --- condition at all on a weak type, where dirichlet%u and natural%u are both required
+      ! --- .false. - the "u free, zj pinned" configuration that produced the current filament.
+      frame_frozen_u = sheath_frame_frozen( node_list%node(inode)%x(1,2,1:2),                &
+                                            node_list%node(inode)%x(1,3,1:2) )
+
       do in=a_mat%i_tor_min, a_mat%i_tor_max  ! === do n_tor
       
         if (keep_n0_const  .and.  in .eq. 1 ) then
@@ -371,7 +386,8 @@ do i=1, n_local_elms !=== do elements
           !---------------------------------------------------------------------------------------------------                      
 
           if (  ( (k == var_psi     ) .and. bcs(bnd_type)%dirichlet%psi     )  .or.  &
-                ( (k == var_u       ) .and. bcs(bnd_type)%dirichlet%u       )  .or.  &
+                ( (k == var_u       ) .and. ( bcs(bnd_type)%dirichlet%u .or.          &
+                                              frame_frozen_u )              )  .or.  &
                 ( (k == var_zj      ) .and. bcs(bnd_type)%dirichlet%zj      )  .or.  &
                 ( (k == var_w       ) .and. bcs(bnd_type)%dirichlet%w       )  .or.  &
                 ( (k == var_rho     ) .and. bcs(bnd_type)%dirichlet%rho     )  .or.  &

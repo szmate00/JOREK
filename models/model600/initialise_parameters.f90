@@ -502,6 +502,12 @@ if (my_id .eq. 0) then
           write(*,*) '       restart file to see what any threshold costs per boundary type.'
           stop
         endif
+        if ( sheath_weak_detmin .gt. 0.d0 .and. .not. sheath_weak_ufade ) then
+          write(*,*) 'NOTE: sheath_weak_detmin freezes u on the nodes it removes, so those'
+          write(*,*) '      Gauss points sit at X = -Lambda and demand ~-19*j_sat, which leaks'
+          write(*,*) '      into the FREE neighbour row unless sheath_weak_ufade fades them'
+          write(*,*) '      out. Set sheath_weak_ufade = .true. alongside it.'
+        endif
         if ( sheath_weak_relax .le. 0.d0 .or. sheath_weak_relax .gt. 1.d0 ) then
           write(*,*) 'ERROR: sheath_weak_relax must lie in (0,1]. It is the fraction of the'
           write(*,*) '       sheath mismatch the replacement row closes per step. <= 0 would'

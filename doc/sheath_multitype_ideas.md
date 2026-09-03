@@ -812,3 +812,58 @@ If 1+5 improves but 4 and 9 still fail with the gate on, the answer is the grid 
 because rotating `x(1,3,:)` changes `element%size` through `:1751` and therefore the mapped
 geometry. Note also finding B: the current frames ARE chord-aligned everywhere, and any
 frame fix must not break that.
+
+
+---
+
+# COMPLETION: the gate has to freeze u as well, or 1+4 is untestable
+
+The first cut of `sheath_weak_detmin` only skipped the trace ROW. That leaves a gated node
+with **zj frozen and u free** - which on a weak type means u has no boundary condition at
+all, because `dirichlet%u` and `natural%u` are both required `.false.` there. Memory records
+exactly that combination as the one that produced the boundary current filament
+([[sheath-bc-tests-flux-dragging]]). On type 5 it was 8 rows among 354 and probably
+harmless; on type 4 it would be 37 of 88, which is why the honest advice was "do not test
+this on 1+4" - and a gate that cannot be tested on 1+4 does not address the actual goal.
+
+**A degenerate node is now taken out of the sheath ENTIRELY**, which is the policy the code
+already applies at a Dirichlet-u corner (`7f2e44427`), so all three mechanisms already exist:
+
+1. `mod_boundary_conditions.f90` applies the **u Dirichlet** at that node regardless of type.
+2. `mod_boundary_matrix_open.f90:1090` skips its trace row, so it keeps its Dirichlet zj row -
+   the same `cycle` that already handled Dirichlet-u corners.
+3. `sh_ufree` at `:218` sees it as frozen, so **`sheath_weak_ufade`** fades its Gauss points
+   out of the free neighbour's row. That is precisely the residual leak `f6ef86fbd` was
+   written to fix, and it is why `sheath_weak_ufade = .true.` must be set alongside
+   `sheath_weak_detmin` - `initialise_parameters` now prints a NOTE if it is not.
+
+The node is then simply not a sheath node: u frozen, zj frozen, no contradiction, and no
+half-constrained DOF. `sheath_frame_det` / `sheath_frame_frozen` live in `mod_sheath_bc.f90`
+so all three call sites share one definition and cannot drift apart.
+
+## What this actually buys, stated plainly
+
+* **1+5**: extends the best existing configuration. 8 of 920 rows change. Modest but real,
+  and it is the clean single-variable test of the mechanism.
+* **1+4**: now a legitimate test. Type 4 keeps 51 of its 88 rows as genuine sheath rows and
+  gives up 37 to a Dirichlet corner - which is what the far end of type 4 has effectively
+  been all along, except that until now it was being given a replaced row it could not
+  support. If 1+4 then runs, the coverage question is answered.
+* **1+4+5+9**: type 9 is 100 % gated, i.e. it reverts to its pre-sheath Dirichlet. That is
+  not a loss - it is 6 nodes and 0.039 m^2 - and it means the full multi-type namelist can be
+  used without type 9 killing it in 4 steps.
+
+The honest limit: this removes 8.2 % of the boundary nodes from the sheath rather than fixing
+them. The fix is to orthogonalise the extension frames in the grid builder, which needs a
+fresh equilibrium. This makes the existing grid usable now and tells you exactly what it
+costs.
+
+## Run order
+
+    sheath_weak_detmin = 0.3
+    sheath_weak_ufade  = .true.
+
+1. **1+5**, expect `8 frame-gated` in the log and `det min` 0.081 / 0.715 on types 5 / 1.
+   Prediction: past 305 steps.
+2. **1+4**, expect `37 frame-gated` on type 4. This is the one that matters.
+3. **1+4+5+9** if 2 works.

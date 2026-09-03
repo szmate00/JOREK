@@ -17,6 +17,7 @@ use phys_module
 use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
+use mod_sheath_bc, only: sheath_frame_det, sheath_frame_frozen
 use mod_sheath_bc, only: sheath_current, sheath_norm, sheath_get_lambda, sheath_V_wall_at, &
                          sheath_temp_floor, dsheath_temp_floor_dT
 use mod_sheath_diag, only: sheath_diag_add, sheath_diag_add_weak
@@ -126,7 +127,7 @@ real*8     :: zj_sh, dzj_du, dzj_drho, dzj_dTi, dzj_dTe, dzj_dvpar, zj_sat_g, x_
 !! derivative basis is conditioned as 1/det, and zj = Delta*psi is built from SECOND
 !! derivatives, so a near-degenerate frame inflates exactly the quantity the weak row
 !! replaces. Nothing in the grid builder requires the two frame vectors to be independent.
-real*8     :: sh_det, sh_dn2, sh_dn3
+real*8     :: sh_det
 real*8     :: sheath_alpha, sh_d_pol, sh_d_robin
 
 type (type_node)         :: tmp_node
@@ -210,8 +211,16 @@ bnd_type2 = nodes(2)%boundary
 ! --- change can answer. Skipping the ROW on that node (further down) does not remove those
 ! --- Gauss points from its FREE neighbour's row, because wk_F/wk_D/wk_S/tr_J are accumulated
 ! --- over the whole edge - so the neighbour gets dragged onto the electron branch.
-sh_ufree(1) = 1.d0 ; if ( bcs(bnd_type1)%dirichlet%u ) sh_ufree(1) = 0.d0
-sh_ufree(2) = 1.d0 ; if ( bcs(bnd_type2)%dirichlet%u ) sh_ufree(2) = 0.d0
+! ---
+! --- sheath_weak_detmin freezes u on a node whose frame is degenerate (mod_boundary_conditions
+! --- applies the Dirichlet), so such a node is frozen for this purpose too and its Gauss points
+! --- must be faded out of the neighbour's row by exactly the same mechanism.
+sh_ufree(1) = 1.d0
+if ( bcs(bnd_type1)%dirichlet%u .or.                                                     &
+     sheath_frame_frozen(nodes(1)%x(1,2,1:2), nodes(1)%x(1,3,1:2)) ) sh_ufree(1) = 0.d0
+sh_ufree(2) = 1.d0
+if ( bcs(bnd_type2)%dirichlet%u .or.                                                     &
+     sheath_frame_frozen(nodes(2)%x(1,2,1:2), nodes(2)%x(1,3,1:2)) ) sh_ufree(2) = 0.d0
 
 ! --- If one of the nodes has a boundary type where natural BCs are applied, apply boundary integral for the full bnd element
 diag_sheath_zj = bcs(bnd_type1)%sheath_zj .or. bcs(bnd_type2)%sheath_zj
@@ -1075,22 +1084,14 @@ if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
     ! --- Skip rather than pick a policy: release dirichlet%u on the corner and the row IS written
     ! --- (the corner then carries a real sheath); leave it frozen and the corner keeps its
     ! --- Dirichlet zj row. Both are self-consistent. Only the mixture was not.
-    if ( bcs(nodes(wk_i)%boundary)%dirichlet%u ) cycle
+    ! --- Same policy, same reason, for a node whose frame is too degenerate to carry the
+    ! --- constraint: mod_boundary_conditions has frozen its u, so it keeps its Dirichlet zj
+    ! --- row and is not a sheath node. Freezing zj here while leaving u free would be the
+    ! --- "u free, zj pinned" configuration that produced the boundary current filament.
+    if ( bcs(nodes(wk_i)%boundary)%dirichlet%u .or.                                    &
+         sheath_frame_frozen(nodes(wk_i)%x(1,2,1:2), nodes(wk_i)%x(1,3,1:2)) ) cycle
 
-    ! --- Node-frame determinant, for sheath_weak_detmin. In the ray-cast wall extension
-    ! --- x(1,2,:) is the ray to the wall and x(1,3,:) an interpolated along-wall angle
-    ! --- (grid_xpoint_wall.f90:1252, :1311), and where the extension meets the wall at
-    ! --- grazing incidence the two become PARALLEL. Normalised by both lengths so the
-    ! --- result is |sin(angle)| in [0,1] even if a grid ever stores non-unit frames.
-    sh_dn2 = sqrt( nodes(wk_i)%x(1,2,1)**2 + nodes(wk_i)%x(1,2,2)**2 )
-    sh_dn3 = sqrt( nodes(wk_i)%x(1,3,1)**2 + nodes(wk_i)%x(1,3,2)**2 )
-    if ( sh_dn2 .gt. 1.d-30 .and. sh_dn3 .gt. 1.d-30 ) then
-      sh_det = abs(   nodes(wk_i)%x(1,2,1) * nodes(wk_i)%x(1,3,2)      &
-                    - nodes(wk_i)%x(1,2,2) * nodes(wk_i)%x(1,3,1) )    &
-             / ( sh_dn2 * sh_dn3 )
-    else
-      sh_det = 0.d0
-    endif
+    sh_det = sheath_frame_det( nodes(wk_i)%x(1,2,1:2), nodes(wk_i)%x(1,3,1:2) )
 
     do wk_j = 1, 2
       if ( wk_D(wk_i,wk_j,1) .le. 0.d0 ) cycle
