@@ -86,6 +86,14 @@ real*8     :: wk_res            ! bounded sheath residual driving the weak term
 real*8     :: wk_dfac           ! d(bounded)/d(raw), the factor every Jacobian column carries
 real*8     :: wk_cap, wk_den   ! the cap itself and the saturating denominator
 real*8     :: wk_wgt, wk_rat  ! validity weight and the ratio it is built from
+real*8     :: wk_gate         !< the VALIDITY weight alone, before the u-fade is applied
+real*8     :: wk_Dv(2,2,n_tor) !< D_a carrying the validity weight ONLY. W = D/D0 conflates two
+                              !! different questions once the fade multiplies wk_wgt: "is the
+                              !! characteristic solvable here" and "is u free here". A row beside
+                              !! a Dirichlet-u seam is faded ON PURPOSE and must not be gated as
+                              !! though its physics had failed - type 4 is short with seams at
+                              !! both ends, so its healthy W of 0.83 is mostly fade. sheath_weak_wmin
+                              !! gates on Dv/D0 so it means only what its name says.
 real*8     :: sh_ufree(2)     ! 1 where this node's u can respond, 0 where it is frozen
 real*8     :: wk_wrx          ! wk_wgt * sheath_weak_relax, for the under-relaxed columns
 ! --- Galerkin trace diagnostics: D_a = int N_a N_a dS, F_a = int N_a (zj - zj_sh) dS,
@@ -269,7 +277,7 @@ delta_s = delta_s * tstep / tstep_prev
 
 n_tor_local = i_tor_max - i_tor_min +1
 
-wk_D = 0.d0; wk_D0 = 0.d0; wk_F = 0.d0; wk_S = 0.d0; tr_J = 0.d0; tr_F = 0.d0
+wk_D = 0.d0; wk_D0 = 0.d0; wk_Dv = 0.d0; wk_F = 0.d0; wk_S = 0.d0; tr_J = 0.d0; tr_F = 0.d0
 tr_Jp = 0.d0
 
 !--------------------------------------------------- sum over the Gaussian integration points
@@ -626,6 +634,8 @@ do ms=1, n_gauss
         endif
       endif
 
+      wk_gate = wk_wgt          ! validity only; the fade below must not enter the gate
+
       ! --- Fade toward a frozen-u node. H1(i,1,ms) are the two VALUE basis functions along the
       ! --- edge and form a partition of unity, so this is 1 at a free node, 0 at a frozen one and
       ! --- linear-in-basis between. It varies WITHIN the row, which is the point: a weight that is
@@ -718,6 +728,8 @@ do ms=1, n_gauss
                                      + v * v * wk_wgt       * ws * dl / BigR
             wk_D0(i,j,im-i_tor_min+1) = wk_D0(i,j,im-i_tor_min+1)                      &
                                      + v * v                * ws * dl / BigR
+            wk_Dv(i,j,im-i_tor_min+1) = wk_Dv(i,j,im-i_tor_min+1)                      &
+                                     + v * v * wk_gate      * ws * dl / BigR
             wk_F(i,j,im-i_tor_min+1) = wk_F(i,j,im-i_tor_min+1)                        &
                                      + v * ( zj0 - dzj_sh ) * wk_wgt * ws * dl / BigR
             wk_S(i,j,im-i_tor_min+1) = wk_S(i,j,im-i_tor_min+1)                        &
@@ -1086,12 +1098,13 @@ if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
         if ( tr_k .eq. var_zj ) then
           call sheath_trace_add( nodes(wk_i)%index(direction(wk_j)), nodes(wk_i)%boundary, &
                                  wk_D(wk_i,wk_j,1), wk_D0(wk_i,wk_j,1),                 &
+                                 wk_Dv(wk_i,wk_j,1),                                    &
                                  tr_F(wk_i,wk_j),                                         &
                                  wk_F(wk_i,wk_j,1), wk_S(wk_i,wk_j,1),                    &
                                  tr_nc, tr_col, tr_var, tr_vals )
         else
           call sheath_trace_add( nodes(wk_i)%index(direction(wk_j)), nodes(wk_i)%boundary, &
-                                 0.d0, 0.d0, 0.d0, 0.d0, 0.d0,                            &
+                                 0.d0, 0.d0, 0.d0, 0.d0, 0.d0, 0.d0,                      &
                                  tr_nc, tr_col, tr_var, tr_vals )
         endif
       enddo
@@ -1109,7 +1122,7 @@ if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
           enddo
         enddo
         call sheath_trace_add( nodes(wk_i)%index(direction(wk_j)), nodes(wk_i)%boundary, &
-                               0.d0, 0.d0, 0.d0, 0.d0, 0.d0,                            &
+                               0.d0, 0.d0, 0.d0, 0.d0, 0.d0, 0.d0,                      &
                                tr_nc, tr_col, tr_var, tr_vals )
       endif
     enddo

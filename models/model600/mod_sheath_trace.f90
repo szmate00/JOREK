@@ -54,6 +54,10 @@ module mod_sheath_trace
   real*8,  save :: st_D(st_max_row)
   real*8,  save :: st_F(st_max_row)
   real*8,  save :: st_D0(st_max_row)    !< UNWEIGHTED diagonal; W_a = st_D/st_D0 in [0,1]
+  real*8,  save :: st_Dv(st_max_row)    !< diagonal with the VALIDITY weight only (no u-fade), so
+                                        !! W_valid = st_Dv/st_D0 answers "is the characteristic
+                                        !! solvable here" without being contaminated by "is u free
+                                        !! here". sheath_weak_wmin gates on this one.
   real*8,  save :: st_Fd(st_max_row)    !< DIAGNOSTIC residual: raw (zj0-zj_sh), weight wk_wgt.
                                         !! NOT st_F, which is the trust-region-bounded residual
                                         !! carrying a different weight (wk_wrx) and is what the
@@ -108,6 +112,7 @@ integer function st_slot(irow)
   st_D(st_n)      = 0.d0
   st_F(st_n)      = 0.d0
   st_D0(st_n)     = 0.d0
+  st_Dv(st_n)     = 0.d0
   st_Fd(st_n)     = 0.d0
   st_S(st_n)      = 0.d0
   st_bnd(st_n)    = 0
@@ -123,6 +128,7 @@ end function st_slot
 !! @param ibnd  boundary type of the node owning this row (nodes(i)%boundary, NOT bnd_type1)
 !! @param dD    contribution to D_a = int N_a N_a dS   (carries wk_wgt)
 !! @param dD0   the same integral with wk_wgt forced to 1, for the validity weight W_a
+!! @param dDv   the same integral with the VALIDITY weight only, excluding the u-fade
 !! @param dFd   DIAGNOSTIC residual (raw, weight wk_wgt) - report only, never written to the row
 !! @param dS    contribution to the scale S_a, so |Fd_a/S_a| is the residual in units of j_sat
 !! @param dF    contribution to F_a = int N_a (zj_sh - zj) dS   (note the sign: this is the RHS)
@@ -130,10 +136,10 @@ end function st_slot
 !! @param icol  global DOF indices of the trial functions
 !! @param ivar  variable index of each column
 !! @param vals  contribution to int N_a (d(residual)/d x) N_b dS for each column
-subroutine sheath_trace_add(irow, ibnd, dD, dD0, dF, dFd, dS, nc, icol, ivar, vals)
+subroutine sheath_trace_add(irow, ibnd, dD, dD0, dDv, dF, dFd, dS, nc, icol, ivar, vals)
   implicit none
   integer, intent(in) :: irow, ibnd, nc
-  real*8,  intent(in) :: dD, dD0, dF, dFd, dS
+  real*8,  intent(in) :: dD, dD0, dDv, dF, dFd, dS
   integer, intent(in) :: icol(nc), ivar(nc)
   real*8,  intent(in) :: vals(nc)
 
@@ -154,6 +160,7 @@ subroutine sheath_trace_add(irow, ibnd, dD, dD0, dF, dFd, dS, nc, icol, ivar, va
 
     st_D(is)  = st_D(is)  + dD
     st_D0(is) = st_D0(is) + dD0
+    st_Dv(is) = st_Dv(is) + dDv
     st_F(is) = st_F(is) + dF
     st_Fd(is) = st_Fd(is) + dFd
     st_S(is)  = st_S(is)  + dS
@@ -236,8 +243,13 @@ subroutine sheath_trace_apply(in, zbig, index_min, index_max, a_mat, RHS_loc)
     ! --- an enormous row out of numerical noise. Keyed on the row's OWN unweighted support D0_a it
     ! --- is rank-independent and treats value and derivative rows alike, which the old d_max form
     ! --- did not. wmin is an optional STRONGER gate on top; it can never disable this.
+    ! --- Two separate tests. The 1e-12 degeneracy floor is on st_D, because it protects the
+    ! --- 1/D_a normalisation and that uses st_D. The user-facing validity gate is on st_Dv, which
+    ! --- excludes the u-fade: a row beside a Dirichlet-u seam is faded deliberately and gating it
+    ! --- as though its physics had failed would freeze the seam rows first, for the wrong reason.
     if ( st_D(is) .le. 0.d0 .or. st_D0(is) .le. 0.d0 .or.                         &
-         st_D(is) .lt. max(sheath_weak_wmin, 1.d-12) * st_D0(is) ) then
+         st_D(is)  .lt. 1.d-12 * st_D0(is) .or.                                   &
+         st_Dv(is) .lt. sheath_weak_wmin * st_D0(is) ) then
       st_n_skipped = st_n_skipped + 1
 
       ! --- A rejected sheath projection still needs a controlled boundary row. Falling through
@@ -308,7 +320,7 @@ subroutine sheath_trace_report(my_id)
   ! --- cols 1-2 reduce with SUM, cols 3-6 with MAX, so each group is contiguous in memory
   ! --- (Fortran column-major) and travels in one call: 1 count, 2 sum(W), 3 max|Fd/S|,
   ! --- 4 -min(D), 5 max(D), 6 -min(W).
-  real*8  :: tloc(nbt,6), tglo(nbt,6), r, w
+  real*8  :: tloc(nbt,7), tglo(nbt,7), r, w
 
   loc(1) = dble(st_n)
   loc(2) = dble(st_n_applied)
@@ -329,6 +341,7 @@ subroutine sheath_trace_report(my_id)
   tloc(:,4) = -1.d30
   tloc(:,5) = -1.d30
   tloc(:,6) = -1.d30
+  tloc(:,7) = -1.d30
   do is = 1, st_n
     ib = st_bnd(is)
     if ( ib .lt. 1 .or. ib .gt. nbt ) cycle
@@ -345,11 +358,12 @@ subroutine sheath_trace_report(my_id)
       w = st_D(is) / st_D0(is)
       tloc(ib,2) = tloc(ib,2) + w
       tloc(ib,6) = max(tloc(ib,6), -w)
+      tloc(ib,7) = max(tloc(ib,7), -st_Dv(is) / st_D0(is))   ! min W_valid, as a negative
     endif
   enddo
 
   call MPI_Reduce(tloc(1,1), tglo(1,1), nbt*2, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
-  call MPI_Reduce(tloc(1,3), tglo(1,3), nbt*4, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(tloc(1,3), tglo(1,3), nbt*5, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
 
   call MPI_Reduce(loc,  glo,  4, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
   call MPI_Reduce(dloc(1), dglo(1), 1, MPI_REAL8, MPI_MIN, 0, MPI_COMM_WORLD, ierr)
@@ -359,6 +373,7 @@ subroutine sheath_trace_report(my_id)
 
   tglo(:,4) = -tglo(:,4)      ! D min and W min were reduced as negatives through MAX
   tglo(:,6) = -tglo(:,6)
+  tglo(:,7) = -tglo(:,7)
 
   ! --- 10 edit descriptors, 10 output items. Counted, because getting this wrong is a run-time
   ! --- severe(61) that kills rank 0 mid-write and hangs every other rank in the next collective.
@@ -381,11 +396,12 @@ subroutine sheath_trace_report(my_id)
     ! --- W is the validity weight D_a/D0_a. W near 1 = the characteristic is valid over the whole
     ! --- row; W -> 0 = the row is being written where the characteristic has no solution, which
     ! --- the wk_wgt weighting CANNOT fade because it cancels out of J/D and F/D.
-    write(*,'(A,i2,A,i0,A,f6.3,A,f6.3,A,es9.2,A,es9.2)')                          &
+    write(*,'(A,i2,A,i0,A,f6.3,A,f6.3,A,f6.3,A,es9.2,A,es9.2)')                          &
       '           bnd type ', ib,                                                  &
       ': rows=',              nint(tglo(ib,1)),                                     &
       '  W min=',             tglo(ib,6),                                           &
       ' mean=',               tglo(ib,2)/max(tglo(ib,1),1.d0),                      &
+      '  Wv min=',            tglo(ib,7),                                           &
       '  |Fd/S|max=',         tglo(ib,3),                                           &
       '  D min=',             tglo(ib,4)
   enddo

@@ -44,6 +44,11 @@ module mod_sheath_diag
   real*8,  save :: sd_bn_max(max_bnd_types)   = -1.d30 !< max SIGNED b_n
   real*8,  save :: sd_area_bn_neg(max_bnd_types) = 0.d0 !< area with b_n < 0
   real*8,  save :: sd_I_bn_neg(max_bnd_types)    = 0.d0 !< I_sheath over that area
+  ! --- |zj_sat| per type. Nothing else distinguishes the two ways max|j/jsat| can explode:
+  ! --- zj0 rising (the plasma delivering more current) or zj_sat collapsing (the sheath losing
+  ! --- its capacity). They need opposite fixes and the ratio alone cannot tell them apart.
+  real*8,  save :: sd_sat_min(max_bnd_types)  =  1.d30 !< min |zj_sat| on this type
+  real*8,  save :: sd_sat_sum(max_bnd_types)  =  0.d0  !< area-weighted sum of |zj_sat|
   real*8,  save :: sd_ds_min(max_bnd_types)   =  1.d30 !< smallest area element on this type
   real*8,  save :: sd_ds_max(max_bnd_types)   = -1.d30
   real*8,  save :: sd_phi_min                 =  1.d30
@@ -118,6 +123,7 @@ subroutine sheath_diag_reset()
   sd_bn_min      =  1.d30 ; sd_bn_max      = -1.d30
   sd_area_bn_neg =  0.d0  ; sd_I_bn_neg    =  0.d0
   sd_ds_min      =  1.d30 ; sd_ds_max      = -1.d30
+  sd_sat_min     =  1.d30 ; sd_sat_sum     =  0.d0
   sd_phi_min  =  1.d30
   sd_phi_max  = -1.d30
   sd_phi_sum  = 0.d0
@@ -200,6 +206,8 @@ subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, 
   ! --- printed below is in JOREK's magnetic-field units, not the dimensionless b_n=B.n/|B|.
   sd_bn_min(bnd_type) = min(sd_bn_min(bnd_type), Bdotn)
   sd_bn_max(bnd_type) = max(sd_bn_max(bnd_type), Bdotn)
+  sd_sat_min(bnd_type) = min(sd_sat_min(bnd_type), abs(zj_sat))
+  sd_sat_sum(bnd_type) = sd_sat_sum(bnd_type) + abs(zj_sat) * dS
   sd_ds_min(bnd_type) = min(sd_ds_min(bnd_type), dS)
   sd_ds_max(bnd_type) = max(sd_ds_max(bnd_type), dS)
   if ( Bdotn .lt. 0.d0 ) then
@@ -312,6 +320,7 @@ subroutine sheath_diag_report(my_id)
   real*8  :: gbn_min(max_bnd_types), gbn_max(max_bnd_types)
   real*8  :: gds_min(max_bnd_types), gds_max(max_bnd_types)
   real*8  :: gan_neg(max_bnd_types), gin_neg(max_bnd_types)
+  real*8  :: gst_min(max_bnd_types), gst_sum(max_bnd_types)
 
   i0 = 0                      ! offsets into the packed reduction buffer
   i1 =   max_bnd_types
@@ -381,6 +390,8 @@ subroutine sheath_diag_report(my_id)
   call MPI_Reduce(sd_ds_max,      gds_max, max_bnd_types, MPI_REAL8, MPI_MAX, 0, MPI_COMM_WORLD, ierr)
   call MPI_Reduce(sd_area_bn_neg, gan_neg, max_bnd_types, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
   call MPI_Reduce(sd_I_bn_neg,    gin_neg, max_bnd_types, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(sd_sat_min,     gst_min, max_bnd_types, MPI_REAL8, MPI_MIN, 0, MPI_COMM_WORLD, ierr)
+  call MPI_Reduce(sd_sat_sum,     gst_sum, max_bnd_types, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
 
   if ( my_id .ne. 0 ) return
 
@@ -481,6 +492,12 @@ subroutine sheath_diag_report(my_id)
         '   area(b_n<0) ', 1.d2*gan_neg(i)/max(glo_sum(i2+i),1.d-30), ' %   dS ', &
         gds_min(i), ' ..', gds_max(i),                                             &
         '   I(b_n<0)=', gin_neg(i), ' A'
+    ! --- 6 descriptors, 6 items. |zj_sat| min vs mean says WHICH way max|j/jsat| blew up:
+    ! --- a collapsing min with a steady mean is a local loss of sheath capacity; a steady min
+    ! --- means the numerator zj0 rose and the plasma is delivering the current.
+    write(*,'(A,i3,A,es10.2,A,es10.2)')                                            &
+      '         bnd type', i, ' |zj_sat| min ', gst_min(i),                        &
+      '  area-mean ', gst_sum(i)/max(glo_sum(i2+i),1.d-30)
   enddo
 
 end subroutine sheath_diag_report
