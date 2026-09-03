@@ -17,6 +17,9 @@ real*8 :: vacuum_fraction, b_over_a, a_over_b
 
 ! --- Local variables
 integer :: ierr,err,i
+!> Effective resistivity floor and the corr_neg asymptote that usually sets it (see the NOTE
+!! printed below): resistivity() evaluates eta at T_corr, which never goes below the asymptote.
+real*8 :: eta_floor_cn, eta_floor_eff
 
 ! --- Namelist with input parameters.
 namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
@@ -241,7 +244,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 eta_num_prof, eta_num_psin_dependent, D_par_imp,    &
                 D_perp_imp, spi_quantity_bg, pellet_density_bg,     &
                 visco_par_heating, constant_imp_source,             &
-                T_min_ZKpar,Ti_min_ZKpar,Te_min_ZKpar,              &
+                T_min_ZKpar,Ti_min_ZKpar,Te_min_ZKpar,T_min_eta,    &
                 CARIDDI_mode, use_newton, maxNewton, gamma_Newton,  &
                 alpha_Newton, vacuum_min, strumpack_matching,       &
                 visco_old_setup, visco_heating, eta_coul_log_dep,   &
@@ -919,6 +922,37 @@ if ( my_id == 0 ) then
   endif
 
   call initialise_reference_parameters()
+
+  ! --- Reported here, AFTER initialise_reference_parameters(), because that is where the
+  ! --- T_min_eta sentinel is resolved to T_min. Printed earlier it would show -1.d12.
+  ! --- THE EFFECTIVE RESISTIVITY FLOOR, and why T_min_eta often cannot move it.
+  ! ---
+  ! --- resistivity() evaluates eta_T at T_corr, which the CALLER has already passed through
+  ! --- corr_neg_temp1 (mod_elt_matrix_fft passes T_or_Te_corr). corr_neg_temp1 asymptotes to
+  ! --- L1 = T_min_neg*corr_neg_temp_coef(1) from above, so T_corr can NEVER go below L1 no
+  ! --- matter how low T falls. The explicit clamp inside resistivity() keys on the RAW
+  ! --- temperature, `T_raw < T_min_eta`, and only zeroes the derivative there - so whenever
+  ! --- T_min_eta < L1 it cannot change the eta VALUE at all, and the floor is set by
+  ! --- T_min_neg through corr_neg rather than by T_min or T_min_eta.
+  ! ---
+  ! --- This is easy to get wrong in both directions (a hand-set T_min_eta well below L1 has
+  ! --- been tried and did nothing but leave deta_dT live and steep across [T_min_eta, 2*L1]),
+  ! --- so print the number that actually applies instead of leaving it to be re-derived.
+  if ( eta_T_dependent ) then
+    eta_floor_cn  = T_min_neg * corr_neg_temp_coef(1)
+    eta_floor_eff = max( T_min_eta, eta_floor_cn )
+    write(*,'(A,es10.3,A,es10.3,A)')                                                  &
+      ' NOTE: effective resistivity floor = ', eta_floor_eff,                          &
+      '  (T_min_eta = ', T_min_eta, ')'
+    write(*,'(A,es10.3,A)')                                                            &
+      '       corr_neg asymptote T_min_neg*corr_neg_temp_coef(1) = ', eta_floor_cn, ''
+    if ( T_min_eta .lt. eta_floor_cn ) then
+      write(*,*) '      T_min_eta lies BELOW that asymptote, so it cannot lower the eta VALUE:'
+      write(*,*) '      resistivity() sees T_corr, which never goes below the asymptote. Lower'
+      write(*,*) '      T_min_neg if you want a genuinely more resistive cold leg - but note it'
+      write(*,*) '      is the GLOBAL positivity floor and moves every T-dependent term with it.'
+    endif
+  endif
 
 end if
 
