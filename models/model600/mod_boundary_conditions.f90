@@ -131,8 +131,9 @@ real*8  :: cs0, cs0_T, cs0_TT, cs0_TTT
 real*8  :: bn_b, bn_b_abs, hfact_b, hfact_bb, bn_1, bn_2, ps2_b, element_size_2
 integer :: ilarge_vp, ilarge_vp2, bnd_type
 integer :: kp, j, err, itest, i_mid, i_bnd, idir, iv_dir, iv_perp_dir, k_max
-!> This node's frame is too degenerate for the sheath: freeze u here as well as zj.
-logical :: frame_frozen_u
+!> This node's frame is too degenerate to carry the sheath: freeze BOTH u and zj here,
+!! i.e. treat it as an ordinary non-sheath boundary node whatever its boundary type says.
+logical :: frame_frozen
 integer :: n_rmp_harm, N_rmp_har_block_size
 
 real*8  :: R_out, Z_out, s_elm, t_elm, QR,QR_s,QR_t,QR_st,QR_ss,QR_tt,QZ,QZ_s,QZ_t,QZ_st,QZ_ss,QZ_tt
@@ -277,13 +278,22 @@ do i=1, n_local_elms !=== do elements
       ! --- PARALLEL has a derivative basis conditioned as 1/det, and zj = Delta*psi is built
       ! --- from second derivatives - so the weak sheath row would be constraining a quantity
       ! --- that is numerically degraded there. Such a node is taken out of the sheath
-      ! --- ENTIRELY: mod_boundary_matrix_open skips its trace row (keeping its Dirichlet zj)
-      ! --- and fades its Gauss points out of the free neighbour's row, and here its u is
-      ! --- frozen as well. Freezing zj without freezing u would leave u with no boundary
-      ! --- condition at all on a weak type, where dirichlet%u and natural%u are both required
-      ! --- .false. - the "u free, zj pinned" configuration that produced the current filament.
-      frame_frozen_u = sheath_frame_frozen( node_list%node(inode)%x(1,2,1:2),                &
-                                            node_list%node(inode)%x(1,3,1:2) )
+      ! --- ENTIRELY - it becomes an ordinary non-sheath boundary node whatever its boundary
+      ! --- type says - and BOTH Dirichlets are applied HERE, because both are needed:
+      ! ---   * u alone would leave zj with no row at all. mod_boundary_matrix_open skips this
+      ! ---     node's trace row, and unlike the type-3/9 corners - where dirichlet%zj keeps
+      ! ---     its .true. DEFAULT (preset_parameters.f90:427) - a sheath-enabled type has it
+      ! ---     .false. in the namelist, so nothing else would write one and the boundary zj
+      ! ---     equation would be the volume weak form MISSING ITS SURFACE TERM.
+      ! ---   * zj alone would leave u with no boundary condition, because on a weak type
+      ! ---     dirichlet%u and natural%u are both required .false. - the "u free, zj pinned"
+      ! ---     configuration that produced the boundary current filament.
+      ! --- This loop visits every boundary node unconditionally, so unlike a fallback inside
+      ! --- the trace accumulator it cannot be bypassed by an edge whose weight vanished -
+      ! --- which it would be, since sheath_weak_ufade drives wk_wgt to zero on an edge with
+      ! --- BOTH ends frozen, and the accumulator skips a row with wk_D <= 0.
+      frame_frozen = sheath_frame_frozen( node_list%node(inode)%x(1,2,1:2),                  &
+                                          node_list%node(inode)%x(1,3,1:2) )
 
       do in=a_mat%i_tor_min, a_mat%i_tor_max  ! === do n_tor
       
@@ -387,8 +397,9 @@ do i=1, n_local_elms !=== do elements
 
           if (  ( (k == var_psi     ) .and. bcs(bnd_type)%dirichlet%psi     )  .or.  &
                 ( (k == var_u       ) .and. ( bcs(bnd_type)%dirichlet%u .or.          &
-                                              frame_frozen_u )              )  .or.  &
-                ( (k == var_zj      ) .and. bcs(bnd_type)%dirichlet%zj      )  .or.  &
+                                              frame_frozen )               )  .or.  &
+                ( (k == var_zj      ) .and. ( bcs(bnd_type)%dirichlet%zj .or.         &
+                                              frame_frozen )               )  .or.  &
                 ( (k == var_w       ) .and. bcs(bnd_type)%dirichlet%w       )  .or.  &
                 ( (k == var_rho     ) .and. bcs(bnd_type)%dirichlet%rho     )  .or.  &
                 ( (k == var_T       ) .and. bcs(bnd_type)%dirichlet%T       )  .or.  &

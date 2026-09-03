@@ -270,11 +270,13 @@ subroutine sheath_trace_apply(in, zbig, index_min, index_max, a_mat, RHS_loc)
     ! --- advance (util/check_boundary_frames.py prints it from a restart file). It cannot feed
     ! --- back.
     ! ---
-    ! --- What it does NOT do is restore a boundary condition on u at the nodes it gates: on a
-    ! --- weak type dirichlet%u and natural%u are both required .false., so u there is left to
-    ! --- the interior equation and its neighbours. On boundary type 5 that is 8 rows among
-    ! --- 354; on type 4 it would be 37 of 88, and a type fragmented that far may fail for that
-    ! --- reason instead. Read the gated count in the report before reading a null result.
+    ! --- BACKSTOP ONLY, and it should normally count ZERO. A frame-degenerate node is taken
+    ! --- out of the sheath upstream: mod_boundary_conditions applies BOTH its Dirichlets (u and
+    ! --- zj) and mod_boundary_matrix_open never accumulates its row, so it does not reach here.
+    ! --- This exists so that a future path into sheath_trace_apply cannot write a replaced row
+    ! --- on a degenerate node. The runtime confirmation that the gate is live is the per-type
+    ! --- 'det min' in the report: with sheath_weak_detmin set it must come out >= that value,
+    ! --- because every row below it was removed before accumulation.
     if ( st_D(is) .le. 0.d0 .or. st_D0(is) .le. 0.d0 .or.                          &
          st_D(is)  .lt. 1.d-12 * st_D0(is) .or.                                    &
          st_Dv(is) .lt. sheath_weak_wmin * st_D0(is) .or.                          &

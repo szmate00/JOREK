@@ -867,3 +867,84 @@ costs.
    Prediction: past 305 steps.
 2. **1+4**, expect `37 frame-gated` on type 4. This is the one that matters.
 3. **1+4+5+9** if 2 works.
+
+
+---
+
+# FIRST-PRINCIPLES REVIEW: a bug in the above, and a sharper reading of `det`
+
+## The bug I introduced
+
+The completion put the frame test into the `cycle` at the ACCUMULATION site in
+`mod_boundary_matrix_open`, reusing the existing Dirichlet-u corner guard. Its comment
+says a skipped node "keeps its Dirichlet zj row" - and that is true for the type-3/9
+corners it was written for, because `bcs(:)%dirichlet%zj = .true.` is the DEFAULT
+(`preset_parameters.f90:427`). It is **false for a sheath-enabled type**, where the weak
+route requires `dirichlet%zj = .false.` in the namelist.
+
+So a frame-gated node on type 4 or 5 got **no zj row at all** - the boundary zj equation
+left as the volume weak form missing its surface term, which is exactly the
+incomplete-equation runaway this module's header warns about. And because the accumulation
+skip happens before `sheath_trace_apply`, the frozen-increment fallback from the first
+commit never ran either: `st_n_detgate` would have printed 0 while the rows quietly
+vanished.
+
+The correct policy is the one the design claimed but did not implement: a degenerate node is
+**not a sheath node**, so it gets BOTH Dirichlets, and both are now applied in
+`mod_boundary_conditions`, which visits every boundary node unconditionally. That matters:
+a fallback inside the trace accumulator can be bypassed, because `sheath_weak_ufade` drives
+`wk_wgt` to zero on an edge with BOTH ends frozen and the accumulator skips a row with
+`wk_D <= 0` - which is certain at these corners, where the degenerate nodes are contiguous.
+
+**Runtime confirmation that the gate is live:** the per-type `det min` in the report must
+come out `>= sheath_weak_detmin`, because every row below it is removed before accumulation.
+If type 5 still prints `det min = 0.081` with `detmin = 0.3`, the gate is not working. The
+`N frame-gated` count is now a backstop and should read 0.
+
+## A sharper reading of what `det -> 0` means
+
+Combining the two measurements rather than treating them separately:
+
+* `cos(frame, chord) ~ 1` everywhere means the ALONG-EDGE frame vector is parallel to the
+  boundary.
+* `det = |sin(angle between the two frame vectors)| -> 0` then means the OTHER one - the
+  `direction_perp` DOF, the NORMAL-derivative DOF - is *also* nearly parallel to the
+  boundary.
+
+So the statement is not really "the basis is ill-conditioned". It is:
+
+> **at these nodes the element has no degree of freedom pointing off the wall.**
+
+Both derivative DOFs lie in the surface. A normal derivative cannot be represented there at
+all - and `dirichlet%psi` deliberately leaves the normal-derivative DOF free precisely
+because that is the degree of freedom through which the wall current responds to the sheath
+(`mod_sheath_bc.f90` header). The sheath is being asked to drive a DOF that does not point
+where it needs to. That is a much better reason to remove the node than a condition number.
+
+## What the exact quantity is, and why `det` is only a proxy
+
+The degeneracy that the equations actually feel is the element mapping Jacobian. In
+`mod_boundary_matrix_open`:
+
+    xjac   = x_s*y_t - x_t*y_s
+    grad_t = (/ -y_s, x_s /) / xjac
+
+`grad_t` carries a `1/xjac`, and it is what builds the normal-derivative terms. At the
+corner (s,t) -> (0,0) the Jacobian is `size(:,2)*x2` wedge `size(:,3)*x3`, so it is
+proportional to `det(x2,x3)` - but only up to the two `element%size` factors and the cubic
+shape away from the corner. **`det` at the node is the corner limit of `xjac`, not `xjac`
+itself.**
+
+That is worth knowing for two reasons. It means the node determinant is a defensible but
+approximate criterion, and it means there is a strictly better diagnostic available almost
+for free: `xjac` is already evaluated at every boundary Gauss point, so a per-type
+`min |xjac|` (and `min |xjac|/dl^2` for a dimensionless version) would measure the thing
+itself. Worth adding to `sheath_diag` before tuning the threshold seriously.
+
+## And the framing that should not be lost
+
+This is a MESH defect, not a sheath defect. The same degenerate elements are used by every
+equation in the model. The sheath is simply the only one that writes a `zbig`-dominant
+REPLACED row on `zj = Delta*psi` - second derivatives - at those nodes, so an ill-posed
+representation becomes a dominant wrong equation instead of a small error. Gating is
+containment; the fix is the grid.
