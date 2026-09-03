@@ -518,66 +518,192 @@ axes by size and prints the raw -> resolved mapping.
 
 # 7. Current status and what to do next
 
-## 7.1 NEW, 2026-09-03: 1+4 converges for the first time
+Superseded twice on 2026-09-03. Read this section, not any earlier advice in the campaign
+notes: the `sheath_init_u`, ratio-gate and `sheath_sat_slope` recommendations that circulated
+before this date are all stale.
 
-With `sheath_weak_detmin = 0.3`, on **1+4**, which had never survived past 8 steps:
+## 7.1 What the runs actually did
 
-    output    weak     |Fd/S| type 1   |Fd/S| type 4
-       0     1.934          673            8.76
-       3     0.230           40.5          3.32
-       6     0.136        1.15e5           1.35     <- transient spike, recovered
-      10     0.106            1.02         0.254
+| config | settings beyond the base | outcome |
+|---|---|---|
+| type 1 alone | - | **~3900 steps, TIMEOUT**, converged, weak 6.5e-4 and still falling |
+| 1+5 | `detmin` off | 305, crash |
+| 1+4 | `detmin` off | 8, crash |
+| 1+4 | `detmin 0.3`, `init_u .true.` | **517**, crash |
+| 1+5 | `detmin 0.3`, `init_u .false.` | 306, crash |
+| 1+5 | `detmin 0.3`, `init_u .true.`, `sat_slope 0.3`, `v_perp 2.2e-5` | **plateau reached**, then crash at 317 |
 
-Weak residual **18x down and monotone**; type 4's `|Fd/S|` **34x down**. Gate confirmed live:
-`bnd type 4 ... det min = 0.304` (>= 0.30) with rows down from 220 to 152, and `0 frame-gated` as
-designed. Type 1 unaffected: `det min = 0.715`, 196 rows, nothing removed.
+Note the type-1 reference is **~3900 steps and ended by wall-clock timeout**, not by reaching a
+limit. Figures of 1350 and 40000 have both been quoted in this campaign; both are wrong.
 
-**And this was run with `sheath_init_u = .true.`** - the flag documented in 5.6 as harmful (219 -> 8
-on an earlier 1+4). It converged anyway. **Re-run with `sheath_init_u = .false.`; it should be
-better still.** That is the single highest-value next run.
+The last run is the important one. It reached a genuine steady state - weak residual flat to
+four digits at 0.274, `ePhi/kTe` mean 6.43 three outputs running, `I_wall` -512 flat, and every
+documented precursor REVERSED (`ePhi/kTe min` -2.34 -> +0.01, e-limited 8.9 % -> 0.3 %, type 1
+`|Fd/S|max` 872 -> 1.67). Then it collapsed anyway.
 
-Caution before celebrating: `ePhi/kTe max` rises monotonically 3.00 -> 6.03 over these outputs, and
-the inner target goes 2.97 -> 4.53 while the outer falls 2.97 -> 2.08. The BC is being satisfied
-better and better, but the plasma state is still evolving away from the restart. Watch whether the
-inner target settles or keeps climbing - a monotone inner ramp with a flat outer is the 1+5 signature
-that ended at 305.
+## 7.2 Why the plateau collapsed: the dynamic ratio gate
 
-## 7.2 Run order
+Read straight off the log, and it is `sheath d collapse crash` verbatim:
 
-1. **1+4 with `sheath_init_u = .false.`** (in flight config otherwise unchanged).
-2. **1+5 with `detmin = 0.3`** - queued. Expect ~8 rows gated, `det min >= 0.3` on type 5.
-3. **1+4+5+9** if both hold. Type 9 is 100 % gated, i.e. reverts to its pre-sheath Dirichlet
-   (6 nodes, 0.039 m^2), so the full multi-type namelist becomes usable.
+1. type 5 `W min` 0.396 -> **0.000** - the ratio gate `wk_wgt = 1/(1+(rat/20)^4)` closes fully
+2. `wk_wgt` multiplies `wk_D`, so `D min` follows it down 3.03e-10 -> 3.4e-113
+3. `st_D < 1e-12*st_D0` trips: rows below the floor 0 -> 31 -> **894**
+4. a dropped row gets the frozen-increment fallback, which pins **zj** - but on a weak type
+   `dirichlet%u` and `natural%u` are both `.false.`, so **u there has no boundary condition**
+5. u runs away: `ePhi/kTe` mean goes negative (-2.75), then 8209, then overflow
 
-## 7.3 Open items, ranked
+### THE STRUCTURAL RULE, which is the most portable thing in this document
 
-* **`min |xjac|` diagnostic.** `det` at a node is a PROXY. The quantity the equations feel is the
-  element mapping Jacobian: `mod_boundary_matrix_open` computes `xjac = x_s y_t - x_t y_s` and
-  `grad_t = (-y_s, x_s)/xjac` at every boundary Gauss point, and `grad_t` carries the `1/xjac` into
-  the normal-derivative terms. At the corner the Jacobian is `size(:,2) x2 wedge size(:,3) x3`, so
-  it is proportional to `det(x2,x3)` **up to the two `element%size` factors**. A per-type
-  `min|xjac|` is nearly free and should come before serious threshold tuning. NOT IMPLEMENTED.
-* **The grid fix.** Gram-Schmidt `x(1,3,:)` against `x(1,2,:)` for extension nodes
-  (`grid_xpoint_wall.f90:1252`, `:1311`). This changes `element%size` through `:1751` and therefore
-  the mapped geometry, so it needs a **fresh equilibrium**, not a restart. Note the current frames
-  are chord-aligned everywhere (`cos ~ 1`) and any fix must not break that. `detmin` is containment;
-  this is the cure.
-* **Repair the type-9 surgery** at `:1923-1949`: add `exit` after a hit (an element with two type-9
-  vertices is currently removed twice) and guard the `= 99` write so it cannot demote a genuine
-  wetted type-5 node. Neither moves a node, so no new equilibrium is needed.
-* **Normalise the psi column of the weak row by local `|grad psi|`.** Addresses 6.3(a) without
-  touching the grid, and is why `sheath_psi_jacobian` never discriminated.
-* **`wk_dfac` is computed and never used** (`mod_boundary_matrix_open.f90:672-677`); its declaration
-  at `:86` claims every Jacobian column carries it. Defensible as a trust region (bounded `F` with a
-  full-strength `J` gives a *smaller* step), but code and comment disagree - fix one of them.
-* **`direction(3)` is never assigned in the `(9,9)` branch** of `construct_matrix_mod.f90:137-144`
-  while every other branch assigns it. **Dead at `n_order = 3`**; a live bug above it.
-* **Is `use_simple_bnd_types` set?** It defaults `.false.` (`preset_parameters.f90:826`) and
-  `max_bnd_types = 30`, yet the logs only ever show types 1/3/4/5/9. If types **11/15** exist as
-  distinct node types they are the OUTWARD-field halves of the type-1 and type-5 targets, carry real
-  area, and have never had a `bcs()` block. Cheap to check from the namelist; expensive to be wrong.
+**On a weak-sheath type, u is constrained ONLY through the zj rows.** Anything that weakens or
+deletes a zj row also strands u. Therefore:
 
-## 7.4 Things that are settled - do not re-litigate
+* a **STATIC** gate can be made safe, by ALSO freezing u - which is what `sheath_weak_detmin`
+  does via `mod_boundary_conditions` (section 6.5);
+* a **DYNAMIC** gate cannot, because `mod_boundary_conditions` cannot know at Dirichlet-writing
+  time which nodes the solution will gate.
+
+**Dynamic gates are structurally unsafe on this route.** That retro-explains `sheath_weak_wmin`
+(305 steps -> 2) and `sheath_zj_ratio_max` (this crash). Do not add a third.
+
+### The earliest warning, already printed
+
+`ePhi/kTe max where the sheath is ACTIVE` versus the global max. Plateau: active 14.20 < global
+19.18, so the excursion was at gated-off points and benign. Crash: **19.84 == 19.84** - the
+excursion moved onto a live row. One output of advance notice, and the diagnostic's own comment
+says exactly this is the tell. It should be promoted to an explicit warning.
+
+## 7.3 The namelist to use
+
+    sheath_weak_detmin  = 0.3d0      ! static frame gate, section 6.5
+    sheath_weak_ufade   = .true.     ! REQUIRED with detmin
+    sheath_init_u       = .true.     ! see below - this REVERSES the old advice
+    sheath_sat_slope    = 0.3d0      ! see the caveat in 7.4
+    sheath_zj_ratio_max = 0.0d0      ! THE FIX - the dynamic gate is what kills it
+    sheath_weak_wmin    = 0.0d0      ! never raise this
+    sheath_weak_rmax    = 2.0d0      ! default; bounds the residual at 2*j_sat
+    sheath_v_perp       = 2.2d-5     ! cheap, but see 7.4 - it cannot do much
+
+**`sheath_init_u = .true.` reverses the pre-gate advice.** Measured at output 1 of 1+5:
+`ePhi/kTe` mean 3.00 (= Lambda, floating) and weak 1.72 with it on, against 0.00 and weak 14.4
+with it off, where the whole wall starts at `X = -Lambda`, i.e. 100 % electron-limited. The old
+"init_u is HARMFUL" records (104->4, 219->8) are **pre-`detmin`**: it was poisonous because it
+imposed `u = Lambda*kTe/e` on the frame-degenerate nodes that `detmin` now removes.
+
+**`sheath_zj_ratio_max = 0` is the fix for 7.2.** `sheath_weak_rmax = 2.0` already bounds the
+residual at `2*|zj_sat|` - and at a low-j_sat point that bound is itself tiny, so the row asks
+for almost nothing and is harmless. The ratio gate is redundant protection whose only unique
+effect is to delete rows and strand u. `bcs%natural%zj = .true.` does NOT help: the frozen
+fallback already gives zj a row; the stranded variable is u.
+
+## 7.4 Two things that must not be mistaken for success
+
+**`sheath_sat_slope = 0.3` buys stability by letting the sheath pass currents above the physical
+Bohm value.** `f = 1 - exp(-X) + s*ln(1+exp(X))` is unbounded above, so a demand of any size
+becomes reachable at a finite potential. At the plateau the worst ACTIVE point sat at
+`ePhi/kTe = 14.2`, i.e. `X = 11.2`, i.e. **f = 4.4** - the sheath passing 4.4x j_sat, which is
+unphysical. The parameter's own docstring sets the discipline and it has NEVER been followed
+here: *report results at the smallest s that runs and check the answer is insensitive to it*.
+
+**Make that an acceptance criterion, not a footnote.** Once a run is stable at `s = 0.3`, restart
+from the same state at `s = 0.1` and `s = 0.03` and check that `Phi(R)` on both targets and the
+in-out difference do not move. If they move, the answer is a function of the regularisation and
+not a sheath solution.
+
+**`sheath_v_perp` cannot rescue a low-density tangential point at any physical value.** Measured:
+type 5 `|zj_sat| min` 9.8e-9 -> 2.45e-6 with `v_perp = 2.2e-5`, a factor 250, not the 4-5 orders
+expected. `zj_sat = c_sat*rho*(|g|cs + v_perp)/|B|`, so the floor scales with **rho**, and the
+minimum point is low-DENSITY as well as tangential (implied `c_sat*rho/|B|` there is 0.111
+against 13.3 from the area-mean, 119x smaller). Reaching `1e-4` would need `v_perp = 19 % of
+c_s`. If cross-field collection is wanted, derive it from the modelled normal particle flux, not
+from a constant velocity.
+
+## 7.5 The demand side, which is where the real problem now lives
+
+Every failure in this campaign runs through `|zj0/zj_sat|`, and nothing so far addresses why the
+plasma demands 20-300x the Bohm current. Two candidate causes; **one is now excluded.**
+
+**EXCLUDED: cold-leg resistivity.** `T_min_eta` was ported (commit 96b315865) on the grounds that
+`T_min` freezes eta below ~5 eV. **It is inert in this namelist.** `resistivity()` is handed
+`T_corr`, already through `corr_neg_temp1`, which asymptotes to
+`L1 = T_min_neg*corr_neg_temp_coef(1)` and can never go below it; the clamp inside keys on
+`T_raw` and only zeroes the derivative. With `T_min = 1e-5` (0.49 eV) and `T_min_neg = 3e-5`
+(1.47 eV), `L1 = 0.73 eV` sits ABOVE `T_min`, so eta is already capped at **17.2x** its 4.9 eV
+value against a true 10.8x at 1.0 eV, 30.7x at 0.5 eV and 66x at 0.3 eV. Eta is if anything
+OVER-estimated at 1 eV; the shortfall below 0.5 eV is 1.8-3.8x, not the 11x quoted from the older
+`T_min = 1e-4` setup. `initialise_parameters` now prints the effective floor so this cannot be
+rediscovered. The binding limiter is `T_min_neg`, which is the GLOBAL positivity floor and moves
+every T-dependent term with it - not a free knob.
+
+**THE LIVE CANDIDATE: the sub-eV atomic-physics cliff.**
+`particles/mod_particle_evolution.f90:396`
+
+    limits = (n_e_raw .le. 1e14) .or. (T_e_raw*K_BOLTZ/EL_CHG .le. 1.d0) &
+                                 .or. (T_i_raw*K_BOLTZ/EL_CHG .le. 1.d0)
+
+One boolean, and it disables **ionisation** (`:434`, `:558`), **radiation** (`:428`, `:572`) and
+**CX** (`:464`) together. The code's own comment at `:464` already suspects it: *"CX uses adas as
+well. Te limit could be lower."* A 1 eV divertor with all three switched off cannot cool or
+recycle properly, which drives `rho` and `T` down and `j_sat ~ rho*sqrt(Ti+Te)` with them - and
+`|zj_sat|` area-mean on type 1 fell **40 %** (2.23e-2 -> 1.35e-2) in the outputs before the
+317-step collapse.
+
+**Measure before changing.** The three conditions are already separate terms in one `.or.`, so a
+per-cause breakdown is nearly free: fraction disabled by density, by `T_e`, by `T_i`, and the
+ionisation / CX / radiation source lost to each, correlated against the active-row `j_sat`
+minimum. Only then replace the shared boolean with per-process bounds taken from the actual ADAS
+table domains - clamping the interpolation coordinates to the table minimum, or a controlled
+low-temperature continuation. Deleting the guard is not an option; it exists because the tables
+end.
+
+## 7.6 Priority
+
+1. **One corrected 1+5 run** - the 517-step configuration with `sheath_zj_ratio_max = 0`, to
+   ~1000 steps. Decisive: passes 317; `W min` and `D min` bounded; no rows below the floor;
+   active `ePhi/kTe` max stays BELOW the global max; `|zj_sat|` stops collapsing; GMRES count and
+   accepted timestep stationary. Then continue to the same PHYSICAL DURATION as the type-1
+   reference, not the same step count.
+2. **`qjac` + `sign(xjac)` + demand diagnostics**, diagnostic-only (section 7.7).
+3. **Sub-eV gate breakdown** (7.5), report-only first.
+4. **Type-9 surgery repair** - the four cheap fixes in section 6.5's neighbourhood: stop after the
+   first type-9 hit in an element, deduplicate the removal lists, protect genuine type-5 labels
+   from the 99 rewrite, revalidate connectivity. No node moves, so it is testable on the existing
+   restart.
+5. **Edge-level activation** replacing the endpoint OR at
+   `mod_boundary_matrix_open.f90:227`, and `qjac`-informed grazing classification blending to a
+   complete tangent-wall condition for BOTH u and zj.
+6. **Frame rebuild** only if `qjac` still shows poor ACTIVE edges after 4 and 5. It needs a fresh
+   equilibrium and must not be bundled with 5.
+
+**Explicitly NOT on the critical path: a nonlinear corrector in the timestepper.** The evidence
+does not support it as the cause of anything observed - the weak residual converged (1.718 ->
+0.274, monotone) while the state drifted, which is the signature of a plasma evolution, not of an
+unconverged boundary row. That is not proof that outer iteration would never help; it is the
+absence of a reason to change the core timestepper now.
+
+## 7.7 The qjac diagnostic
+
+At `mod_boundary_matrix_open.f90:303`, where `xjac` is already computed, record per boundary
+Gauss point:
+
+    qjac = |xjac| / (|x_s| * |x_t|)     dimensionless local conditioning, in [0,1]
+    sign(xjac)                          a SIGN CHANGE IS A HARD MESH ERROR, not a threshold
+    local side, endpoint boundary types, R, Z
+    rho, Ti, Te, |B.n|/|B|, cs, zj, zj_sat, |zj/zj_sat|
+
+`qjac` is what the equations actually experience; the nodal determinant of section 6.3 is only its
+corner limit, up to the two `element%size` factors. Six of these are free at that point;
+**element number is NOT** - `ielm` reaches `boundary_matrix_open` only under the
+`COMPARE_ELEMENT_MATRIX` ifdef (`construct_matrix_mod.f90:182-188`), so it needs an argument
+added at a shared call site.
+
+**Keep it diagnostic-only until the distribution is known.** The cross-check it exists to give:
+does `qjac` order the types the way the nodal determinant did (mean 0.88 / 0.87 / 0.38 / 0.05 on
+types 1 / 5 / 4 / 9)? If yes, `detmin = 0.3` is validated. If no, `detmin` measures the wrong
+thing and the 517-step 1+4 result needs re-reading. A threshold chosen before that measurement is
+invented - `detmin = 0.3` was defensible only because type 1, the configuration that runs 3900
+steps, had 0.0 % of its nodes below it.
+
+## 7.8 Things that are settled - do not re-litigate
 
 Recorded so they are not re-derived a fourth time. Each has been claimed otherwise by at least one
 review.
