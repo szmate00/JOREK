@@ -583,14 +583,6 @@ do ms=1, n_gauss
                            ws * dl * BigR * TWOPI / dble(n_plane), dzj_wgt,             &
                            sheath_V_wall_at(BigR), BigR)
 
-      ! --- DIAGNOSTIC ONLY (mod_sheath_geom_diag): the element mapping Jacobian and the local
-      ! --- state at this Gauss point. Nothing here feeds back into the row. bdotn is dimensional
-      ! --- B.n, so normalise it here - the whole point of this record is to separate "grazing"
-      ! --- from "low density" as the reason zj_sat vanishes, and that needs the ANGLE.
-      call sheath_geom_add(bnd_type1, xjac, x_s(ms), y_s(ms), x_t(ms), y_t(ms),          &
-                           x_g(ms), y_g(ms), r0_corr, Ti0_corr, Te0_corr,                &
-                           abs(bdotn) / max(Btot, 1.d-300), cs0, zj0, dzj_sat)
-
       ! --- sheath_current differentiates w.r.t. the FLOORED state, so chain the floors through
       ! --- before these are used as Jacobian entries against the solution variables.
       dzj_d2 = dzj_d2 * dcorr_neg_dens_drho1(r0)
@@ -700,6 +692,23 @@ do ms=1, n_gauss
         wk_res  = wk_res  / wk_den
         wk_dfac = 1.d0 / wk_den**2
       endif
+
+      ! --- DIAGNOSTIC ONLY (mod_sheath_geom_diag). Nothing here feeds back into any row.
+      ! --- Placed at the END of this block on purpose: wk_wgt is only final after the validity
+      ! --- gate and the u-fade above, and it is what separates the Gauss points that actually
+      ! --- contribute to a replaced row from those the endpoint OR merely reaches.
+      ! ---
+      ! --- bdotn is passed UNMODIFIED. It is already b_n = B.n/|B| (:421 divides by Btot; :468
+      ! --- recovers dimensional B.n as bdotn*Btot; :521 compares it directly with sheath_min_bn).
+      ! --- An earlier version divided by Btot a second time and understated the grazing angle by
+      ! --- ~2.5-2.8x. g_bn and Btot go too, so zj_sat = c_sat*rho*(|g|cs + v_perp)/|B| decomposes
+      ! --- exactly - g is a tanh of |b_n| (:429), not proportional to it, so it cannot be
+      ! --- reconstructed from the angle. dS is the same measure sheath_diag_add is given, so
+      ! --- areas are comparable between the two diagnostics.
+      call sheath_geom_add(bnd_type1, vertex(1), xjac, x_s(ms), y_s(ms), x_t(ms), y_t(ms), &
+                           x_g(ms), y_g(ms), r0_corr, Ti0_corr, Te0_corr,                  &
+                           abs(bdotn), cs0, g_bn, Btot, zj0, dzj_sat,                      &
+                           ws * dl * BigR * TWOPI / dble(n_plane), wk_wgt)
     endif
 
     do i=1,2                ! loop over nodes
