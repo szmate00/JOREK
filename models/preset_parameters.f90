@@ -372,6 +372,9 @@ subroutine preset_parameters
   loop_voltage = 0.d0
   ! --- Dirichlet
   bcs(:)%dirichlet%psi     = .true.
+  sheath_Lambda            = 3.d0     ! ln sqrt(m_i/2 pi m_e); only used by bcs%floating_u
+  sheath_V_wall            = 0.d0     ! volts
+  bcs(:)%floating_u        = .false.  ! .false. = ordinary u Dirichlet, bit-identical
   bcs(:)%dirichlet%u       = .true.
   bcs(:)%dirichlet%zj      = .true.
   bcs(:)%dirichlet%w       = .true.

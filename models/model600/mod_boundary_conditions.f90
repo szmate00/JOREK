@@ -37,7 +37,10 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        RMP_start_time, tstep, RMP_har_cos, RMP_har_sin, T_min,                                             &
        mach_one_bnd_integral, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,                            &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
-       bcs, loop_voltage, central_density, central_mass 
+       bcs, loop_voltage, central_density, central_mass,                                                   &
+       sheath_V_wall
+use mod_floating_u, only: floating_u_norm, floating_u_dcorr
+use corr_neg, only: corr_neg_temp1
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -93,6 +96,11 @@ real*8  :: cs0, cs0_T, cs0_TT, cs0_TTT
 real*8  :: bn_b, bn_b_abs, hfact_b, hfact_bb, bn_1, bn_2, ps2_b, element_size_2
 integer :: ilarge_vp, ilarge_vp2, bnd_type
 integer :: kp, j, err, itest, i_mid, i_bnd, idir, iv_dir, iv_perp_dir, k_max
+!> Prescribed floating-potential BC (bcs%floating_u). fu_var_T is the temperature trace variable
+!! this build evolves: Te under WITH_TiTe, otherwise the single T - and floating_u_norm has already
+!! halved Lambda for that case, so ONE coefficient covers both builds.
+real*8  :: fu_a_n, fu_C_T, fu_C_V, fu_dcorr, fu_Tval, fu_u, fu_T, fu_targ, fu_coef
+integer :: fu_var_T
 integer :: n_rmp_harm, N_rmp_har_block_size
 
 real*8  :: R_out, Z_out, s_elm, t_elm, QR,QR_s,QR_t,QR_st,QR_ss,QR_tt,QZ,QZ_s,QZ_t,QZ_st,QZ_ss,QZ_tt
@@ -222,6 +230,8 @@ do i=1, n_local_elms !=== do elements
       normal_direction = (/R_mid - R_center, Z_mid - Z_center /) / norm2((/R_mid - R_center, Z_mid - Z_center /))
 
       bnd_type = node_list%node(inode)%boundary
+      fu_var_T = var_T
+      if ( with_TiTe ) fu_var_T = var_Te
 
       do in=a_mat%i_tor_min, a_mat%i_tor_max  ! === do n_tor
       
@@ -345,6 +355,56 @@ do i=1, n_local_elms !=== do elements
                 call boundary_conditions_add_one_entry(                 &
                        index_node, k, in, index_node, k, in,            &
                        zbig, index_min, index_max, a_mat)
+
+                ! --- PRESCRIBED FLOATING POTENTIAL, V_p - V_wall = Lambda*k_B*Te/e.
+                ! --- The entry above is the ordinary Dirichlet diagonal; here it is completed
+                ! --- into the affine constraint
+                ! ---
+                ! ---     u - C_T*corr_neg(Te) - C_V*V_wall = 0
+                ! ---
+                ! --- by adding the Te cross-column and the residual RHS, so the matrix
+                ! --- conditioning differs from plain u = 0 only by that one extra column.
+                ! ---
+                ! --- Written on exactly the trace DOFs the enclosing loop already selects - the
+                ! --- value and the pure TANGENTIAL derivatives - because differentiating a
+                ! --- constant-coefficient relation along the boundary is exact DOF by DOF:
+                ! ---     value:      u_val = C_T*corr(Te_val) + C_V*V_wall
+                ! ---     tangential: u_d   = C_T*corr'(Te_val)*Te_d
+                ! --- Both are EXACT, not linearised: the Jacobian entries are constants and no
+                ! --- term is neglected. V_wall enters the value equation only, and only the
+                ! --- axisymmetric harmonic.
+                ! ---
+                ! --- Corners are safe by construction, not by ordering: the row is idempotent, a
+                ! --- node shared by two floating edges is visited once per incident edge, each
+                ! --- visit constrains that edge's own tangential DOF, and the value row is
+                ! --- written identically both times.
+                ! ---
+                ! --- Nothing here forms B.n, divides by the element Jacobian, or converts
+                ! --- logical derivatives into (R,Z). u and Te share the same nodal frame, so its
+                ! --- scaling cancels identically between the two terms - which is why one closure
+                ! --- serves every wall boundary type.
+                if ( (k == var_u) .and. bcs(bnd_type)%floating_u ) then
+                  call floating_u_norm(fu_a_n, fu_C_T, fu_C_V)
+                  fu_Tval = node_list%node(inode)%values(in, 1, fu_var_T)
+                  call floating_u_dcorr(fu_Tval, fu_dcorr)
+                  fu_u = node_list%node(inode)%values(in, index_tmp, var_u)
+                  fu_T = node_list%node(inode)%values(in, index_tmp, fu_var_T)
+                  if ( index_tmp .eq. 1 ) then
+                    fu_targ = fu_C_T * corr_neg_temp1(fu_Tval)
+                    if ( in .eq. 1 ) fu_targ = fu_targ + fu_C_V * sheath_V_wall
+                    fu_coef = fu_C_T
+                  else
+                    fu_targ = fu_C_T * fu_dcorr * fu_T
+                    fu_coef = fu_C_T * fu_dcorr
+                  endif
+                  call boundary_conditions_add_one_entry(                     &
+                         index_node, var_u, in, index_node, fu_var_T, in,     &
+                         - zbig * fu_coef, index_min, index_max, a_mat)
+                  call boundary_conditions_add_RHS(                           &
+                         index_node, var_u, in, index_min, index_max, RHS_loc,&
+                         - zbig * ( fu_u - fu_targ ),                         &
+                         a_mat%i_tor_min, a_mat%i_tor_max)
+                endif
               enddo
             enddo
             

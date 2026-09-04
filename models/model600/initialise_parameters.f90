@@ -4,6 +4,7 @@ subroutine initialise_parameters(my_id, filename)
 use tr_module
 use phys_module
 use mod_plasma_functions, only: initialise_reference_parameters
+use mod_floating_u, only: floating_u_selftest
 use vacuum
 use pellet_module
 use live_data
@@ -210,6 +211,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 fluid_configs, init_particles_only,                 &
                 find_RZ_nearby_iter, find_RZ_nearby_tol,            &
                 min_sheath_angle, bcs, part_kill_ratio,             &
+                sheath_Lambda, sheath_V_wall,                       &
                 use_sc, add_sources_in_sc, visco_sc_num,            &
                 D_perp_sc_num, D_par_sc_num, ZK_perp_sc_num,        &
                 ZK_par_sc_num, ZK_i_perp_sc_num, ZK_i_par_sc_num,   &
@@ -385,6 +387,39 @@ if ( my_id == 0 ) then
   endif
 
   call initialise_reference_parameters()
+
+  ! --- PRESCRIBED FLOATING POTENTIAL: validate, and refuse to run rather than run wrong.
+  ! --- A sign error in the normalisation would reverse every ExB drift this BC creates, so the
+  ! --- self-test is a hard gate, not a warning.
+  if ( any(bcs(:)%floating_u) ) then
+    if ( .not. floating_u_selftest(my_id) ) then
+      write(*,*) 'ERROR: floating_u normalisation self-test FAILED. Refusing to run.'
+      stop
+    endif
+    do i = 1, max_bnd_types
+      if ( .not. bcs(i)%floating_u ) cycle
+      if ( bcs(i)%natural%u ) then
+        write(*,*) 'ERROR: bcs(', i, ')%floating_u with natural%u = .true. The natural route'
+        write(*,*) '       leaves u free for charge continuity to determine; floating_u'
+        write(*,*) '       PRESCRIBES it. Set natural%u = .false. on this type.'
+        stop
+      endif
+      if ( .not. bcs(i)%dirichlet%u ) then
+        ! --- not an error: floating_u IS a Dirichlet-class trace condition and simply needs the
+        ! --- row. Enable it rather than making the user coordinate two flags by hand.
+        bcs(i)%dirichlet%u = .true.
+        if (my_id .eq. 0) write(*,'(A,i3,A)') ' NOTE: bcs(', i, ')%floating_u sets dirichlet%u = .true.'
+      endif
+      if (my_id .eq. 0) write(*,'(A,i3,A)') &
+        ' NOTE: boundary type', i, ' carries the prescribed floating potential V_p-V_wall = Lambda*kTe/e'
+    enddo
+    if (my_id .eq. 0) then
+      write(*,*) 'NOTE: floating_u is the LOCAL ZERO-CURRENT limit of the sheath characteristic.'
+      write(*,*) '      It carries no net wall current, so it cannot produce thermoelectric'
+      write(*,*) '      target currents or model a conducting vessel closing current through'
+      write(*,*) '      the wall. See doc/floating_u_derivation.pdf.'
+    endif
+  endif
 
 end if
 

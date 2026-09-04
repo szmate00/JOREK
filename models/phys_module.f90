@@ -193,10 +193,30 @@ module phys_module
     logical :: nre  
   end type type_natural_bc
 
+  !> Sheath transmission factor Lambda = ln sqrt(m_i/(2 pi m_e)) ~ 3, used by the prescribed
+  !! floating-potential boundary condition bcs(i)%floating_u: V_p - V_wall = Lambda*k_B*Te/e.
+  real*8  :: sheath_Lambda
+  !> Wall bias in VOLTS for the same condition. A uniform value is a gauge - Phi shifts everywhere
+  !! and E = -grad(Phi) does not - so it changes no drift; it is here for completeness and for
+  !! future non-uniform biasing.
+  real*8  :: sheath_V_wall
+
   type type_bcs                           
     type (type_dirichlet_bc) :: dirichlet
     type (type_natural_bc)   :: natural
     logical                  :: mach1 
+    !> Prescribe the LOCAL FLOATING potential at this boundary type: V_p - V_wall = Lambda*kTe/e.
+    !! In JOREK variables this is the AFFINE relation u = C_T*Te + C_V*V_wall (see
+    !! models/model600/mod_floating_u.f90 and doc/floating_u_derivation.pdf), imposed on the value
+    !! and every pure tangential trace DOF - the same trace space an ordinary Dirichlet uses. It is
+    !! linear, so it needs no Newton iteration, no clipping, no saturation slope, no
+    !! incidence-angle floor and no relaxation. It never forms B.n, never divides by the element
+    !! Jacobian and never converts logical derivatives into (R,Z), so the u and Te trace DOFs share
+    !! the same nodal frame and its scaling cancels identically - which is why the same closure is
+    !! valid on boundary types 1, 4, 5 and 9 alike. Mutually exclusive with natural%u.
+    !! HONEST SCOPE: this is the zero-current limit of the sheath characteristic; it carries no net
+    !! wall current and cannot produce thermoelectric currents.
+    logical                  :: floating_u
   end type type_bcs
 
   type (type_bcs), dimension(max_bnd_types) :: bcs   

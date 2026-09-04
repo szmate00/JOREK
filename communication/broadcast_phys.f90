@@ -269,6 +269,8 @@ if (my_id .eq. 0) then
   call MPI_PACK(Vpar_smoothing,         1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(Vpar_smoothing_coef,    3,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(min_sheath_angle    ,   1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(sheath_Lambda,          1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(sheath_V_wall,          1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(central_density,        1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(central_mass,           1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(loop_voltage,           1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
@@ -291,6 +293,7 @@ if (my_id .eq. 0) then
     call MPI_PACK(bcs(i)%dirichlet%A3     , 1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
     
     call MPI_PACK(bcs(i)%mach1            , 1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+    call MPI_PACK(bcs(i)%floating_u       , 1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
 
     call MPI_PACK(bcs(i)%natural%rho      , 1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
     call MPI_PACK(bcs(i)%natural%T        , 1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
@@ -1261,6 +1264,8 @@ if (my_id .ne. 0) then
   call MPI_UNPACK(buffer,bufsize,position,vpar_smoothing,         1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,Vpar_smoothing_coef,    3,MPI_REAL8,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,min_sheath_angle    ,   1,MPI_REAL8,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,sheath_Lambda,          1,MPI_REAL8,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,sheath_V_wall,          1,MPI_REAL8,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,central_density,        1,MPI_REAL8,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,central_mass,           1,MPI_REAL8,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,loop_voltage,           1,MPI_REAL8,MPI_COMM_WORLD,ierr)
@@ -1283,6 +1288,7 @@ if (my_id .ne. 0) then
     call MPI_UNPACK(buffer,bufsize,position,bcs(i)%dirichlet%A3     , 1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
 
     call MPI_UNPACK(buffer,bufsize,position,bcs(i)%mach1            , 1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
+    call MPI_UNPACK(buffer,bufsize,position,bcs(i)%floating_u       , 1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
 
     call MPI_UNPACK(buffer,bufsize,position,bcs(i)%natural%rho      , 1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
     call MPI_UNPACK(buffer,bufsize,position,bcs(i)%natural%T        , 1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)

@@ -1,0 +1,265 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=25mm]{geometry}
+\usepackage{amsmath,amssymb,booktabs,microtype}
+\usepackage[colorlinks,linkcolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+\usepackage{xcolor}
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\ephi}{\bm{e}_\phi}
+\usepackage{bm}
+\newenvironment{keybox}{\par\medskip\noindent\rule{\linewidth}{0.4pt}\par\smallskip%
+\leftskip=1em \rightskip=1em\relax}{\par\smallskip\leftskip=0pt \rightskip=0pt\noindent\rule{\linewidth}{0.4pt}\par\medskip}
+
+\title{The prescribed floating-potential boundary condition in \code{model600}\\
+\large Normalisation, sign convention, and the linear trace constraint}
+\author{Derived from the JOREK source; every step checkable against a named file and line}
+\date{}
+
+\begin{document}\maketitle
+
+\begin{abstract}
+\noindent
+We impose $V_p-V_{\rm wall}=\Lambda k_BT_e/e$ with $\Lambda=3$ on the plasma potential at a
+material wall --- the local zero-current (floating) limit of the sheath characteristic. This note
+derives, from the JOREK variables and the code's own coordinate convention, the exact linear
+relation between the stream function $u$ and the electron temperature that this condition becomes,
+and the two coefficients that enter the assembled matrix row. The condition is \emph{linear} in the
+evolved variables, so it needs no Newton iteration, no clipping, no incidence-angle floor and no
+relaxation parameter. The one genuinely delicate step is the sign, which two comments in the
+current source state in opposite ways; we settle it from the coordinate basis rather than from
+either comment.
+\end{abstract}
+
+\section{What is being imposed, and what is not}
+
+For a Maxwellian plasma at a surface drawing zero net current, the sheath drops
+\begin{equation}
+  V_p-V_{\rm wall}=\Lambda\,\frac{k_BT_e}{e},\qquad
+  \Lambda=\ln\!\sqrt{\frac{m_i}{2\pi m_e}}\approx 3 .
+  \label{eq:float}
+\end{equation}
+This is the \emph{floating} potential: the value at which the retarded electron flux exactly
+cancels the ion saturation flux. Prescribing it is a deliberate reduction of the full
+Langmuir characteristic $j=j_{\rm sat}(1-e^{-X})$ to its single zero-current point.
+
+\begin{keybox}
+\textbf{Honest scope.} Eq.~\eqref{eq:float} imposes a \emph{local, zero-current} closure. It
+cannot carry a net wall current, so it cannot produce thermoelectric currents between targets, and
+it is not a model of a conducting vessel closing current through the wall. What it does give ---
+and what the full characteristic also gives --- is a wall potential that follows $T_e$, hence a
+tangential electric field and an $\bm{E}\times\bm{B}$ drift wherever $T_e$ varies along the wall.
+\end{keybox}
+
+\section{JOREK variables and the two normalisations}
+
+The reduced-MHD ansatz uses the poloidal flux $\psi$ and the velocity stream function $u$. Two
+conversions to SI are needed. With $n_0={\tt central\_density}\times10^{20}$,
+$m_i={\tt central\_mass}\times m_u$ and $\rho_0=n_0m_i$,
+\begin{equation}
+  V_p\,[\mathrm{V}]=\frac{F_0\,u}{\sqrt{\mu_0\rho_0}},
+  \qquad
+  k_BT_e\,[\mathrm{J}]=\frac{T_e^{\rm JOREK}}{\mu_0 n_0}.
+  \label{eq:norm}
+\end{equation}
+The second is JOREK's pressure normalisation ($p=\rho T$ with $\rho$ in units of $\rho_0$ and
+pressure in units of $1/\mu_0$). The first is the statement $\Phi=F_0u$ in JOREK units, converted
+to volts by the velocity normalisation $1/\sqrt{\mu_0\rho_0}$; its \emph{sign} is the subject of
+the next section.
+
+\section{The sign, settled from the basis and not from a comment}
+\label{sec:sign}
+
+\subsection{Why this needs care}
+
+Two comments in the present source state opposite conventions:
+\code{mod\_sheath\_bc.f90:207} says $\Phi=-F_0u$, while
+\code{mod\_boundary\_conditions.f90:876} says $\Phi=+F_0u$. They cannot both be right, and the
+choice flips the direction of every $\bm{E}\times\bm{B}$ drift the boundary condition drives.
+
+The ambiguity is genuine and not resolvable from the equations alone, because $\psi$ and $u$ each
+carry their own sign convention which absorbs the basis handedness. Writing the $\bm{E}\times\bm{B}$
+velocity as
+\begin{equation}
+  \bm{v}_E=\frac{\bm{E}\times\bm{B}}{B^2},\qquad \bm{E}=-\nabla\Phi,
+  \qquad
+  \bm{B}\simeq\frac{F_0}{R}\ephi
+  \;\Longrightarrow\;
+  \bm{v}_{E,\rm pol}=-\frac{R}{F_0}\left(\nabla\Phi\times\ephi\right)
+\end{equation}
+and comparing with the implemented $\bm{v}_{\rm pol}=cR(\nabla u\times\ephi)$ gives $\Phi=-cF_0u$.
+Everything therefore rests on the sign $c$, which depends on how $\nabla u\times\ephi$ is expanded
+--- i.e.\ on the handedness of the basis.
+
+\subsection{The basis, from three independent places in the code}
+
+JOREK uses $(\bm{e}_R,\bm{e}_Z,\ephi)$ \emph{right-handed}, so
+$\bm{e}_R\times\bm{e}_Z=+\ephi$ and $\phi$ runs clockwise viewed from above. This is not a comment;
+it is visible three ways:
+\begin{enumerate}\itemsep2pt
+\item \code{diagnostics/jorek2\_povray.f90:102--103} and
+      \code{vacuum/mod\_vacuum\_fields.f90:1172--1173} map
+      $x=R\cos\phi$, $y=-R\sin\phi$. The minus fixes the handedness.
+\item \code{particles/mod\_fields.f90:590--596}: \code{rot\_tmp} is the right-handed curl for
+      $(R,Z,\phi)$ with scale factors $(1,1,R)$. Applied to the code's own $\bm{A}$ it returns the
+      code's own $\bm{B}$ exactly; in the standard $(R,\phi,Z)$ basis it returns $-\bm{B}$ in all
+      three components, so the test discriminates.
+\item \code{diagnostics/new\_diag/mod\_expression.f90:1354}: $J_{\rm tor}=-z_j/R$, the third curl
+      component in that basis.
+\end{enumerate}
+
+\subsection{The consequence}
+
+In this basis $\bm{e}_R\times\ephi=-\bm{e}_Z$ and $\bm{e}_Z\times\ephi=+\bm{e}_R$, so
+\begin{equation}
+  \nabla u\times\ephi=\left(u_Z,\,-u_R\right).
+\end{equation}
+The implemented poloidal velocity is, from \code{particles/mod\_fields.f90:581--582},
+\begin{equation}
+  \bm{v}_{\rm pol}=\left(-R\,u_Z,\;+R\,u_R\right)=-R\left(\nabla u\times\ephi\right),
+\end{equation}
+i.e.\ $c=-1$, which is exactly the ansatz of H\"olzl \emph{et al.} 2021 (eq.~26). Hence
+\begin{equation}
+  \boxed{\;\Phi=+F_0\,u\;}
+\end{equation}
+and the code's $u$ equals the paper's. The $\Phi=-F_0u$ comment arose from comparing the
+implemented components against the paper while implicitly using the \emph{standard}
+$(R,\phi,Z)$ basis; the same components read as $-R\nabla u\times\ephi$ in JOREK's basis and
+$+R\nabla u\times\ephi$ in the standard one, and the discrepancy was attributed to $u$ rather than
+to the basis.
+
+\begin{keybox}
+\textbf{Consequence for this implementation.} \code{sheath\_norm} in
+\code{mod\_sheath\_bc.f90} returns $a_n<0$ and must \emph{not} be reused. The floating-potential
+module carries its own normalisation helper with $a_n>0$, and a unit test pins it.
+\end{keybox}
+
+\section{From the physical condition to the JOREK trace constraint}
+
+Insert \eqref{eq:norm} into \eqref{eq:float}:
+\begin{equation}
+  \frac{F_0u}{\sqrt{\mu_0\rho_0}}-V_{\rm wall}
+  =\frac{\Lambda}{e}\,\frac{T_e^{\rm JOREK}}{\mu_0n_0}.
+\end{equation}
+Solving for $u$ and introducing the two standard groups
+\begin{equation}
+  a_n=\frac{2eF_0\sqrt{\mu_0\rho_0}}{m_i},
+  \qquad
+  v_w=e\,V_{\rm wall}\,\mu_0 n_0,
+\end{equation}
+gives, using $\rho_0=n_0m_i$,
+\begin{equation}
+  \boxed{\;
+  u=C_T\,T_e+C_V\,V_{\rm wall},
+  \qquad
+  C_T=\frac{2\Lambda}{a_n},
+  \qquad
+  C_V=\frac{2e\mu_0n_0}{a_n}=\frac{\sqrt{\mu_0\rho_0}}{F_0}.
+  \;}
+  \label{eq:constraint}
+\end{equation}
+Equivalently $u=2(\Lambda T_e+v_w)/a_n$. Note $a_n$ carries the sign of $F_0$, so reversing the
+toroidal field reverses $u$ while leaving the reconstructed physical potential unchanged --- as it
+must, since \eqref{eq:float} contains no field direction.
+
+\paragraph{Single-temperature builds.} When \code{with\_TiTe} is false the model evolves $T=T_i+T_e$
+with $T_e=T/2$, so $C_T$ is halved: $u=\Lambda T/a_n+C_VV_{\rm wall}$.
+
+\section{Why no linearisation is required}
+
+Eq.~\eqref{eq:constraint} is \emph{affine} in the evolved variables $(u,T_e)$ at fixed $\Lambda$.
+Writing the implicit step for increments $\delta u,\delta T_e$ about the current state,
+\begin{equation}
+  \delta u-C_T\,\delta T_e=-\left(u^{n}-C_TT_e^{n}-C_VV_{\rm wall}\right)\equiv-g^{n},
+\end{equation}
+which is exact: there is no neglected higher-order term, the Jacobian entries $(1,-C_T)$ are
+constants, and the residual $g^n$ vanishes identically once the constraint is satisfied. This is
+the entire content of the boundary row.
+
+\begin{keybox}
+\textbf{This is the structural reason the condition is robust.} The full characteristic
+$j=j_{\rm sat}(1-e^{-X})$ is nonlinear in $u$ through $\exp$, saturates at $j_{\rm sat}$, and has a
+Jacobian $\partial j/\partial u\propto j_{\rm sat}\,e^{-X}$ that vanishes both in ion saturation
+\emph{and} wherever $j_{\rm sat}\to0$ (grazing incidence). Every gate, slope, floor and trust region
+in the current-carrying implementation exists to manage that. Eq.~\eqref{eq:constraint} has none of
+those failure modes: its Jacobian is the constant $(1,-C_T)$, it never inverts a characteristic, and
+it never divides by $B_n$, $g(b_n)$, $j_{\rm sat}$ or the element Jacobian.
+\end{keybox}
+
+\section{Which degrees of freedom the constraint acts on}
+
+Because $\Lambda$ is a constant, \eqref{eq:constraint} may be differentiated along the boundary
+degree of freedom by degree of freedom:
+\begin{equation}
+  u^{\rm val}-C_TT_e^{\rm val}=C_VV_{\rm wall},
+  \qquad
+  u^{\partial_\ell}-C_TT_e^{\partial_\ell}=0,
+  \qquad
+  u^{\partial_\ell^2}-C_TT_e^{\partial_\ell^2}=0,\;\dots
+\end{equation}
+where $\partial_\ell$ denotes the pure tangential derivatives carried by the trace space. The
+constant $V_{\rm wall}$ appears only in the value equation, and only in the axisymmetric harmonic.
+
+Two properties follow, and they are the reason this closure is immune to the grid pathologies that
+defeated the current-carrying route:
+\begin{itemize}\itemsep2pt
+\item \textbf{No geometry enters.} The constraint never forms $B_n$, never divides by the element
+      Jacobian $x_{\rm jac}$, and never converts logical derivatives into $(R,Z)$. The $u$ and
+      $T_e$ trace DOFs are stored in the \emph{same} nodal frame, so whatever that frame is ---
+      including a near-degenerate one --- its scaling cancels identically between the two terms.
+\item \textbf{No normal derivative is touched.} Only the value and pure tangential DOFs are
+      constrained; the normal and mixed DOFs remain governed by the PDE, exactly as for an ordinary
+      Dirichlet condition.
+\end{itemize}
+Imposing the value alone is \emph{not} acceptable: the unconstrained Hermite tangent derivative then
+generates large curvature between nodes, which $w=\Delta^\!*u$ reads directly.
+
+\section{Numerical verification of the normalisation}
+
+Evaluated with the constants as \code{models/constants.f90} defines them
+($\mu_0=4\pi\times10^{-7}$, $e=1.602176565\times10^{-19}$,
+$m_u=1.660539040\times10^{-27}$) at the AUG~38773 parameters
+${\tt central\_density}=1.011088$, ${\tt central\_mass}=2.01410174369812$, $F_0=2.972306$:
+
+\begin{center}\small
+\begin{tabular}{lll}
+\toprule
+quantity & value & \\
+\midrule
+$\rho_0$                        & $3.381578331801\times10^{-7}$ & kg\,m$^{-3}$\\
+$\sqrt{\mu_0\rho_0}$            & $6.518754986874\times10^{-7}$ & \\
+volts per unit $u$              & $4.559622206978\times10^{6}$  & V\\
+$a_n$                           & $1.856385001490\times10^{2}$  & \\
+$C_T=2\Lambda/a_n$, $\Lambda=3$ & $3.232088168772\times10^{-2}$ & \\
+$C_V=\sqrt{\mu_0\rho_0}/F_0$    & $2.193164158359\times10^{-7}$ & $u$ per volt\\
+$T_e^{\rm JOREK}$ for $1$\,eV   & $2.035678524691\times10^{-5}$ & \\
+$u$ for $T_e=1$\,eV             & $6.579492475076\times10^{-7}$ & \\
+\midrule
+reconstructed $V_p-V_{\rm wall}$ & $3.000000000000$ & V \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The round trip closes exactly, and the identity $2e\mu_0n_0/a_n=\sqrt{\mu_0\rho_0}/F_0$ holds to
+all printed digits, which checks the algebra of \eqref{eq:constraint} independently.
+
+\begin{keybox}
+\textbf{Use the code's constants, not CODATA-2018.} \code{constants.f90} carries
+$e=1.602176565\times10^{-19}$ and $m_u=1.660539040\times10^{-27}$, which are the 2010 values. A
+unit test written with modern constants disagrees in the 8th significant figure --- close enough to
+look like a rounding difference and far enough to mask a real error.
+\end{keybox}
+
+\section{What this derivation does \emph{not} establish}
+
+\begin{itemize}\itemsep2pt
+\item That the discrete problem is stable. The constraint is exact and its Jacobian is constant,
+      but $u$ and $w=\Delta^\!*u$ form a mixed system and freezing boundary $w$ at a restart value
+      is not a complete treatment of an evolving $u$ trace.
+\item That the resulting drift is resolved. $\bm{v}_E\cdot\bm{n}\propto R\,C_T\,\partial_\ell T_e$
+      is a real normal flow; whether the density advection it drives sits inside the stable
+      cell-P\'eclet range of the central scheme is a separate, measurable question.
+\item That a frozen $\psi$ boundary is compatible with that normal drift.
+\end{itemize}
+Each is an acceptance test, not an assumption, and each is measured rather than assumed in the
+implementation plan.
+
+\end{document}
