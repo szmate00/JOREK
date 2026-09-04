@@ -408,10 +408,17 @@ if ( my_id == 0 ) then
         ' NOTE: boundary type', i, ' carries the prescribed floating potential V_p-V_wall = Lambda*kTe/e'
     enddo
     if (my_id .eq. 0) then
-      write(*,*) 'NOTE: floating_u is the LOCAL ZERO-CURRENT limit of the sheath characteristic.'
-      write(*,*) '      It carries no net wall current, so it cannot produce thermoelectric'
-      write(*,*) '      target currents or model a conducting vessel closing current through'
-      write(*,*) '      the wall. See doc/floating_u_derivation.pdf.'
+      write(*,*) 'NOTE: floating_u is a PRESCRIBED-POTENTIAL boundary condition. It imposes the'
+      write(*,*) '      value the potential would take at zero net current, but it does NOT'
+      write(*,*) '      enforce zero current: only the u rows are replaced, zj keeps its ordinary'
+      write(*,*) '      treatment, so the wall current is whatever the solution produces and is'
+      write(*,*) '      not computed self-consistently. It is therefore not a current-conserving'
+      write(*,*) '      floating-wall closure. See doc/floating_u_derivation.pdf.'
+      write(*,*) 'NOTE: every connected material-wall segment should carry this closure. A'
+      write(*,*) '      floating/non-floating junction puts a one-element potential jump on a'
+      write(*,*) '      continuous wall, and since v_E.n follows the TANGENTIAL derivative of u'
+      write(*,*) '      that is an artificial wall jet. Check the boundary types listed above'
+      write(*,*) '      against the types your grid actually has.'
     endif
   endif
 

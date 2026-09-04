@@ -39,8 +39,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                                   &
        sheath_V_wall
-use mod_floating_u, only: floating_u_norm, floating_u_dcorr
-use corr_neg, only: corr_neg_temp1
+use mod_floating_u, only: floating_u_norm
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -99,7 +98,7 @@ integer :: kp, j, err, itest, i_mid, i_bnd, idir, iv_dir, iv_perp_dir, k_max
 !> Prescribed floating-potential BC (bcs%floating_u). fu_var_T is the temperature trace variable
 !! this build evolves: Te under WITH_TiTe, otherwise the single T - and floating_u_norm has already
 !! halved Lambda for that case, so ONE coefficient covers both builds.
-real*8  :: fu_a_n, fu_C_T, fu_C_V, fu_dcorr, fu_Tval, fu_u, fu_T, fu_targ, fu_coef
+real*8  :: fu_a_n, fu_C_T, fu_C_V, fu_u, fu_T, fu_targ
 integer :: fu_var_T
 integer :: n_rmp_harm, N_rmp_har_block_size
 
@@ -383,23 +382,36 @@ do i=1, n_local_elms !=== do elements
                 ! --- logical derivatives into (R,Z). u and Te share the same nodal frame, so its
                 ! --- scaling cancels identically between the two terms - which is why one closure
                 ! --- serves every wall boundary type.
+                ! --- RAW Te, NOT a positivity-mapped Te. Two reasons, and the second is fatal
+                ! --- to the alternative:
+                ! ---
+                ! ---  1. A NONLINEAR MAP CANNOT BE APPLIED COEFFICIENT BY COEFFICIENT. `in` is a
+                ! ---     toroidal HARMONIC index, not a physical location, so corr_neg(Te_n) is
+                ! ---     meaningless for n /= 0: a ZERO non-axisymmetric temperature coefficient
+                ! ---     maps to corr_neg(0) = 0.84 eV and would inject a spurious ~2.5 V
+                ! ---     potential harmonic out of nothing. Harmless at n_tor = 1, where in = 1
+                ! ---     IS the physical value, and fundamentally wrong in 3D.
+                ! ---  2. With the map, g = u - C_T*f(Te) - C_V*Vw has the temperature column
+                ! ---     -C_T*f'(Te), the tangential relation acquires an f''*Te_l column on the
+                ! ---     VALUE DOF, and neither is constant. The relation stops being affine and
+                ! ---     the "exact, not linearised" claim stops being true.
+                ! ---
+                ! --- Using the evolved Te makes u = C_T*Te + C_V*Vw exactly affine, exact mode by
+                ! --- mode, with the constant Jacobian (1, -C_T) and no cross-DOF terms. Negative
+                ! --- temperatures are the global positivity scheme's job; repairing them
+                ! --- nonlinearly inside a spectral boundary condition is worse than the disease.
                 if ( (k == var_u) .and. bcs(bnd_type)%floating_u ) then
                   call floating_u_norm(fu_a_n, fu_C_T, fu_C_V)
-                  fu_Tval = node_list%node(inode)%values(in, 1, fu_var_T)
-                  call floating_u_dcorr(fu_Tval, fu_dcorr)
-                  fu_u = node_list%node(inode)%values(in, index_tmp, var_u)
-                  fu_T = node_list%node(inode)%values(in, index_tmp, fu_var_T)
-                  if ( index_tmp .eq. 1 ) then
-                    fu_targ = fu_C_T * corr_neg_temp1(fu_Tval)
-                    if ( in .eq. 1 ) fu_targ = fu_targ + fu_C_V * sheath_V_wall
-                    fu_coef = fu_C_T
-                  else
-                    fu_targ = fu_C_T * fu_dcorr * fu_T
-                    fu_coef = fu_C_T * fu_dcorr
-                  endif
+                  fu_u    = node_list%node(inode)%values(in, index_tmp, var_u)
+                  fu_T    = node_list%node(inode)%values(in, index_tmp, fu_var_T)
+                  fu_targ = fu_C_T * fu_T
+                  ! --- V_wall is a constant, so it enters the VALUE equation only, and only the
+                  ! --- axisymmetric harmonic. Every derivative equation is homogeneous.
+                  if ( (index_tmp .eq. 1) .and. (in .eq. 1) ) &
+                    fu_targ = fu_targ + fu_C_V * sheath_V_wall
                   call boundary_conditions_add_one_entry(                     &
                          index_node, var_u, in, index_node, fu_var_T, in,     &
-                         - zbig * fu_coef, index_min, index_max, a_mat)
+                         - zbig * fu_C_T, index_min, index_max, a_mat)
                   call boundary_conditions_add_RHS(                           &
                          index_node, var_u, in, index_min, index_max, RHS_loc,&
                          - zbig * ( fu_u - fu_targ ),                         &

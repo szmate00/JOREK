@@ -51,7 +51,6 @@ module mod_floating_u
   private
 
   public :: floating_u_norm, floating_u_target, floating_u_volts, floating_u_selftest
-  public :: floating_u_dcorr
 
 contains
 
@@ -98,10 +97,10 @@ end subroutine floating_u_norm
 !> The prescribed boundary value of u and its exact derivative with respect to the temperature
 !! trace variable.
 !!
-!! The positivity map matters: during a nonlinear excursion a negative numerical Te must not be
-!! turned into a REVERSED sheath potential. corr_neg_temp1 is the same smooth map the model
-!! equations use, and it is the identity to numerical precision in the physical positive-temperature
-!! regime, so this adds no fitted cap of its own.
+!! RAW temperature, deliberately. A positivity map here would make the relation nonlinear (so the
+!! "exact, not linearised" property would be lost) and, worse, would be applied to Fourier
+!! COEFFICIENTS at the assembly site, which is meaningless for n /= 0. Negative temperatures are
+!! the global positivity scheme's responsibility.
 !!
 !! @param T_raw   the evolved temperature trace variable (Te with WITH_TiTe, otherwise T)
 !! @param V_wall  wall bias in volts
@@ -109,46 +108,20 @@ end subroutine floating_u_norm
 !! @param du_dT   d(u_b)/d(T_raw), exact, including the positivity map's derivative
 subroutine floating_u_target(T_raw, V_wall, u_b, du_dT)
 
-  use corr_neg, only: corr_neg_temp1
-
   implicit none
   real*8, intent(in)  :: T_raw, V_wall
   real*8, intent(out) :: u_b, du_dT
 
-  real*8 :: a_n, C_T, C_V, T_pos, dTpos_dT
+  real*8 :: a_n, C_T, C_V
 
   call floating_u_norm(a_n, C_T, C_V)
 
-  T_pos = corr_neg_temp1(T_raw)
-  call floating_u_dcorr(T_raw, dTpos_dT)
-
-  u_b   = C_T * T_pos + C_V * V_wall
-  du_dT = C_T * dTpos_dT
+  ! --- RAW T. No positivity map: see the note at the assembly site. The relation must stay
+  ! --- affine and mode-decoupled, so du/dT is the constant C_T.
+  u_b   = C_T * T_raw + C_V * V_wall
+  du_dT = C_T
 
 end subroutine floating_u_target
-
-
-!> d(corr_neg_temp1)/dT. Kept here rather than assumed to be 1, because the whole point of the
-!! positivity map is the regime where it is NOT 1.
-pure subroutine floating_u_dcorr(T_raw, dTpos_dT)
-
-  use phys_module, only: T_min_neg, T_1, corr_neg_temp_coef
-
-  implicit none
-  real*8, intent(in)  :: T_raw
-  real*8, intent(out) :: dTpos_dT
-
-  real*8 :: L1, L2, Tref
-
-  Tref = T_min_neg
-  if ( T_min_neg .lt. 0.d0 ) Tref = T_1
-  L1 = Tref * corr_neg_temp_coef(1)
-  L2 = Tref * corr_neg_temp_coef(2)
-
-  dTpos_dT = 1.d0
-  if ( T_raw .lt. L1 + L2 ) dTpos_dT = exp( (T_raw - (L1+L2)) / L2 )
-
-end subroutine floating_u_dcorr
 
 
 !> Reconstruct the physical potential in VOLTS from u. One place, shared by the diagnostics, so the
@@ -174,8 +147,9 @@ end function floating_u_volts
 !! Checks, at the CURRENT namelist's normalisation:
 !!   1. the two independent forms of C_V agree;
 !!   2. a_n carries the sign of F0;
-!!   3. the round trip closes: Te of 1 eV must reconstruct to exactly Lambda volts;
-!!   4. reversing F0 reverses u but NOT the reconstructed volts.
+!!   3. the round trip closes: Te of 1 eV must reconstruct to exactly Lambda volts.
+!! It does NOT check the reversed-F0 case or a nonzero V_wall - those are covered by the
+!! standalone driver, not here, and this docstring previously overclaimed them.
 !! Returns .false. and prints on failure. It does not stop; the caller decides.
 logical function floating_u_selftest(my_id)
 
@@ -227,16 +201,6 @@ logical function floating_u_selftest(my_id)
       ' FLOATING_U SELFTEST FAIL: 1 eV must give Lambda volts:', volts, lam_eff
   endif
 
-  ! --- 5. REPORT the positivity map's effect on the gradient this BC exists to create.
-  ! --- corr_neg_temp1 is the identity only ABOVE its knee at L1+L2 = t_min_neg. With the usual
-  ! --- t_min_neg = 3e-5 that knee is at ~1.5 eV, i.e. INSIDE the divertor range, so a real
-  ! --- 0.3 -> 1.5 eV target profile is delivered to this boundary condition compressed - and
-  ! --- since v_E.n is proportional to the TANGENTIAL DERIVATIVE of u, the imposed drift is
-  ! --- attenuated by the same factor. That is not a defect of this module (the model equations
-  ! --- see the identical corrected Te everywhere) but it makes t_min_neg a PHYSICS choice for a
-  ! --- divertor study, so it is printed rather than silently inherited.
-  if ( my_id .eq. 0 ) call floating_u_report_map()
-
   if ( my_id .eq. 0 ) then
     write(*,'(A)')            ' --- floating_u normalisation ---'
     write(*,'(A,es22.14)')    '   a_n                     = ', a_n
@@ -253,47 +217,5 @@ logical function floating_u_selftest(my_id)
 
 end function floating_u_selftest
 
-
-!> Print what the positivity map does to a representative target temperature profile, and the
-!! resulting attenuation of dPhi/dl. Rank 0, setup only.
-subroutine floating_u_report_map()
-
-  use constants,   only: MU_ZERO, EL_CHG
-  use phys_module, only: central_density, T_min_neg, T_1, corr_neg_temp_coef, sheath_Lambda
-  use corr_neg,    only: corr_neg_temp1
-
-  implicit none
-  real*8  :: per_eV, Tref, knee, T, Tc, lo, hi, dtrue, dmap
-  integer :: k
-  real*8, parameter :: eV_list(4) = (/ 0.3d0, 0.5d0, 1.0d0, 3.0d0 /)
-
-  per_eV = EL_CHG * MU_ZERO * central_density * 1.d20     ! T_JOREK per eV
-  Tref = T_min_neg
-  if ( T_min_neg .lt. 0.d0 ) Tref = T_1
-  knee = Tref * ( corr_neg_temp_coef(1) + corr_neg_temp_coef(2) )
-
-  write(*,'(A,es10.3,A,f7.3,A)') '   positivity map: corr_neg knee at T = ', knee, &
-                                 '  ( ', knee/per_eV, ' eV )'
-  do k = 1, 4
-    T  = eV_list(k) * per_eV
-    Tc = corr_neg_temp1(T)
-    write(*,'(A,f6.2,A,f6.2,A,f6.3,A)') '     Te =', eV_list(k), ' eV  seen as', Tc/per_eV, &
-                                        ' eV   (x', Tc/max(T,1.d-300), ')'
-  enddo
-
-  lo = corr_neg_temp1(0.3d0*per_eV) / per_eV
-  hi = corr_neg_temp1(1.5d0*per_eV) / per_eV
-  dtrue = sheath_Lambda * (1.5d0 - 0.3d0)
-  dmap  = sheath_Lambda * (hi - lo)
-  write(*,'(A,f6.2,A,f6.2,A)') '     a 0.30 -> 1.50 eV target reads as', lo, ' ->', hi, ' eV'
-  write(*,'(A,f7.3,A,f7.3,A,f6.2,A)') '     so dPhi across it: true', dtrue, ' V  imposed', dmap, &
-                                      ' V   -> ATTENUATED', dtrue/max(dmap,1.d-30), 'x'
-  if ( dtrue .gt. 1.5d0*dmap ) then
-    write(*,'(A)') '     WARNING: t_min_neg puts the positivity knee inside the divertor range,'
-    write(*,'(A)') '              so the tangential E-field this BC creates is materially damped.'
-    write(*,'(A)') '              Lower t_min_neg (a GLOBAL choice) or state the attenuation.'
-  endif
-
-end subroutine floating_u_report_map
 
 end module mod_floating_u

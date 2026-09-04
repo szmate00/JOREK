@@ -215,8 +215,10 @@ module phys_module
     !! the same nodal frame and its scaling cancels identically - which is why the same closure is
     !! valid on boundary types 1, 4, 5 and 9 alike. It needs dirichlet%u, which setup enables
     !! automatically, and there is no competing u closure on this branch to exclude.
-    !! HONEST SCOPE: this is the zero-current limit of the sheath characteristic; it carries no net
-    !! wall current and cannot produce thermoelectric currents.
+    !! HONEST SCOPE: this PRESCRIBES the potential that a zero-current sheath would take; it does
+    !! NOT enforce zero current. Only the u rows are replaced - zj keeps its ordinary treatment -
+    !! so the wall current is whatever the solution produces, not a computed constraint. It cannot
+    !! produce thermoelectric currents and it is not a current-conserving floating-wall closure.
     logical                  :: floating_u
   end type type_bcs
 
