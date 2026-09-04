@@ -213,7 +213,8 @@ module phys_module
     !! incidence-angle floor and no relaxation. It never forms B.n, never divides by the element
     !! Jacobian and never converts logical derivatives into (R,Z), so the u and Te trace DOFs share
     !! the same nodal frame and its scaling cancels identically - which is why the same closure is
-    !! valid on boundary types 1, 4, 5 and 9 alike. Mutually exclusive with natural%u.
+    !! valid on boundary types 1, 4, 5 and 9 alike. It needs dirichlet%u, which setup enables
+    !! automatically, and there is no competing u closure on this branch to exclude.
     !! HONEST SCOPE: this is the zero-current limit of the sheath characteristic; it carries no net
     !! wall current and cannot produce thermoelectric currents.
     logical                  :: floating_u

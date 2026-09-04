@@ -398,12 +398,6 @@ if ( my_id == 0 ) then
     endif
     do i = 1, max_bnd_types
       if ( .not. bcs(i)%floating_u ) cycle
-      if ( bcs(i)%natural%u ) then
-        write(*,*) 'ERROR: bcs(', i, ')%floating_u with natural%u = .true. The natural route'
-        write(*,*) '       leaves u free for charge continuity to determine; floating_u'
-        write(*,*) '       PRESCRIBES it. Set natural%u = .false. on this type.'
-        stop
-      endif
       if ( .not. bcs(i)%dirichlet%u ) then
         ! --- not an error: floating_u IS a Dirichlet-class trace condition and simply needs the
         ! --- row. Enable it rather than making the user coordinate two flags by hand.
