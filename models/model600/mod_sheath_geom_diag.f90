@@ -246,14 +246,14 @@ subroutine sheath_geom_report(my_id)
   real*8  :: gn(nbt), ga(nbt), gaa(nbt), gqs(nbt), gqm(nbt), gqa(nbt), gzs(nbt), gzm(nbt)
   real*8  :: gsg(2,2,nbt)
   real*8  :: gqh(nbin,nbt), gqha(nbin,nbt), gzh(nbin,nbt), gzha(nbin,nbt)
-  real*8  :: mx(2), gmx(2), pay(npay), gpay(npay), nhit(1), gnhit(1)
+  real*8  :: mx(2), gmx(2), pay(npay), gpay(npay), rnk(1), grnk(1)
 
   ! --- MPI_Reduce fills the receive buffers on rank 0 only; the debug build initialises reals to
   ! --- signalling NaN, so an untouched buffer on another rank would trap when read below.
   gn = 0.d0 ; ga = 0.d0 ; gaa = 0.d0 ; gqs = 0.d0 ; gqm = 0.d0 ; gqa = 0.d0
   gzs = 0.d0 ; gzm = 0.d0 ; gsg = 0.d0
   gqh = 0.d0 ; gqha = 0.d0 ; gzh = 0.d0 ; gzha = 0.d0
-  gmx = 0.d0 ; gpay = 0.d0 ; gnhit = 0.d0 ; nhit = 0.d0
+  gmx = 0.d0 ; gpay = 0.d0 ; grnk = 0.d0 ; rnk = 0.d0
 
   call MPI_Reduce(sg_n,    gn,  nbt, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
   call MPI_Reduce(sg_a,    ga,  nbt, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
@@ -282,6 +282,10 @@ subroutine sheath_geom_report(my_id)
     ! --- collective. An earlier draft of this very line had 15 items against 14 descriptors.
     do ib = 1, nbt
       if ( gn(ib) .le. 0.d0 ) cycle
+      ! --- gqa is the -1.d30 sentinel when a type has NO active points (measured: type 9 under
+      ! --- sheath_weak_detmin), and f6.4 prints that as ******. Show a plain 0 and let the
+      ! --- 'active=  0.0 %' beside it carry the meaning.
+      if ( gqa(ib) .lt. 0.d0 .or. gqa(ib) .gt. 1.d0 ) gqa(ib) = 0.d0
       write(*,'(A,i3,A,i0,A,es10.3,A,f5.1,A,f6.4,A,f6.4,A,es10.3)')                     &
         '         bnd type', ib,                                                        &
         ' pts=',        nint(gn(ib)),                                                    &
@@ -309,10 +313,16 @@ subroutine sheath_geom_report(my_id)
   endif
 
   ! --- The two located points. Each rank keeps its own worst; the global max of the metric is
-  ! --- shared, and the single rank holding it contributes its payload while every other rank
-  ! --- contributes zeros, so a SUM reduce delivers the winner without a point-to-point exchange.
-  ! --- nhit counts how many ranks matched, so an exact tie - which would corrupt the sum - is
-  ! --- reported rather than printed as a plausible-looking wrong point.
+  ! --- shared, and exactly ONE rank contributes its payload while every other contributes zeros,
+  ! --- so a SUM reduce delivers the winner without a point-to-point exchange.
+  ! ---
+  ! --- TIES ARE SYSTEMATIC, NOT ACCIDENTAL, and an earlier version assumed otherwise. Elements on
+  ! --- an MPI partition boundary are processed by more than one rank, so the SAME Gauss point is
+  ! --- recorded twice with bit-identical values - a guaranteed exact tie, not a 1-in-2^52 fluke.
+  ! --- MEASURED on 1+4: two ranks tied and the summed payload printed R = 3.21, Z = -2.23 (outside
+  ! --- the vessel), g_bn = 1.84 (the Chodura factor cannot exceed 1) and w_eff = 1.63 (a weight
+  ! --- cannot exceed 1); every field halved to a valid value. So the winner is now chosen by
+  ! --- LOWEST RANK among those holding the maximum, which is unique by construction.
   do ip = 1, 2
     if ( ip .eq. 1 ) then
       mx(1) = sg_wd(1) ; pay = sg_wd
@@ -320,21 +330,15 @@ subroutine sheath_geom_report(my_id)
       mx(1) = sg_ws(1) ; pay = sg_ws
     endif
     call MPI_Allreduce(mx(1), gmx(1), 1, MPI_REAL8, MPI_MAX, MPI_COMM_WORLD, ierr)
-    nhit(1) = 0.d0
-    if ( mx(1) .ne. gmx(1) ) then
-      pay = 0.d0
-    else
-      nhit(1) = 1.d0
-    endif
-    call MPI_Reduce(pay,     gpay,     npay, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
-    call MPI_Reduce(nhit(1), gnhit(1), 1,    MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
+    ! --- lowest rank holding the maximum wins; 1.d30 for every rank that does not hold it
+    rnk(1) = 1.d30
+    if ( mx(1) .eq. gmx(1) ) rnk(1) = dble(my_id)
+    call MPI_Allreduce(rnk(1), grnk(1), 1, MPI_REAL8, MPI_MIN, MPI_COMM_WORLD, ierr)
+    if ( dble(my_id) .ne. grnk(1) ) pay = 0.d0
+    call MPI_Reduce(pay, gpay, npay, MPI_REAL8, MPI_SUM, 0, MPI_COMM_WORLD, ierr)
 
     if ( my_id .ne. 0 ) cycle
     if ( gmx(1) .le. -1.d29 ) cycle
-    if ( nint(gnhit(1)) .ne. 1 ) then
-      write(*,'(A,i0,A)') '         (', nint(gnhit(1)),                                  &
-        ' ranks tied on this metric; the located point below is a SUM and is not meaningful)'
-    endif
     if ( ip .eq. 1 ) then
       write(*,'(A,es10.3)') '         WORST DEMAND  max|zj/zj_sat| = ', gpay(1)
     else
