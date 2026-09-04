@@ -585,28 +585,42 @@ is `g(b_n)` running 0 -> 1 at roughly fixed density. **It is grazing, not low de
 `v_perp = 2.2e-5`, so v_perp is **215x larger** and holds the floor almost single-handed. It still
 cannot rescue the point - reaching `zj_sat = 1e-4` would need `v_perp = 19 % of c_s`.
 
-## 7.4 What actually ends the runs: a local thermal collapse
+## 7.4 What actually ends the runs: the worst point that survives the gate
 
-Located by the diagnostic on 1+4 at step ~495:
+Located by the diagnostic on 1+4 at step ~495. **Read these in ORDER - the first line where
+anything is wrong is E, and an earlier version of this section misread the sequence as a trend
+and concluded the opposite.**
 
-    out       R        Z    qjac      rho        Te   Te(eV)        zj    zj_sat      |B|
-      D  1.2528  -1.1319  0.9660  8.22e-3  2.51e-5     1.23  -2.36e-2  -2.75e-3     2.38
-      E  1.2630  -1.0107  0.3003  2.64e-3  8.17e-4    40.03  -6.44e-1  -1.52e-3     2.36
-      F  1.2629  -1.0115  0.3219  5.14e-2  1.50e-5     0.73   4.24e+2  -4.59e-4     4.64
-      G  1.2573  -1.0358  0.8112  2.50e-3  1.50e-5     0.73  -2.02e+9  -2.45e-12  2.08e+6
+    out    weak       R        Z    qjac  Te(eV)        zj   w_eff   ratio
+      D  0.1138  1.2528  -1.1319  0.9660    1.23  -2.36e-2  0.0138    8.57   healthy
+      E  6.942   1.2630  -1.0107  0.3003   40.03  -6.44e-1  0.7452     425   <-- CRASH BEGINS
+      F  14.13   1.2629  -1.0115  0.3219    0.73   4.24e+2  1.0000   9.2e5   after
+      G     -    1.2573  -1.0358  0.8112    0.73  -2.02e+9  1.0000       -   gone
 
-At F, **`Ti = Te = 1.50e-5` EXACTLY** - that is `0.5*t_min_neg`, the corr_neg asymptote, 0.73 eV.
-The temperature has gone to zero and only the positivity floor is holding it. Simultaneously
-**`rho` spikes 19x** at the same point: a condensation. `|B|` runs away AFTER, not before. And the
-pre-crash worst point was already at **1.23 eV**, sitting on the 1 eV atomic-physics gate and
-cooling for ~100 steps.
+**At E the initiating point is at 40 eV.** Not cold. The 0.73 eV corr_neg-floor signature and the
+19x `rho` condensation appear only at F, one output LATER, with the blow-up already underway.
+**The thermal collapse is a CONSEQUENCE, not a cause.** A `Te_keV` plot at cycle 490 settles it:
+the domain minimum is 0.678 eV and sits in the PFR, while the divertor legs still carry 20-60 eV
+bands - exactly as they should.
 
-`zj` grows four orders (2.4e-2 -> 424) while `zj_sat` falls one. **The numerator moves far more
-than the denominator** - this is not a `j_sat` collapse driving the demand.
+What is actually special about the initiating point:
 
-`mod_particle_evolution.f90:396` disables ionisation, radiation AND CX together below 1 eV, so
-once a cell crosses that line there is no physics left to arrest it. **That is the limiting
-problem, and no sheath parameter touches it.**
+    qjac    0.9660 (D)  ->  0.3003 (E)      type 4's ACTIVE qjac min is 0.2844
+    w_eff   0.0138      ->  0.7452          D's point was nearly FADED OUT; E's is fully active
+    Te      1.23 eV     ->  40 eV           hot, not cold
+    zj      -2.36e-2    ->  -6.44e-1        27x, at a badly conditioned point
+
+The D point was a red herring - faded out and doing nothing. **The crash starts at essentially the
+worst-conditioned point that SURVIVES `sheath_weak_detmin = 0.3`.** And `zj = Delta*psi` is a
+second-derivative quantity, so poor conditioning inflates precisely it. Type 4's failure is
+geometry all the way down; `detmin = 0.3` was simply set too permissively.
+
+Consistency check the plot supplies: 8.17e-4 JOREK = 40.0 eV = 0.040 keV, exactly the plot's
+magenta contour level, so the located point sits on it.
+
+**The sub-eV atomic gate is still a real problem** - the PFR IS at ~0.7 eV at cycle 490, and
+`mod_particle_evolution.f90:396` disables ionisation, radiation AND CX together below 1 eV - but it
+did NOT end this run and must not be promoted on the strength of a post-crash number.
 
 ## 7.5 Precursors - which ones work
 
@@ -650,17 +664,11 @@ and the in-out difference. If a lower `s` has no steady state because the plasma
 
 ## 7.7 Priority, revised
 
-1. **The sub-eV atomic gate** (`mod_particle_evolution.f90:396`). Report-only first: fraction
-   disabled by density, by `T_e`, by `T_i`, and the ionisation / CX / radiation source lost to
-   each, correlated against the active-row `j_sat` minimum. The three conditions are already
-   separate terms in one `.or.`, so the breakdown is nearly free. Then replace the shared boolean
-   with per-process bounds from the ADAS table domains - clamping the interpolation coordinates,
-   or a controlled low-temperature continuation. Deleting the guard is not an option; the tables
-   end where they end. **NOTE the causal wording**: the cutoff discontinuously changes the
-   particle, momentum and energy balances and can reduce replenishment, lowering `rho` and hence
-   `j_sat`; the SIGN of its net temperature effect must be measured, not assumed - removing
-   radiation reduces cooling, removing ionisation removes both a particle source and an energy
-   sink, and removing CX changes both exchanges.
+1. **`sheath_weak_detmin = 0.5` on 1+4.** The single cheapest decisive test in the list: one
+   namelist number, and 7.4 says the crash initiates at qjac 0.3003 against an active minimum of
+   0.2844. Type 4's active qjac histogram is populated from bin 4 up, so it costs ~25 % more of
+   type 4's area (57.7 % active -> perhaps 40 %). If 1+4 then runs materially past 495, type 4 is
+   a pure geometry problem and the gate was merely too permissive.
 2. **The u-side grazing term, for TYPE 5 ONLY.** Keep the weak `zj` row; ADD a `b_n`-weighted
    Robin term on the `u` equation, `w_t*kappa*(u - u_float)` with
    `w_t = min_bn^2/(b_n^2 + min_bn^2)`. Measured, that gives `w_t = 1.000` at both located points
@@ -673,14 +681,21 @@ and the in-out difference. If a lower `s` has no steady state because the plasma
    `Phi = Lambda*Te/e`. Floating requires zero TOTAL normal current including cross-field and any
    wall circuit, and with `sheath_V_wall = 0` this vessel is GROUNDED, so a pinned-potential
    closure is at least as defensible. The two bracket a real uncertainty and are far apart.
-3. **One cheap discriminator first**: `detmin = 0.5` on 1+4. The crash point had `qjac = 0.300`
-   against type 4's active minimum of 0.284 - the worst few per cent, just above the gate. It
-   would cost ~25 % more of type 4's area. Expect the temperature signature to dominate, but it
-   is one run.
+3. **The sub-eV atomic gate** (`mod_particle_evolution.f90:396`). Still real - the PFR sits at
+   ~0.7 eV - but demoted from first place because it did not end the 1+4 run. Report-only first:
+   fraction disabled by density, by `T_e`, by `T_i`, and the ionisation / CX / radiation source
+   lost to each, correlated against the active-row `j_sat` minimum. The three conditions are
+   already separate terms in one `.or.`, so the breakdown is nearly free. Then replace the shared
+   boolean with per-process bounds from the ADAS table domains. Deleting the guard is not an
+   option; the tables end where they end. **NOTE the causal wording**: the cutoff discontinuously
+   changes the particle, momentum and energy balances and can reduce replenishment, lowering `rho`
+   and hence `j_sat`; the SIGN of its net temperature effect must be MEASURED, not assumed -
+   removing radiation reduces cooling, removing ionisation removes both a particle source and an
+   energy sink, and removing CX changes both exchanges.
 4. **Type-9 surgery repair** - the four cheap fixes, no node moves, testable on the existing
    restart.
 5. **Edge-level activation** replacing the endpoint OR at `mod_boundary_matrix_open.f90:227`.
-6. **Frame rebuild** only if qjac still shows poor ACTIVE edges after 4 and 5. Needs a fresh
+6. **Frame rebuild** only if qjac still shows poor ACTIVE edges after 1, 4 and 5. Needs a fresh
    equilibrium.
 
 **NOT on the critical path: a nonlinear corrector in the timestepper.** The weak residual
