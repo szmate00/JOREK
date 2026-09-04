@@ -712,7 +712,80 @@ and the in-out difference. If a lower `s` has no steady state because the plasma
 converged while the state drifted, which is a plasma signature, not an unconverged boundary row.
 That is not proof outer iteration would never help - just no reason to touch the core timestepper.
 
-## 7.8 Things that are settled - do not re-litigate
+## 7.8 The natural-flux route already failed - chronology, so it is not re-proposed as new
+
+This section documents the weak-row campaign. The route it REPLACED is not written down here, and
+losing that history is how a "conservative normal-current numerical flux" came to be proposed as
+an untried alternative. It is not untried.
+
+* corrected `natural%zj` ALONE, no sheath characteristic: ~330 steps, clean. The
+  current-definition boundary term and its normal-derivative DOFs are validated.
+* `dirichlet%zj = .true.`: the wall current cannot respond and the j-V loop is OPEN - I_Ampere
+  constant to four digits while I_wall ran -15540 -> -23 A.
+* corrected `natural%zj` + free `zj` + the natural-u sheath flux correction: the plasma current
+  DID respond and **the run diverged in ~4 steps**. Ramping and reversing the sign did not cure it.
+* that failure is what motivated the weak trace-row formulation, which then ran type 1 ~3900 steps.
+
+**And a "direct normal-current" reformulation is algebraically IDENTICAL to what died:**
+
+    implemented (:734):   -int v R (zj_sh - zj0)*sh_Bn*dl
+    proposed:             -int v R (q_n,sh - zj*B_n),  q_n,sat = zj_sat*B_n
+                       => -int v R (zj_sh - zj0)*B_n          the same term
+
+With `sheath_v_perp = 0` it is a re-notation. The genuinely new content is only the `max(Vpar*B_n,
+0)` ion flux and the UNFACTORED characteristic `q_i,n - q_e0,n*exp(-e(Phi-Vw)/Te)`, in which the
+electron thermal flux is not scaled by the same factor as the ion flux - real physics for a
+subsonic target, but not obviously a stability fix.
+
+**The cold-start hypothesis, one run and decisive.** `mod_boundary_matrix_open.f90:620` records a
+MEASURED 4-step blow-up with the signature *"ePhi/kTe 0.00/0.01/0.03, e-limited 100 %, I_sheath
+-12 kA against I_Ampere +1 kA"*. We reproduced that signature on 1+5 with
+`sheath_init_u = .false.` - ePhi/kTe 0.00/0.00/0.06, e-limited 100.0 %, I_wall -21.7 kA against
++0.7 kA - and it did NOT die, because the trust region caught it. The chronology fits:
+
+    natural route tested (9f760916c)                      2026-08-24
+    sheath_init_u_all                                     2026-08-24
+    sheath_weak_rmax "so a cold start cannot blow it up"   2026-08-25   <- POST-DATES it
+
+and `sheath_weak_rmax` is WEAK-ROUTE ONLY; the natural term at `:734` has no residual bound. The
+record says ramping and sign reversal were tried; it does not say `sheath_init_u` was.
+
+**TEST BEFORE ANY REFORMULATION WORK: natural%u + corrected natural%zj + `sheath_init_u = .true.`,
+~20 steps.** Clears 4 => the route was abandoned prematurely. Still dies at 4 with the wall
+starting at floating and near-zero initial demand => there is a structural instability and an
+energy analysis comes first.
+
+**Two notes for whoever designs it.** The `oint v (j*-j).n` construction IS legitimate - the
+"strong form, therefore spurious" comment at `mod_boundary_conditions.f90:1196` and
+`initialise_parameters.f90:485` is too categorical, since `int v div(j)` by parts exposes exactly
+that flux and the difference form vanishes at consistency. **But algebraic consistency is not
+discrete stability**, and the strong-form CG operator was never shown to form an energy-stable
+pair with it. A consistency test (`q_sh = q_plasma` => correction vanishes) passes TRIVIALLY by
+construction and cannot discriminate; the energy/work budget is the test that can.
+
+And `B_n = +- psi_s/(R*dl)` EXACTLY - `psi_t` and `xjac` both drop out analytically - so B.n can be
+taken from the trace alone. Verified, but the round-off benefit is ~7e-16 at qjac 0.3: hygiene, not
+a cure. **The frame-sensitive quantity is `Btot` (:417)**, where `psi_t` enters with no
+cancellation and `zj_sat ~ 1/Btot`; measured |B| 2.36 -> 4.64 at a qjac 0.32 point during the 1+4
+crash. Fix that one if the energy analysis needs a frame-independent operator.
+
+## 7.9 The standard the BC has to meet
+
+Every threshold in 7.6 was calibrated against the configuration that happened to be failing, which
+does not transfer to the next equilibrium. **Type 1 alone ran ~3900 steps to timeout, converged,
+with defaults and no tuning at all** - so the formulation works out of the box on a surface built
+by the flux-aligned generator. What the parameters compensate for is a GRID defect (type 4 has
+zero area above qjac 0.9) and a MISSING LIMIT (the characteristic has nothing to say as
+`b_n -> 0`). Neither is a boundary-condition problem, and `detmin` contains the first rather than
+curing it.
+
+Target: `sheath_Lambda` and `sheath_V_wall` (physics), `sheath_sat_slope` demonstrated not to
+matter by the insensitivity scan, and every other sheath parameter ZERO in production. Judge any
+proposal by whether it removes parameters on principle or adds another calibrated number. And add
+this acceptance criterion: **the production namelist must run the type-1-only case and reproduce
+the ~3900-step converged reference within tolerance.**
+
+## 7.10 Things that are settled - do not re-litigate
 
 Recorded so they are not re-derived a fourth time. Each has been claimed otherwise by at least one
 review.
