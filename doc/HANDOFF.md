@@ -1,3 +1,11 @@
+# SUPERSEDED - see doc/HANDOFF_sheath_multitype.md
+
+> This document describes branch `bc-tests` and is kept for history only. Several of its
+> conclusions have since been falsified by measurement - in particular it reports the 1+4
+> configuration as failed, which was true only before `sheath_weak_detmin` existed. Do not use its
+> namelist recommendations. The authoritative account is
+> **`doc/HANDOFF_sheath_multitype.md`, section 7**.
+
 # Handoff: JOREK sheath boundary condition + HFSHD investigation
 
 Repo: JOREK MHD. Branch `bc-tests`, commit `8f6534ad8`. model600, ASDEX Upgrade shot 38773,

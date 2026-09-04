@@ -300,6 +300,11 @@ Row replacement is binary, so any "fade" has to be the decision whether to write
 
 ## 5.6 The working namelist
 
+> **Superseded by section 7.6.** The `sheath_init_u`, `sheath_zj_ratio_max` and
+> `sheath_sat_slope` advice below is the pre-`detmin` version and is wrong on all three counts.
+> The block here is kept because the REQUIRED flags (`dirichlet%zj = .false.` and the rest) are
+> still correct and explained.
+
     bcs(1)%sheath_zj_weak = .true.
     bcs(1)%dirichlet%zj   = .false.   ! REQUIRED - a pinned zj OPENS the j-V loop
     bcs(1)%natural%zj     = .false.   ! NOT required on the weak route
@@ -369,7 +374,12 @@ to the wall polygon (`:1258, :1322, :1326, :1385, :1389, :1633-1642, :1682-1692`
 
 **Two different mesh generators.** No namelist symmetry makes them the same kind of object.
 
-## 6.3 The node frames differ, and that is the whole story
+## 6.3 The node frames differ - the whole story for types 4 and 9, NOT for type 5
+
+> **Scope correction, 2026-09-04.** When this section was written the frame difference looked like
+> the single explanation. Measurement since (section 7.3) shows it accounts for types 4 and 9 and
+> NOT for type 5, whose ACTIVE geometry is healthy (qjac min 0.239, sub-0.3 tail ~0 % of area) and
+> whose problem is grazing. Read this section as the type-4/9 diagnosis.
 
 Flux-grid node (`:1113-1114`):
 
