@@ -200,6 +200,9 @@ module phys_module
   !! and E = -grad(Phi) does not - so it changes no drift; it is here for completeness and for
   !! future non-uniform biasing.
   real*8  :: sheath_V_wall
+  !> Per-step boundary diagnostic for the floating-u BC: trace residual, imposed
+  !! normal ExB speed, cell Peclet number and boundary rho/T minima, per boundary type.
+  logical :: floating_u_diag
 
   type type_bcs                           
     type (type_dirichlet_bc) :: dirichlet

@@ -28,7 +28,7 @@ subroutine boundary_conditions( my_id, node_list, element_list, bnd_node_list, l
                                 xcase2, R_axis, Z_axis, psi_axis, psi_bnd,                &
                                 R_xpoint, Z_xpoint, psi_xpoint, a_mat)
 
-use constants, only : PI, MU_ZERO, ATOMIC_MASS_UNIT
+use constants, only : PI, MU_ZERO, ATOMIC_MASS_UNIT, EL_CHG
 use mod_assembly, only : boundary_conditions_add_one_entry, boundary_conditions_add_RHS
 use data_structure
 use vacuum, ONLY: is_freebound
@@ -38,7 +38,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        mach_one_bnd_integral, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,                            &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                                   &
-       sheath_V_wall
+       sheath_V_wall, floating_u_diag, D_perp
 use mod_floating_u, only: floating_u_norm
 use tr_module
 use mpi_mod
@@ -100,6 +100,13 @@ integer :: kp, j, err, itest, i_mid, i_bnd, idir, iv_dir, iv_perp_dir, k_max
 !! halved Lambda for that case, so ONE coefficient covers both builds.
 real*8  :: fu_a_n, fu_C_T, fu_C_V, fu_u, fu_T, fu_targ
 integer :: fu_var_T
+!> Floating-u boundary diagnostic (floating_u_diag). Per boundary type, MAX/MIN only.
+integer, parameter :: FD_NT = 12
+real*8  :: fd_res_max(FD_NT), fd_vn_max(FD_NT), fd_pe_max(FD_NT)
+real*8  :: fd_rho_min(FD_NT), fd_T_min(FD_NT), fd_pe_R(FD_NT), fd_pe_Z(FD_NT)
+real*8  :: fd_loc(2,FD_NT)
+real*8  :: fd_es, fd_ep, fd_dl, fd_h, fd_res, fd_vn, fd_pe, fd_sq
+integer :: fd_owner, fd_t
 integer :: n_rmp_harm, N_rmp_har_block_size
 
 real*8  :: R_out, Z_out, s_elm, t_elm, QR,QR_s,QR_t,QR_st,QR_ss,QR_tt,QZ,QZ_s,QZ_t,QZ_st,QZ_ss,QZ_tt
@@ -167,6 +174,12 @@ zbig_backup = zbig
 ! --- calculate node_indices
 call calculate_node_indices(node_indices)
 
+if ( floating_u_diag ) then
+  fd_res_max = -1.d0 ; fd_vn_max = -1.d0 ; fd_pe_max = -1.d0
+  fd_rho_min = huge(1.d0) ; fd_T_min = huge(1.d0)
+  fd_pe_R = 0.d0 ; fd_pe_Z = 0.d0
+endif
+
 do i=1, n_local_elms !=== do elements
 
   ielm = local_elms(i)
@@ -231,6 +244,57 @@ do i=1, n_local_elms !=== do elements
       bnd_type = node_list%node(inode)%boundary
       fu_var_T = var_T
       if ( with_TiTe ) fu_var_T = var_Te
+
+      ! --- FLOATING-U BOUNDARY DIAGNOSTIC ------------------------------------------
+      ! --- Per boundary type, at the AXISYMMETRIC harmonic only:
+      ! ---   fd_res  = |u - C_T*T - C_V*V_wall|   trace residual (the acceptance gate)
+      ! ---   fd_vn   = |v_E.n| = |R * du/dl|      normal ExB speed the BC imposes
+      ! ---   fd_pe   = |v_E.n| * h_perp / D_perp  cell Peclet number of that flow
+      ! ---   min rho, min T on the boundary trace
+      ! ---
+      ! --- v_E.n = R*du/dl is EXACT, not an estimate. For v_E = R grad(u) x e_phi in
+      ! --- the right-handed (e_R,e_Z,e_phi) basis, with edge tangent t = (R_b,Z_b)/dl
+      ! --- and normal n = (Z_b,-R_b)/dl,
+      ! ---     v_E.n = R*(du/dR * R_b + du/dZ * Z_b)/dl = R * u_b/dl.
+      ! --- So the normal ExB flow is driven by the TANGENTIAL derivative of u - which
+      ! --- is exactly what u = C_T*Te manufactures wherever Te varies along the wall.
+      ! ---
+      ! --- Only MAX and MIN are accumulated. Both are idempotent, so a halo element
+      ! --- visited by several ranks cannot inflate them the way an area integral would.
+      ! --- The element_size sign flips applied further down cancel in |u_b|/|dl|, so no
+      ! --- orientation convention enters any magnitude reported here.
+      if ( floating_u_diag .and. (bnd_type .ge. 1) .and. (bnd_type .le. FD_NT) ) then
+      if ( bcs(bnd_type)%floating_u .and.                                              &
+           (a_mat%i_tor_min .le. 1) .and. (a_mat%i_tor_max .ge. 1) ) then
+        call floating_u_norm(fu_a_n, fu_C_T, fu_C_V)
+        fd_es = element_list%element(ielm)%size(iv, iv_dir)      * H1_s(1,2)
+        fd_ep = element_list%element(ielm)%size(iv, iv_perp_dir) * H1_s(1,2)
+        fd_dl = sqrt( (node_list%node(inode)%x(1,iv_dir,1)      * fd_es)**2            &
+                    + (node_list%node(inode)%x(1,iv_dir,2)      * fd_es)**2 )
+        fd_h  = sqrt( (node_list%node(inode)%x(1,iv_perp_dir,1) * fd_ep)**2            &
+                    + (node_list%node(inode)%x(1,iv_perp_dir,2) * fd_ep)**2 )
+        fd_res = abs( node_list%node(inode)%values(1,1,var_u)                           &
+                      - fu_C_T * node_list%node(inode)%values(1,1,fu_var_T)             &
+                      - fu_C_V * sheath_V_wall )
+        fd_vn = 0.d0
+        if ( fd_dl .gt. 0.d0 )                                                          &
+          fd_vn = abs( node_list%node(inode)%x(1,1,1)                                   &
+                       * node_list%node(inode)%values(1,iv_dir,var_u) * fd_es / fd_dl )
+        fd_pe = 0.d0
+        if ( D_perp(1) .gt. 0.d0 ) fd_pe = fd_vn * fd_h / D_perp(1)
+        fd_res_max(bnd_type) = max( fd_res_max(bnd_type), fd_res )
+        fd_vn_max (bnd_type) = max( fd_vn_max (bnd_type), fd_vn  )
+        fd_rho_min(bnd_type) = min( fd_rho_min(bnd_type),                               &
+                                    node_list%node(inode)%values(1,1,var_rho) )
+        fd_T_min  (bnd_type) = min( fd_T_min  (bnd_type),                               &
+                                    node_list%node(inode)%values(1,1,fu_var_T) )
+        if ( fd_pe .gt. fd_pe_max(bnd_type) ) then
+          fd_pe_max(bnd_type) = fd_pe
+          fd_pe_R  (bnd_type) = node_list%node(inode)%x(1,1,1)
+          fd_pe_Z  (bnd_type) = node_list%node(inode)%x(1,1,2)
+        endif
+      endif
+      endif
 
       do in=a_mat%i_tor_min, a_mat%i_tor_max  ! === do n_tor
       
@@ -815,6 +879,43 @@ do i=1, n_local_elms !=== do elements
   enddo         !=== enddo vertex
  
 enddo           !=== do elements
+
+! --- FLOATING-U BOUNDARY DIAGNOSTIC: reduce and report -------------------------
+! --- MAX/MIN reductions are safe under halo duplication. Ranks that do not own the
+! --- axisymmetric harmonic contribute the sentinels and drop out of the extrema.
+if ( floating_u_diag ) then
+  do fd_t = 1, FD_NT
+    fd_loc(1,fd_t) = fd_pe_max(fd_t)
+    fd_loc(2,fd_t) = real(my_id,8)
+  enddo
+  call MPI_AllReduce(MPI_IN_PLACE, fd_res_max, FD_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fd_vn_max,  FD_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fd_rho_min, FD_NT, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fd_T_min,   FD_NT, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fd_loc,     FD_NT, MPI_2DOUBLE_PRECISION, MPI_MAXLOC, MPI_COMM_WORLD, err)
+  call floating_u_norm(fu_a_n, fu_C_T, fu_C_V)
+  fd_sq = fu_C_V * F0        ! = sqrt(mu0*rho0); v[m/s] = v[JOREK]/fd_sq
+  do fd_t = 1, FD_NT
+    if ( fd_loc(1,fd_t) .lt. 0.d0 ) cycle
+    fd_owner = nint(fd_loc(2,fd_t))
+    call MPI_Bcast(fd_pe_R(fd_t), 1, MPI_DOUBLE_PRECISION, fd_owner, MPI_COMM_WORLD, err)
+    call MPI_Bcast(fd_pe_Z(fd_t), 1, MPI_DOUBLE_PRECISION, fd_owner, MPI_COMM_WORLD, err)
+  enddo
+  if ( my_id .eq. 0 ) then
+    write(*,'(A)') ' [floating_u] type   |u-uf|[V]    |vE.n|[m/s]      Pe      Pe at (R,Z)          min rho    min T[eV]'
+    do fd_t = 1, FD_NT
+      if ( fd_res_max(fd_t) .lt. 0.d0 ) cycle
+      write(*,'(A,I3,4X,ES10.3,4X,ES10.3,4X,ES9.2,2X,A,F6.3,A,F7.3,A,4X,ES10.3,3X,ES10.3)') &
+        ' [floating_u] ', fd_t,                                    &
+        fd_res_max(fd_t) / fu_C_V,                                 &
+        fd_vn_max(fd_t)  / fd_sq,                                  &
+        fd_pe_max(fd_t),                                           &
+        '(', fd_pe_R(fd_t), ',', fd_pe_Z(fd_t), ')',               &
+        fd_rho_min(fd_t),                                          &
+        fd_T_min(fd_t) / ( MU_ZERO * central_density * 1.d20 * EL_CHG )
+    enddo
+  endif
+endif
 
 if (RMP_on) then
   if (allocated(psi_RMP_cos1))         call tr_deallocate(psi_RMP_cos1,"psi_RMP_cos1",CAT_UNKNOWN)

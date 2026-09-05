@@ -374,6 +374,7 @@ subroutine preset_parameters
   bcs(:)%dirichlet%psi     = .true.
   sheath_Lambda            = 3.d0     ! ln sqrt(m_i/2 pi m_e); only used by bcs%floating_u
   sheath_V_wall            = 0.d0     ! volts
+  floating_u_diag          = .false.  ! per-step floating-u boundary diagnostic
   bcs(:)%floating_u        = .false.  ! .false. = ordinary u Dirichlet, bit-identical
   bcs(:)%dirichlet%u       = .true.
   bcs(:)%dirichlet%zj      = .true.
