@@ -38,7 +38,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        mach_one_bnd_integral, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,                            &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                                   &
-       sheath_V_wall, floating_u_diag, D_perp, floating_u_mach_flux
+       sheath_V_wall, floating_u_diag, D_perp, mach1_omit_drift, floating_u_mach_flux
 use mod_floating_u, only: floating_u_norm
 use tr_module
 use mpi_mod
@@ -104,6 +104,11 @@ integer :: fu_var_T
 integer, parameter :: FD_NT = 12
 real*8  :: fd_res_max(FD_NT), fd_vn_max(FD_NT), fd_pe_max(FD_NT)
 real*8  :: fd_vin_max(FD_NT), fd_vout_max(FD_NT)
+!> Magnitude of the two competing pieces of the Mach1 VALUE row, per boundary type:
+!! the sound-speed term and the ExB drift compensation whose tangential derivative is
+!! missing from the slope row on bicubic elements. Their ratio IS the inconsistency.
+real*8  :: fd_m1cs_max(FD_NT), fd_m1dr_max(FD_NT)
+real*8  :: m1_dr
 real*8  :: fd_rho_min(FD_NT), fd_T_min(FD_NT), fd_pe_R(FD_NT), fd_pe_Z(FD_NT)
 real*8  :: fd_loc(2,FD_NT)
 real*8  :: fd_es, fd_ep, fd_dl, fd_h, fd_res, fd_vn, fd_pe, fd_sq, fd_sgn
@@ -178,6 +183,7 @@ call calculate_node_indices(node_indices)
 if ( floating_u_diag ) then
   fd_res_max = -1.d0 ; fd_vn_max = -1.d0 ; fd_pe_max = -1.d0
   fd_vin_max = 0.d0 ; fd_vout_max = 0.d0
+  fd_m1cs_max = -1.d0 ; fd_m1dr_max = -1.d0
   fd_rho_min = huge(1.d0) ; fd_T_min = huge(1.d0)
   fd_pe_R = 0.d0 ; fd_pe_Z = 0.d0
 endif
@@ -693,10 +699,35 @@ do i=1, n_local_elms !=== do elements
           cs0_TT   = - 0.25d0 * gamma**2 / cs0**3 
           cs0_TTT  = 3.d0/8.d0* gamma**3 / cs0**5 
 
-          Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0               + factor / Btot * BigR**2 * U0_b/ps0_b 
+          ! --- INCONSISTENCY (mach1_omit_drift). The ExB drift compensation
+          ! --- + factor/Btot*R^2*U0_b/ps0_b appears in the VALUE row below, but the
+          ! --- tangential-DERIVATIVE row dMach1BC only receives its derivative inside
+          ! --- the "n_order .ge. 5" branch further down. On bicubic elements the value
+          ! --- and slope rows therefore impose DIFFERENT relations for Vpar. The
+          ! --- mismatch is proportional to U0_b, so it is identically zero while u is
+          ! --- constant on the wall and becomes large once bcs%floating_u ties u to Te.
+          ! --- It also carries 1/ps0_b, so it is worst at grazing incidence.
+          ! ---
+          ! --- m1_dr = 0 drops the term from BOTH rows, making them consistent. That is
+          ! --- a DIAGNOSTIC, not a fix: it removes the drift compatibility of the Bohm
+          ! --- condition, which SOLPS requires whenever drifts are active.
+          m1_dr = 1.d0
+          if ( mach1_omit_drift ) m1_dr = 0.d0
+
+          Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0     + m1_dr * factor / Btot * BigR**2 * U0_b/ps0_b 
           Mach1BC_v   = - 1.0
           Mach1BC_T   =           + direction / Btot * factor  * cs0_T 
-          Mach1BC_u   =                                                            + factor / Btot * BigR**2 * element_size_0/ps0_b 
+          Mach1BC_u   =                                                   m1_dr * factor / Btot * BigR**2 * element_size_0/ps0_b 
+
+          ! --- Measure the inconsistency instead of assuming it is large.
+          if ( floating_u_diag .and. (bnd_type .ge. 1) .and. (bnd_type .le. FD_NT) ) then
+          if ( bcs(bnd_type)%floating_u ) then
+            fd_m1cs_max(bnd_type) = max( fd_m1cs_max(bnd_type),                        &
+                                         abs( direction / Btot * factor * cs0 ) )
+            fd_m1dr_max(bnd_type) = max( fd_m1dr_max(bnd_type),                        &
+                                         abs( factor / Btot * BigR**2 * U0_b/ps0_b ) )
+          endif
+          endif
           dMach1BC    = - Vpar0_b + direction / Btot * factor  * cs0_T * (Ti0_b+Te0_b)  &
                                   + direction / Btot * Hfact_b * cs0         
           dMach1BC_v  = - element_size_0
@@ -710,8 +741,8 @@ do i=1, n_local_elms !=== do elements
 
 
           if (n_order .ge. 5) then
-            dMach1BC     = dMach1BC + factor / Btot * BigR**2 * U0_bb/ps0_b
-            dMach1BC_ubb = + factor / Btot * BigR**2 * element_size_3/ps0_b
+            dMach1BC     = dMach1BC + m1_dr * factor / Btot * BigR**2 * U0_bb/ps0_b
+            dMach1BC_ubb = + m1_dr * factor / Btot * BigR**2 * element_size_3/ps0_b
             d2Mach1BC    = - Vpar0_bb + direction / Btot * factor   * cs0_TT * (Ti0_b+Te0_b)**2   &
                                       + direction / Btot * factor   * cs0_T  * (Ti0_bb+Te0_bb)   !&
                                       !+ direction / Btot * Hfact_b  * cs0_T  * T0_b *2.0 !&
@@ -914,6 +945,8 @@ if ( floating_u_diag ) then
   call MPI_AllReduce(MPI_IN_PLACE, fd_T_min,   FD_NT, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fd_vin_max, FD_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fd_vout_max,FD_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fd_m1cs_max,FD_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fd_m1dr_max,FD_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fd_loc,     FD_NT, MPI_2DOUBLE_PRECISION, MPI_MAXLOC, MPI_COMM_WORLD, err)
   ! --- fd_pe_max is reduced through fd_loc (MAXLOC carries the owning rank so the
   ! --- location can be broadcast). Copy the reduced value back, otherwise rank 0
@@ -929,10 +962,10 @@ if ( floating_u_diag ) then
     call MPI_Bcast(fd_pe_Z(fd_t), 1, MPI_DOUBLE_PRECISION, fd_owner, MPI_COMM_WORLD, err)
   enddo
   if ( my_id .eq. 0 ) then
-    write(*,'(A)') ' [floating_u] type   |u-uf|[V]    |vE.n|[m/s]    Pe_core  Pe at (R,Z)          min rho    min T[eV]   vE.n out    vE.n IN'
+    write(*,'(A)') ' [floating_u] type   |u-uf|[V]    |vE.n|[m/s]    Pe_core  Pe at (R,Z)          min rho    min T[eV]   vE.n out    vE.n IN     m1 cs      m1 drift   drift/cs'
     do fd_t = 1, FD_NT
       if ( fd_res_max(fd_t) .lt. 0.d0 ) cycle
-      write(*,'(A,I3,4X,ES10.3,4X,ES10.3,4X,ES9.2,2X,A,F6.3,A,F7.3,A,4X,ES10.3,3X,ES10.3,3X,ES10.3,2X,ES10.3)') &
+      write(*,'(A,I3,4X,ES10.3,4X,ES10.3,4X,ES9.2,2X,A,F6.3,A,F7.3,A,4X,ES10.3,3X,ES10.3,3X,ES10.3,2X,ES10.3,2X,ES10.3,2X,ES10.3,2X,ES9.2)') &
         ' [floating_u] ', fd_t,                                    &
         fd_res_max(fd_t) / abs(fu_C_V),                            &
         fd_vn_max(fd_t)  / fd_sq,                                  &
@@ -940,7 +973,9 @@ if ( floating_u_diag ) then
         '(', fd_pe_R(fd_t), ',', fd_pe_Z(fd_t), ')',               &
         fd_rho_min(fd_t),                                          &
         fd_T_min(fd_t) / ( MU_ZERO * central_density * 1.d20 * EL_CHG ),                &
-        fd_vout_max(fd_t) / fd_sq, fd_vin_max(fd_t) / fd_sq
+        fd_vout_max(fd_t) / fd_sq, fd_vin_max(fd_t) / fd_sq,                          &
+        fd_m1cs_max(fd_t), fd_m1dr_max(fd_t),                                          &
+        fd_m1dr_max(fd_t) / max(fd_m1cs_max(fd_t), tiny(1.d0))
     enddo
   endif
 endif

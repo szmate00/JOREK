@@ -375,6 +375,7 @@ subroutine preset_parameters
   sheath_Lambda            = 3.d0     ! ln sqrt(m_i/2 pi m_e); only used by bcs%floating_u
   sheath_V_wall            = 0.d0     ! volts
   floating_u_diag          = .false.  ! per-step floating-u boundary diagnostic
+  mach1_omit_drift         = .false.  ! diagnostic: drop ExB drift from BOTH Mach1 rows
   floating_u_mach_flux     = .false.
   floating_u_wall_flux     = .false.
   floating_u_rho_stabilise = .false.

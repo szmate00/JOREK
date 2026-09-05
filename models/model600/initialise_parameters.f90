@@ -212,6 +212,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 find_RZ_nearby_iter, find_RZ_nearby_tol,            &
                 min_sheath_angle, bcs, part_kill_ratio,             &
                 sheath_Lambda, sheath_V_wall, floating_u_diag,      &
+                mach1_omit_drift,                                   &
                 floating_u_mach_flux, floating_u_wall_flux, floating_u_rho_stabilise, &
                 floating_u_transport_diag, floating_u_probe_R, floating_u_probe_Z, &
                 use_sc, add_sources_in_sc, visco_sc_num,            &
@@ -427,6 +428,22 @@ if ( my_id == 0 ) then
   ! --- PRESCRIBED FLOATING POTENTIAL: validate, and refuse to run rather than run wrong.
   ! --- A sign error in the normalisation would reverse every ExB drift this BC creates, so the
   ! --- self-test is a hard gate, not a warning.
+  if ( mach1_omit_drift .and. (my_id .eq. 0) ) then
+    write(*,*) ' NOTE: mach1_omit_drift - the ExB drift compensation is dropped from BOTH'
+    write(*,*) '       Mach1 rows. This is a DIAGNOSTIC for the value/slope inconsistency:'
+    write(*,*) '       the VALUE row carries + factor/Btot*R^2*U0_b/ps0_b, the tangential'
+    write(*,*) '       DERIVATIVE row only gets its derivative when n_order >= 5, so on'
+    write(*,*) '       bicubic elements the two rows impose different relations for Vpar.'
+    write(*,*) '       The mismatch scales with U0_b: zero while u is constant on the wall,'
+    write(*,*) '       large once floating_u ties u to Te, and worst at grazing incidence'
+    write(*,*) '       because of the 1/ps0_b factor.'
+    write(*,*) '       Setting this true makes the rows AGREE, but it removes the drift'
+    write(*,*) '       compatibility of the Bohm condition, which SOLPS requires when'
+    write(*,*) '       drifts are active. Do not treat it as a fix.'
+    if ( floating_u_mach_flux ) write(*,*) &
+      '       Inactive here: floating_u_mach_flux already replaces the nodal Mach rows.'
+  endif
+
   if ( any(bcs(:)%floating_u) ) then
     if ( .not. floating_u_selftest(my_id) ) then
       write(*,*) 'ERROR: floating_u normalisation self-test FAILED. Refusing to run.'

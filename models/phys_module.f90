@@ -203,6 +203,15 @@ module phys_module
   !> Per-step boundary diagnostic for the floating-u BC: trace residual, imposed
   !! normal ExB speed, cell Peclet number and boundary rho/T minima, per boundary type.
   logical :: floating_u_diag
+  !> Omit the ExB drift compensation from the Mach1 BC. The VALUE row carries
+  !! + factor/Btot*R^2*U0_b/ps0_b but the tangential-DERIVATIVE row only gets the
+  !! matching term when n_order >= 5 (mod_boundary_conditions.f90, the "n_order .ge. 5"
+  !! branch). On bicubic elements the two rows therefore impose different relations,
+  !! and the mismatch scales with U0_b - zero when u is constant on the wall, large
+  !! once bcs%floating_u ties u to Te. Setting this true drops the term from BOTH rows
+  !! so they agree. It is a DIAGNOSTIC: it removes drift compatibility from the Bohm
+  !! condition, which SOLPS requires when drifts are on.
+  logical :: mach1_omit_drift
   ! Experimental A/B switches; OFF preserves the original transport equations.
   logical :: floating_u_mach_flux, floating_u_wall_flux, floating_u_rho_stabilise
   logical :: floating_u_transport_diag
