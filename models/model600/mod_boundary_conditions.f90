@@ -893,6 +893,11 @@ if ( floating_u_diag ) then
   call MPI_AllReduce(MPI_IN_PLACE, fd_rho_min, FD_NT, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fd_T_min,   FD_NT, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fd_loc,     FD_NT, MPI_2DOUBLE_PRECISION, MPI_MAXLOC, MPI_COMM_WORLD, err)
+  ! --- fd_pe_max is reduced through fd_loc (MAXLOC carries the owning rank so the
+  ! --- location can be broadcast). Copy the reduced value back, otherwise rank 0
+  ! --- reports its own local value - which is the -1 sentinel whenever rank 0 owns
+  ! --- no floating boundary node.
+  fd_pe_max(:) = fd_loc(1,:)
   call floating_u_norm(fu_a_n, fu_C_T, fu_C_V)
   fd_sq = fu_C_V * F0        ! = sqrt(mu0*rho0); v[m/s] = v[JOREK]/fd_sq
   do fd_t = 1, FD_NT
