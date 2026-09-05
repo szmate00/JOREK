@@ -103,9 +103,10 @@ integer :: fu_var_T
 !> Floating-u boundary diagnostic (floating_u_diag). Per boundary type, MAX/MIN only.
 integer, parameter :: FD_NT = 12
 real*8  :: fd_res_max(FD_NT), fd_vn_max(FD_NT), fd_pe_max(FD_NT)
+real*8  :: fd_vin_max(FD_NT), fd_vout_max(FD_NT)
 real*8  :: fd_rho_min(FD_NT), fd_T_min(FD_NT), fd_pe_R(FD_NT), fd_pe_Z(FD_NT)
 real*8  :: fd_loc(2,FD_NT)
-real*8  :: fd_es, fd_ep, fd_dl, fd_h, fd_res, fd_vn, fd_pe, fd_sq
+real*8  :: fd_es, fd_ep, fd_dl, fd_h, fd_res, fd_vn, fd_pe, fd_sq, fd_sgn
 integer :: fd_owner, fd_t
 integer :: n_rmp_harm, N_rmp_har_block_size
 
@@ -176,6 +177,7 @@ call calculate_node_indices(node_indices)
 
 if ( floating_u_diag ) then
   fd_res_max = -1.d0 ; fd_vn_max = -1.d0 ; fd_pe_max = -1.d0
+  fd_vin_max = 0.d0 ; fd_vout_max = 0.d0
   fd_rho_min = huge(1.d0) ; fd_T_min = huge(1.d0)
   fd_pe_R = 0.d0 ; fd_pe_Z = 0.d0
 endif
@@ -276,10 +278,25 @@ do i=1, n_local_elms !=== do elements
         fd_res = abs( node_list%node(inode)%values(1,1,var_u)                           &
                       - fu_C_T * node_list%node(inode)%values(1,1,fu_var_T)             &
                       - fu_C_V * sheath_V_wall )
+        ! --- SIGNED v_E.n. The identity v_E.n = R*du/dl pairs the edge tangent
+        ! --- t = (R_b,Z_b)/dl with the normal n = (Z_b,-R_b)/dl. Which way that n
+        ! --- points depends on the element's vertex ordering and on the element_size
+        ! --- sign flips, so it is NOT an outward normal by construction. Orient it
+        ! --- against normal_direction, which this loop already builds as node-minus-
+        ! --- opposite-vertex and therefore genuinely points out of the domain.
+        ! --- fd_vn > 0 is OUTFLOW, fd_vn < 0 is INFLOW: ExB characteristics entering
+        ! --- the domain, for which the natural rho BC supplies no data.
         fd_vn = 0.d0
-        if ( fd_dl .gt. 0.d0 )                                                          &
-          fd_vn = abs( node_list%node(inode)%x(1,1,1)                                   &
-                       * node_list%node(inode)%values(1,iv_dir,var_u) * fd_es / fd_dl )
+        if ( fd_dl .gt. 0.d0 ) then
+          fd_vn = node_list%node(inode)%x(1,1,1)                                        &
+                  * node_list%node(inode)%values(1,iv_dir,var_u) * fd_es / fd_dl
+          fd_sgn =   ( node_list%node(inode)%x(1,iv_dir,2)*fd_es) * normal_direction(1)  &
+                   - ( node_list%node(inode)%x(1,iv_dir,1)*fd_es) * normal_direction(2)
+          if ( fd_sgn .lt. 0.d0 ) fd_vn = -fd_vn
+        endif
+        fd_vout_max(bnd_type) = max( fd_vout_max(bnd_type),  fd_vn )
+        fd_vin_max (bnd_type) = max( fd_vin_max (bnd_type), -fd_vn )
+        fd_vn = abs(fd_vn)
         fd_pe = 0.d0
         if ( D_perp(1) .gt. 0.d0 ) fd_pe = fd_vn * fd_h / D_perp(1)
         fd_res_max(bnd_type) = max( fd_res_max(bnd_type), fd_res )
@@ -892,6 +909,8 @@ if ( floating_u_diag ) then
   call MPI_AllReduce(MPI_IN_PLACE, fd_vn_max,  FD_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fd_rho_min, FD_NT, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fd_T_min,   FD_NT, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fd_vin_max, FD_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fd_vout_max,FD_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fd_loc,     FD_NT, MPI_2DOUBLE_PRECISION, MPI_MAXLOC, MPI_COMM_WORLD, err)
   ! --- fd_pe_max is reduced through fd_loc (MAXLOC carries the owning rank so the
   ! --- location can be broadcast). Copy the reduced value back, otherwise rank 0
@@ -907,17 +926,18 @@ if ( floating_u_diag ) then
     call MPI_Bcast(fd_pe_Z(fd_t), 1, MPI_DOUBLE_PRECISION, fd_owner, MPI_COMM_WORLD, err)
   enddo
   if ( my_id .eq. 0 ) then
-    write(*,'(A)') ' [floating_u] type   |u-uf|[V]    |vE.n|[m/s]      Pe      Pe at (R,Z)          min rho    min T[eV]'
+    write(*,'(A)') ' [floating_u] type   |u-uf|[V]    |vE.n|[m/s]      Pe      Pe at (R,Z)          min rho    min T[eV]   vE.n out    vE.n IN'
     do fd_t = 1, FD_NT
       if ( fd_res_max(fd_t) .lt. 0.d0 ) cycle
-      write(*,'(A,I3,4X,ES10.3,4X,ES10.3,4X,ES9.2,2X,A,F6.3,A,F7.3,A,4X,ES10.3,3X,ES10.3)') &
+      write(*,'(A,I3,4X,ES10.3,4X,ES10.3,4X,ES9.2,2X,A,F6.3,A,F7.3,A,4X,ES10.3,3X,ES10.3,3X,ES10.3,2X,ES10.3)') &
         ' [floating_u] ', fd_t,                                    &
         fd_res_max(fd_t) / fu_C_V,                                 &
         fd_vn_max(fd_t)  / fd_sq,                                  &
         fd_pe_max(fd_t),                                           &
         '(', fd_pe_R(fd_t), ',', fd_pe_Z(fd_t), ')',               &
         fd_rho_min(fd_t),                                          &
-        fd_T_min(fd_t) / ( MU_ZERO * central_density * 1.d20 * EL_CHG )
+        fd_T_min(fd_t) / ( MU_ZERO * central_density * 1.d20 * EL_CHG ),                &
+        fd_vout_max(fd_t) / fd_sq, fd_vin_max(fd_t) / fd_sq
     enddo
   endif
 endif
