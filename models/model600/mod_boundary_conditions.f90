@@ -964,11 +964,11 @@ if ( floating_u_diag ) then
   if ( my_id .eq. 0 ) then
     write(*,'(A)') ' [floating_u] type   |u-uf|[V]    |vE.n|[m/s]    Pe_core'   //   &
                    '  Pe at (R,Z)          min rho    min T[eV]   vE.n out'      //   &
-                   '    vE.n IN     m1 cs      m1 drift   drift/cs'
+                   '    vE.n IN     m1 cs      m1 drift   drift/cs  m1?'
     do fd_t = 1, FD_NT
       if ( fd_res_max(fd_t) .lt. 0.d0 ) cycle
       write(*,'(A,I3,4X,ES10.3,4X,ES10.3,4X,ES9.2,2X,A,F6.3,A,F7.3,A,4X,'         //  &
-            'ES10.3,3X,ES10.3,3X,ES10.3,2X,ES10.3,2X,ES10.3,2X,ES10.3,2X,ES9.2)') &
+            'ES10.3,3X,ES10.3,3X,ES10.3,2X,ES10.3,2X,ES10.3,2X,ES10.3,2X,ES9.2,2X,L1)') &
         ' [floating_u] ', fd_t,                                    &
         fd_res_max(fd_t) / abs(fu_C_V),                            &
         fd_vn_max(fd_t)  / fd_sq,                                  &
@@ -978,7 +978,7 @@ if ( floating_u_diag ) then
         fd_T_min(fd_t) / ( MU_ZERO * central_density * 1.d20 * EL_CHG ),                &
         fd_vout_max(fd_t) / fd_sq, fd_vin_max(fd_t) / fd_sq,                          &
         fd_m1cs_max(fd_t), fd_m1dr_max(fd_t),                                          &
-        fd_m1dr_max(fd_t) / max(fd_m1cs_max(fd_t), tiny(1.d0))
+        fd_m1dr_max(fd_t) / max(fd_m1cs_max(fd_t), tiny(1.d0)), fd_m1cs_max(fd_t) .ge. 0.d0
     enddo
   endif
 endif
