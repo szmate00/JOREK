@@ -22,6 +22,10 @@ contains
     use mod_elt_matrix,           only : element_matrix
     use mod_elt_matrix_fft,       only : element_matrix_fft
     use mpi_mod
+#if JOREK_MODEL == 600
+    use phys_module, only: floating_u_mach_flux, floating_u_wall_flux, bcs
+    use mod_floating_boundary_edges, only: floating_edge_is_exterior
+#endif
 	
     ! --- Routine parameters
     type (type_element),              intent(inout)  :: element
@@ -100,6 +104,13 @@ contains
         
         ! --- carry on only if on boundary
         if ( (bnd1 .eq. 0) .or. (bnd2 .eq. 0)) cycle
+#if JOREK_MODEL == 600
+        if (floating_u_mach_flux .or. floating_u_wall_flux) then
+          if (bcs(bnd1)%floating_u .and. bcs(bnd2)%floating_u) then
+            if (.not. floating_edge_is_exterior(ielm,iv)) cycle
+          endif
+        endif
+#endif
         
         call make_deep_copy_node(node_list%node(inode1), nodes(1))
         call make_deep_copy_node(node_list%node(inode2), nodes(2))
@@ -108,6 +119,14 @@ contains
 
         vertex    = (/ iv, iv2 /)
         
+#if JOREK_MODEL == 600
+        if ((floating_u_mach_flux .or. floating_u_wall_flux) .and. &
+            bcs(bnd1)%floating_u .and. bcs(bnd2)%floating_u) then
+          direction(1)=1
+          direction(2)=2
+          if (mod(iv,2)==0) direction(2)=3
+        else &
+#endif
         if ( (grid_to_wall) .and. (n_wall_blocks .gt. 0) ) then
           side1 = 0                  ; side2 = 0
           if (bnd1 .eq. 1) side1 = 2 ; if (bnd2 .eq. 1) side2 = 2
@@ -178,7 +197,7 @@ contains
           
 
         ! --- Build matrix elements for boundary
-#if JOREK_MODEL == 183
+#if JOREK_MODEL == 183 || JOREK_MODEL == 600
         call boundary_matrix_open(vertex, direction, element, nodes, & 
                                   xpoint2, xcase2, R_axis, Z_axis, psi_axis, psi_bnd, R_xpoint, Z_xpoint, &
                                   thread_struct(omp_tid)%ELM, thread_struct(omp_tid)%RHS, i_tor_min, i_tor_max, ielm)
@@ -317,6 +336,10 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   use mod_axis_treatment
   use mod_simulation_data, only: type_MHD_SIM
   use global_distributed_matrix, only: global_matrix_structure_vacuum
+#if JOREK_MODEL == 600
+  use mod_floating_boundary_edges, only: floating_edges_build
+  use mod_floating_transport_diag, only: transport_diag_reset,transport_diag_report
+#endif
   
   !$ use omp_lib
   implicit none
@@ -437,6 +460,11 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   endif ! (.not. harmonic_matrix)
 
   ! --- Memory allocation
+#if JOREK_MODEL == 600
+  if (floating_u_mach_flux .or. floating_u_wall_flux .or. floating_u_transport_diag) &
+    call floating_edges_build(element_list,node_list)
+  if (floating_u_transport_diag) call transport_diag_reset()
+#endif
   if (associated(a_mat%irn)) call tr_deallocatep(a_mat%irn, "irn", CAT_DMATRIX)
   if (associated(a_mat%jcn)) call tr_deallocatep(a_mat%jcn, "jcn", CAT_DMATRIX)
   if (associated(a_mat%val)) call tr_deallocatep(a_mat%val, "val", CAT_DMATRIX)
@@ -744,6 +772,9 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
     call dealloc_node(aux_nodes(iv))
   enddo
   !$omp end parallel
+#if JOREK_MODEL == 600
+  if (floating_u_transport_diag .and. .not. harmonic_matrix) call transport_diag_report(my_id,'assembly state')
+#endif
  
   ! --- Memory tracking
   call tr_vnorms("cm_A_bef_bc", a_mat%val, a_mat%nnz)
@@ -879,4 +910,3 @@ end subroutine check_if_distributed
 
 
 end module construct_matrix_mod
-

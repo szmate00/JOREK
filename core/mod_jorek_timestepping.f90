@@ -255,6 +255,9 @@ end subroutine setup_solvers
 !> - STOP_NOW file handling does not work
 !> - set_trap_sigterm() is not setup yet
 subroutine do_jorek_timestep(this, sim, ev)
+#if JOREK_MODEL == 600
+  use mod_floating_transport_diag, only: transport_diag_updated
+#endif
   use phys_module
   use nodes_elements
   use mod_clock
@@ -417,6 +420,10 @@ subroutine do_jorek_timestep(this, sim, ev)
 
     call update_values(sim%fields%element_list, sim%fields%node_list, this%deltas)         ! add solution to node values
     call update_deltas(sim%fields%node_list, this%deltas)
+#if JOREK_MODEL == 600
+    if (floating_u_transport_diag) call transport_diag_updated(sim%my_id,sim%fields%node_list, &
+        sim%fields%element_list,this%mhd_sim%local_elms,this%mhd_sim%n_local_elms)
+#endif
     t_now = t_now + dt_jorek
   else
     if ( sim%my_id == 0 ) then

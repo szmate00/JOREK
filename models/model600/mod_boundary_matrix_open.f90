@@ -3,7 +3,7 @@ module mod_boundary_matrix_open
 contains
 
 subroutine boundary_matrix_open(vertex, direction, element, nodes, xpoint2, xcase2, R_axis, Z_axis, psi_axis, &
-                                psi_bnd, R_xpoint, Z_xpoint, ELM, RHS, i_tor_min, i_tor_max)
+                                psi_bnd, R_xpoint, Z_xpoint, ELM, RHS, i_tor_min, i_tor_max, element_id)
 !---------------------------------------------------------------------
 ! calculates the matrix contribution of the boundaries of one element
 ! implements the natural boundary conditions
@@ -17,6 +17,10 @@ use phys_module
 use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
+use mod_floating_transport, only: floating_mach_flux, floating_wall_flux, floating_temperature_slope
+use mod_floating_transport_diag, only: transport_diag_wall
+use mod_floating_boundary_edges, only: floating_edge_is_exterior
+use mod_floating_u, only: floating_u_norm
 
 implicit none
 
@@ -24,6 +28,7 @@ type (type_element)   :: element
 type (type_node)      :: nodes(n_vertex_max)        ! the two nodes containing the boundary nodes
 integer, intent(in)   :: i_tor_min   
 integer, intent(in)   :: i_tor_max   
+integer, intent(in), optional :: element_id
 
 real*8     :: x_g(n_gauss), x_s(n_gauss), x_t(n_gauss), x_ss(n_gauss)
 real*8     :: y_g(n_gauss), y_s(n_gauss), y_t(n_gauss), y_ss(n_gauss)
@@ -61,6 +66,14 @@ real*8     :: grad_t(2), B0_R, B0_Z, factor_cs_bnd_integral
 logical    :: xpoint2
 integer    :: n_tor_local 
 logical    :: apply_natural_bc(0:n_var)
+logical :: fu_edge, fu_mach, fu_wall
+real*8 :: fu_ven, fu_bn, fu_vn, fu_orient, fu_mres, fu_mjac(3), fu_ven_trial
+real*8 :: fu_particle, fu_heat_i, fu_heat_e, fu_dp(2), fu_dhi(2), fu_dhe(2)
+real*8 :: fu_slope_i, fu_slope_e, fu_knee, fu_area
+real*8 :: fu_a,fu_ct,fu_cv,fu_qjac,fu_res
+real*8 :: fu_normal_grad_trial,fu_transverse_trial,fu_visc_col
+real*8 :: fu_cs(3)
+integer :: fu_side,fu_normal_dof,fu_normal_col
 
 type (type_node)         :: tmp_node
 
@@ -128,6 +141,28 @@ apply_natural_bc(:) = .false.
 
 bnd_type1 = nodes(1)%boundary 
 bnd_type2 = nodes(2)%boundary 
+! Both endpoints must be covered: a floating type-3 corner does not turn type 2
+! into a material wall. Exterior topology is checked by the shared caller.
+fu_edge = bcs(bnd_type1)%floating_u .and. bcs(bnd_type2)%floating_u
+fu_side=0
+select case(vertex(1)*vertex(2))
+case(2)
+  fu_side=1
+case(6)
+  fu_side=2
+case(12)
+  fu_side=3
+case(4)
+  fu_side=4
+end select
+if (fu_edge .and. (floating_u_mach_flux.or.floating_u_wall_flux.or.floating_u_transport_diag)) then
+  if (.not. present(element_id)) error stop 'floating transport requires the exterior edge identity'
+  fu_edge=floating_edge_is_exterior(element_id,fu_side)
+endif
+if (floating_u_transport_diag) call floating_u_norm(fu_a,fu_ct,fu_cv)
+fu_mach = floating_u_mach_flux .and. fu_edge .and. &
+          (bcs(bnd_type1)%mach1 .or. bcs(bnd_type2)%mach1)
+fu_wall = floating_u_wall_flux .and. fu_edge
 
 ! --- If one of the nodes has a boundary type where natural BCs are applied, apply boundary integral for the full bnd element
 do i_var=1, n_var
@@ -138,6 +173,8 @@ do i_var=1, n_var
   if ( (i_var==var_rhon) .and. (bcs(bnd_type1)%natural%rhon .or. bcs(bnd_type2)%natural%rhon))  apply_natural_bc(i_var)=.true.
   if ( (i_var==var_vpar) .and. (bcs(bnd_type1)%natural%vpar .or. bcs(bnd_type2)%natural%vpar))  apply_natural_bc(i_var)=.true.
 enddo
+
+if (fu_mach) apply_natural_bc(var_vpar)=.true.
 
 do i=1,2    ! sum over 2 verices
   
@@ -304,6 +341,33 @@ do ms=1, n_gauss
 
     BB2 = Btot**2
 
+    ! The sign is obtained from the actual outward normal, not a type/side label.
+    fu_orient = sign(1.d0,y_s(ms)*normal(1)-x_s(ms)*normal(2))
+    fu_ven = -fu_orient*BigR*eq_s(mp,var_u,ms)/dl
+    fu_bn = (ps0_y*normal(1)-ps0_x*normal(2))/BigR
+    fu_vn = fu_bn*Vpar0+fu_ven
+    if (floating_u_transport_diag .and. fu_edge .and. mp==1) then
+      fu_qjac=abs(xjac)/(dl*norm2((/x_t(ms),y_t(ms)/)))
+      fu_res=eq_g(mp,var_u,ms)-fu_ct*Te0-fu_cv*sheath_V_wall
+      call transport_diag_wall(element%vertex(1:4),fu_side,ms,BigR,y_g(ms),r0,Ti0,Te0, &
+          fu_ven,fu_bn*Vpar0,cs0,fu_bn/Btot,fu_qjac,fu_res,(/bnd_type1,bnd_type2/))
+    endif
+    if (fu_mach) call floating_mach_flux(Vpar0,fu_ven,fu_bn,Btot,cs0,vpar_smoothing, &
+                                       vpar_smoothing_coef,fu_mres,fu_mjac)
+    if (fu_wall) then
+      call floating_wall_flux(fu_vn,cs0,c_angle,gamma_sheath_i,fu_particle,fu_heat_i,fu_dp,fu_dhi)
+      call floating_wall_flux(fu_vn,cs0,c_angle,gamma_sheath_e,fu_particle,fu_heat_e,fu_dp,fu_dhe)
+      if (.not. with_TiTe) &
+        call floating_wall_flux(fu_vn,cs0,c_angle,gamma_sheath,fu_particle,fu_heat_i,fu_dp,fu_dhi)
+    endif
+    if (fu_wall .or. fu_mach) then
+      fu_knee = T_min_neg
+      if (fu_knee < 0.d0) fu_knee=T_1
+      fu_slope_i = floating_temperature_slope(Ti0,fu_knee,corr_neg_temp_coef)
+      fu_slope_e = floating_temperature_slope(Te0,fu_knee,corr_neg_temp_coef)
+      if (.not. with_TiTe) fu_slope_i=floating_temperature_slope(T0,fu_knee,corr_neg_temp_coef)
+    endif
+
     bdotn = (+ ps0_y * normal(1) - ps0_x * normal(2)) / x_g(ms) / Btot
     gradvpar0dotn = (+ vpar0_x * normal(1) + vpar0_y * normal(2)) 
 
@@ -368,10 +432,28 @@ do ms=1, n_gauss
             endif ! with_neutrals
 
           endif ! with_vpar
+          if (fu_mach) rhs_ij(var_vpar) = -v*dl*Zbig*fu_mres
+          if (fu_wall) then
+            fu_area = v*BigR*dl*tstep
+            ! REPLACE the legacy diffusive boundary corrections, not the volume
+            ! advection. Charged-particle reflection is zero for this experiment.
+            rhs_ij(var_rho) = -fu_area*r0*fu_particle
+            if (with_TiTe) then
+              rhs_ij(var_Ti) = -fu_area*r0*Ti0*fu_heat_i &
+                  -fu_area*(GAMMA-1.d0)*Vpar0*visco_par_heating*gradvpar0dotn
+              rhs_ij(var_Te) = -fu_area*r0*Te0*fu_heat_e
+            else
+              rhs_ij(var_T) = -fu_area*r0*T0*fu_heat_i &
+                  -fu_area*(GAMMA-1.d0)*Vpar0*visco_par_heating*gradvpar0dotn
+            endif
+          endif
           index_ij = n_tor_local*n_var*n_degrees*(vertex(i)-1) + n_tor_local * n_var * (j2-1) + im - i_tor_min +1  ! index in the ELM matrix
 
           do i_var = 1, n_var
             if ( .not. apply_natural_bc(i_var) ) cycle
+            if (fu_mach .and. i_var==var_vpar) then
+              if (.not. bcs(nodes(i)%boundary)%mach1) cycle
+            endif
             RHS(index_ij+(i_var-1)*(n_tor_local)) = RHS(index_ij+(i_var-1)*(n_tor_local)) + rhs_ij(i_var) * ws
           enddo
 
@@ -411,6 +493,13 @@ do ms=1, n_gauss
                 cs_T   = gamma * T  / (2.d0 * cs0)
                 cs_Ti  = gamma * Ti / (2.d0 * cs0)
                 cs_Te  = gamma * Te / (2.d0 * cs0)
+                if (fu_mach .or. fu_wall) then
+                  fu_cs=(/cs_T*fu_slope_i,cs_Ti*fu_slope_i,cs_Te*fu_slope_e/)
+                endif
+                fu_ven_trial = -fu_orient*BigR*psi_s/dl
+                ! The true trace basis has zero t derivative here. Independent
+                ! normal/mixed DOFs supply eq_t; do not substitute a scaled trace.
+                fu_normal_grad_trial=(y_t(ms)*normal(1)-x_t(ms)*normal(2))*psi_s/xjac
 
                 ! --- Most of natural BCs need vpar
                 if (with_vpar) then
@@ -490,13 +579,77 @@ do ms=1, n_gauss
                   endif ! with neutrals
 
                 endif   ! with_vpar
+                ! Magnetic geometry is lagged for these experiments. All vpar,
+                ! u, rho and temperature dependencies are differentiated.
+                if (fu_mach) then
+                  amat(var_vpar,:)=0.d0
+                  amat(var_vpar,var_vpar)=v*dl*Zbig*fu_mjac(1)*vpar
+                  amat(var_vpar,var_u)=v*dl*Zbig*fu_mjac(2)*fu_ven_trial
+                  if (with_TiTe) then
+                    amat(var_vpar,var_Ti)=v*dl*Zbig*fu_mjac(3)*fu_cs(2)
+                    amat(var_vpar,var_Te)=v*dl*Zbig*fu_mjac(3)*fu_cs(3)
+                  else
+                    amat(var_vpar,var_T)=v*dl*Zbig*fu_mjac(3)*fu_cs(1)
+                  endif
+                endif
+                if (fu_wall) then
+                  fu_area=v*BigR*dl*tstep*theta
+                  amat(var_rho,:)=0.d0
+                  amat(var_rho,var_rho)=fu_area*rho*fu_particle
+                  amat(var_rho,var_u)=fu_area*r0*fu_dp(1)*fu_ven_trial
+                  amat(var_rho,var_vpar)=fu_area*r0*fu_dp(1)*fu_bn*vpar
+                  if (with_TiTe) then
+                    amat(var_rho,var_Ti)=fu_area*r0*fu_dp(2)*fu_cs(2)
+                    amat(var_rho,var_Te)=fu_area*r0*fu_dp(2)*fu_cs(3)
+                    amat(var_Ti,:)=0.d0
+                    amat(var_Te,:)=0.d0
+                    amat(var_Ti,var_rho)=fu_area*rho*Ti0*fu_heat_i
+                    amat(var_Te,var_rho)=fu_area*rho*Te0*fu_heat_e
+                    amat(var_Ti,var_u)=fu_area*r0*Ti0*fu_dhi(1)*fu_ven_trial
+                    amat(var_Te,var_u)=fu_area*r0*Te0*fu_dhe(1)*fu_ven_trial
+                    amat(var_Ti,var_vpar)=fu_area*r0*Ti0*fu_dhi(1)*fu_bn*vpar &
+                        +fu_area*(GAMMA-1.d0)*visco_par_heating*(vpar*gradvpar0dotn+Vpar0*fu_normal_grad_trial)
+                    amat(var_Te,var_vpar)=fu_area*r0*Te0*fu_dhe(1)*fu_bn*vpar
+                    amat(var_Ti,var_Ti)=fu_area*r0*(Ti*fu_heat_i+Ti0*fu_dhi(2)*fu_cs(2))
+                    amat(var_Ti,var_Te)=fu_area*r0*Ti0*fu_dhi(2)*fu_cs(3)
+                    amat(var_Te,var_Te)=fu_area*r0*(Te*fu_heat_e+Te0*fu_dhe(2)*fu_cs(3))
+                    amat(var_Te,var_Ti)=fu_area*r0*Te0*fu_dhe(2)*fu_cs(2)
+                  else
+                    amat(var_rho,var_T)=fu_area*r0*fu_dp(2)*fu_cs(1)
+                    amat(var_T,:)=0.d0
+                    amat(var_T,var_rho)=fu_area*rho*T0*fu_heat_i
+                    amat(var_T,var_u)=fu_area*r0*T0*fu_dhi(1)*fu_ven_trial
+                    amat(var_T,var_vpar)=fu_area*r0*T0*fu_dhi(1)*fu_bn*vpar &
+                        +fu_area*(GAMMA-1.d0)*visco_par_heating*(vpar*gradvpar0dotn+Vpar0*fu_normal_grad_trial)
+                    amat(var_T,var_T)=fu_area*r0*(T*fu_heat_i+T0*fu_dhi(2)*fu_cs(1))
+                  endif
+                endif
                 index_kl = n_tor_local*n_var*n_degrees*(vertex(k)-1) + n_tor_local * n_var * (l2-1) + in - i_tor_min +1  ! index in the ELM matrix
+                if (fu_wall) then
+                  ! Complete the viscous heat-flux derivative on independent
+                  ! normal/mixed Vpar DOFs. These are not trace trial functions.
+                  fu_normal_dof=direction_perp(l)
+                  fu_transverse_trial=-element%size(vertex(k),direction_perp(1))*3.d0
+                  if (vertex(1)*vertex(2)==2) fu_transverse_trial=-fu_transverse_trial
+                  fu_transverse_trial=fu_transverse_trial*H1(k,l,ms)*element_size_kl*HZ(in,mp)
+                  fu_visc_col=fu_area*(GAMMA-1.d0)*visco_par_heating*Vpar0*fu_transverse_trial &
+                       *(-y_s(ms)*normal(1)+x_s(ms)*normal(2))/xjac
+                  fu_normal_col=n_tor_local*n_var*n_degrees*(vertex(k)-1) &
+                       +n_tor_local*n_var*(fu_normal_dof-1)+in-i_tor_min+1+(var_vpar-1)*n_tor_local
+                  i_var=var_T
+                  if (with_TiTe) i_var=var_Ti
+                  if (apply_natural_bc(i_var)) ELM(index_ij+(i_var-1)*n_tor_local,fu_normal_col) = &
+                       ELM(index_ij+(i_var-1)*n_tor_local,fu_normal_col)+fu_visc_col*ws
+                endif
 
                 ! --- Add contributions to ELM matrix                 
                 do k_var = 1, n_var
                   do i_var = 1, n_var
 
                     if ( .not. apply_natural_bc(i_var) ) cycle
+                    if (fu_mach .and. i_var==var_vpar) then
+                      if (.not. bcs(nodes(i)%boundary)%mach1) cycle
+                    endif
 
                     ELM(index_ij+(i_var-1)*(n_tor_local),index_kl+(k_var-1)*(n_tor_local)) = &
                     ELM(index_ij+(i_var-1)*(n_tor_local),index_kl+(k_var-1)*(n_tor_local))   &

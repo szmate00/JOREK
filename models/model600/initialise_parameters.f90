@@ -212,6 +212,8 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 find_RZ_nearby_iter, find_RZ_nearby_tol,            &
                 min_sheath_angle, bcs, part_kill_ratio,             &
                 sheath_Lambda, sheath_V_wall, floating_u_diag,      &
+                floating_u_mach_flux, floating_u_wall_flux, floating_u_rho_stabilise, &
+                floating_u_transport_diag, floating_u_probe_R, floating_u_probe_Z, &
                 use_sc, add_sources_in_sc, visco_sc_num,            &
                 D_perp_sc_num, D_par_sc_num, ZK_perp_sc_num,        &
                 ZK_par_sc_num, ZK_i_perp_sc_num, ZK_i_par_sc_num,   &
@@ -387,6 +389,40 @@ if ( my_id == 0 ) then
   endif
 
   call initialise_reference_parameters()
+
+  ! Deliberately bounded first A/B implementation. Do not silently run these
+  ! axisymmetric closures in untested spectral, refined, or multi-fluid variants.
+  if (floating_u_mach_flux.or.floating_u_wall_flux.or.floating_u_rho_stabilise.or.floating_u_transport_diag) then
+    if (n_tor/=1.or.n_order/=3.or..not.with_TiTe.or..not.with_vpar.or..not.with_rho) &
+      error stop 'floating transport experiments require model600, n_tor=1, n_order=3, rho/vpar/TiTe'
+    if (with_neutrals.or.with_impurities) &
+      error stop 'floating transport experiments do not yet support FLUID neutrals/impurities; kinetic neutrals are unchanged'
+    if (.not.any(bcs(:)%floating_u)) error stop 'floating transport experiments require floating_u boundaries'
+    if (.not.bc_natural_open) error stop 'floating transport experiments require bc_natural_open'
+    if (mach_one_bnd_integral.and.floating_u_mach_flux) &
+      error stop 'floating_u_mach_flux replaces nodal Mach; do not also enable mach_one_bnd_integral'
+    if (no_mach1_bc.and.floating_u_mach_flux) error stop 'floating_u_mach_flux conflicts with no_mach1_bc'
+    if (vpar_smoothing.and.floating_u_mach_flux.and.vpar_smoothing_coef(2)<=0.d0) &
+      error stop 'floating_u_mach_flux requires positive vpar_smoothing_coef(2)'
+    if (floating_u_wall_flux.and.density_reflection/=0.d0) &
+      error stop 'floating_u_wall_flux assumes zero CHARGED density_reflection; kinetic reflection is independent'
+    if (min_sheath_angle<0.d0) error stop 'negative min_sheath_angle is not a collection model'
+    if (minval(corr_neg_temp_coef)<=0.d0) error stop 'floating transport requires positive temperature correction coefficients'
+    if (T_min_neg==0.d0) error stop 'floating transport requires a nonzero temperature-correction scale'
+    do i=1,max_bnd_types
+      if (.not.bcs(i)%floating_u) cycle
+      if (floating_u_wall_flux.and.(.not.bcs(i)%natural%rho.or..not.bcs(i)%natural%Ti.or..not.bcs(i)%natural%Te)) then
+        ! Corner type 3 inherits the edge's natural integrals; its deliberate
+        ! artificial-boundary treatment is not rewritten by this flag.
+        if (i/=3) error stop 'floating_u_wall_flux requires natural rho/Ti/Te on material wall types'
+      endif
+    enddo
+    write(*,'(A,4L3)') ' floating transport A/B: Mach, wall, rho stabilisation, diagnostic =', &
+        floating_u_mach_flux,floating_u_wall_flux,floating_u_rho_stabilise,floating_u_transport_diag
+    if (floating_u_mach_flux) write(*,*) ' EXPERIMENT: weighted normal Mach flux, lagged magnetic geometry; bulk Vpar at tangency.'
+    if (floating_u_wall_flux) write(*,*) ' EXPERIMENT: absorbing charged wall, total-flow collection; no plasma reservoir behind wall.'
+    if (floating_u_rho_stabilise) write(*,*) ' EXPERIMENT: conservative density-sensitive diffusion, NOT a positivity guarantee.'
+  endif
 
   ! --- PRESCRIBED FLOATING POTENTIAL: validate, and refuse to run rather than run wrong.
   ! --- A sign error in the normalisation would reverse every ExB drift this BC creates, so the

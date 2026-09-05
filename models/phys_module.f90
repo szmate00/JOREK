@@ -203,6 +203,10 @@ module phys_module
   !> Per-step boundary diagnostic for the floating-u BC: trace residual, imposed
   !! normal ExB speed, cell Peclet number and boundary rho/T minima, per boundary type.
   logical :: floating_u_diag
+  ! Experimental A/B switches; OFF preserves the original transport equations.
+  logical :: floating_u_mach_flux, floating_u_wall_flux, floating_u_rho_stabilise
+  logical :: floating_u_transport_diag
+  real*8 :: floating_u_probe_R, floating_u_probe_Z
 
   type type_bcs                           
     type (type_dirichlet_bc) :: dirichlet

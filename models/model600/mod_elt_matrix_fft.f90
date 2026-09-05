@@ -32,6 +32,8 @@ use mod_impurity, only: radiation_function, radiation_function_linear
 use mod_sources
 use mod_model_settings
 use mod_plasma_functions
+use mod_floating_transport, only: density_transport_diffusion
+use mod_floating_transport_diag, only: transport_diag_volume
 
 implicit none
 
@@ -63,6 +65,8 @@ real*8     :: ZK_par_T, dZK_par_dT, ZKi_par_T, dZKi_par_dT, ZKe_par_T, dZKe_par_
 real*8     :: D_prof, D_par_local, ZK_prof, ZKi_prof, ZKe_prof, psi_norm, theta, zeta, delta_u_x, delta_u_y, delta_ps_x, delta_ps_y
 real*8     :: D_prof_imp, D_par_local_imp
 real*8     :: V_prof_pinch, psi_grad2
+real*8     :: fu_density_diff, fu_velocity(2)
+real*8     :: fu_gs(2),fu_gt(2),fu_rate,fu_div,fu_adv,fu_qjac,fu_deff,fu_pe,fu_speed2
 real*8, dimension(0:n_var)         :: rhs_ij, rhs_ij_k
 real*8, dimension(0:n_var,0:n_var) :: amat, amat_k, amat_n, amat_kn, amat_nn
 
@@ -1482,6 +1486,38 @@ do i=1,n_vertex_max
           ! For shock capturing stabilization
           tau_sc = 0.d0
           if (use_sc) call calculate_sc_quantities()
+          ! A separate density sensor; independent of the pressure-driven SC.
+          ! Add equally to parallel/perpendicular coefficients: the resulting
+          ! increment is isotropic, with the same frozen coefficient in RHS/Jacobian.
+          fu_density_diff=0.d0
+          if (floating_u_rho_stabilise) then
+            fu_velocity = (/ -BigR*u0_y+Vpar0*ps0_y/BigR, BigR*u0_x-Vpar0*ps0_x/BigR /)
+            fu_density_diff = density_transport_diffusion(r0, (/r0_x,r0_y/), fu_velocity, &
+                 (/y_t(ms,mt),-x_t(ms,mt)/)/xjac, (/-y_s(ms,mt),x_s(ms,mt)/)/xjac)
+            D_prof = D_prof + fu_density_diff
+            D_par_local = D_par_local + fu_density_diff
+          endif
+          if (floating_u_transport_diag .and. i==1 .and. j==1 .and. mp==1) then
+            fu_velocity=(/-BigR*u0_y+Vpar0*ps0_y/BigR,BigR*u0_x-Vpar0*ps0_x/BigR/)
+            fu_gs=(/y_t(ms,mt),-x_t(ms,mt)/)/xjac
+            fu_gt=(/-y_s(ms,mt),x_s(ms,mt)/)/xjac
+            fu_rate=abs(dot_product(fu_velocity,fu_gs))+abs(dot_product(fu_velocity,fu_gt))
+            fu_div=(Vpar0_x*ps0_y-Vpar0_y*ps0_x)/BigR-2.d0*u0_y
+            fu_adv=-dot_product(fu_velocity,(/r0_x,r0_y/))-r0*fu_div
+            fu_qjac=abs(xjac)/(norm2((/x_s(ms,mt),y_s(ms,mt)/))*norm2((/x_t(ms,mt),y_t(ms,mt)/)))
+            fu_speed2=sum(fu_velocity**2)
+            fu_deff=D_prof
+            fu_pe=0.d0
+            if (fu_speed2>tiny(fu_speed2)) then
+              fu_deff=D_prof+(D_par_local+D_par_sc_num*tau_sc-D_prof) &
+                   *dot_product(fu_velocity,(/ps0_y,-ps0_x/)/BigR)**2/(fu_speed2*BB2)
+              fu_pe=huge(1.d0)
+              if (fu_deff>0.d0.and.fu_rate>0.d0) fu_pe=fu_speed2/(fu_rate*fu_deff)
+            endif
+            call transport_diag_volume(element%vertex(1:4),ms,mt,BigR,y_g(ms,mt),r0,Ti0,Te0, &
+                 D_prof,D_par_local+D_par_sc_num*tau_sc,fu_density_diff,fu_velocity,fu_rate, &
+                 aux_rho0,fu_div,fu_adv,xjac,fu_qjac,fu_pe)
+          endif
 
 !--------------------------------------------------------
 

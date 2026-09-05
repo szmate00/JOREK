@@ -38,7 +38,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        mach_one_bnd_integral, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,                            &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                                   &
-       sheath_V_wall, floating_u_diag, D_perp
+       sheath_V_wall, floating_u_diag, D_perp, floating_u_mach_flux
 use mod_floating_u, only: floating_u_norm
 use tr_module
 use mpi_mod
@@ -254,10 +254,10 @@ do i=1, n_local_elms !=== do elements
       ! ---   fd_pe   = |v_E.n| * h_perp / D_perp  cell Peclet number of that flow
       ! ---   min rho, min T on the boundary trace
       ! ---
-      ! --- v_E.n = R*du/dl is EXACT, not an estimate. For v_E = R grad(u) x e_phi in
+      ! --- v_E.n = -R*du/dl for the candidate normal below. For v_E = -R grad(u) x e_phi in
       ! --- the right-handed (e_R,e_Z,e_phi) basis, with edge tangent t = (R_b,Z_b)/dl
       ! --- and normal n = (Z_b,-R_b)/dl,
-      ! ---     v_E.n = R*(du/dR * R_b + du/dZ * Z_b)/dl = R * u_b/dl.
+      ! ---     v_E.n = -R*(du/dR * R_b + du/dZ * Z_b)/dl = -R * u_b/dl.
       ! --- So the normal ExB flow is driven by the TANGENTIAL derivative of u - which
       ! --- is exactly what u = C_T*Te manufactures wherever Te varies along the wall.
       ! ---
@@ -278,17 +278,17 @@ do i=1, n_local_elms !=== do elements
         fd_res = abs( node_list%node(inode)%values(1,1,var_u)                           &
                       - fu_C_T * node_list%node(inode)%values(1,1,fu_var_T)             &
                       - fu_C_V * sheath_V_wall )
-        ! --- SIGNED v_E.n. The identity v_E.n = R*du/dl pairs the edge tangent
+        ! --- SIGNED v_E.n. The identity v_E.n = -R*du/dl pairs the edge tangent
         ! --- t = (R_b,Z_b)/dl with the normal n = (Z_b,-R_b)/dl. Which way that n
         ! --- points depends on the element's vertex ordering and on the element_size
         ! --- sign flips, so it is NOT an outward normal by construction. Orient it
         ! --- against normal_direction, which this loop already builds as node-minus-
         ! --- opposite-vertex and therefore genuinely points out of the domain.
-        ! --- fd_vn > 0 is OUTFLOW, fd_vn < 0 is INFLOW: ExB characteristics entering
-        ! --- the domain, for which the natural rho BC supplies no data.
+        ! --- fd_vn > 0 is ExB outflow, fd_vn < 0 is ExB inflow. Only the TOTAL
+        ! --- normal plasma velocity determines advective particle inflow.
         fd_vn = 0.d0
         if ( fd_dl .gt. 0.d0 ) then
-          fd_vn = node_list%node(inode)%x(1,1,1)                                        &
+          fd_vn = -node_list%node(inode)%x(1,1,1)                                       &
                   * node_list%node(inode)%values(1,iv_dir,var_u) * fd_es / fd_dl
           fd_sgn =   ( node_list%node(inode)%x(1,iv_dir,2)*fd_es) * normal_direction(1)  &
                    - ( node_list%node(inode)%x(1,iv_dir,1)*fd_es) * normal_direction(2)
@@ -401,6 +401,7 @@ do i=1, n_local_elms !=== do elements
           if ( (.not. mach_one_bnd_integral) .and. bcs(bnd_type)%mach1 .and. with_vpar) then
             apply_cs = .true.
           endif
+          if (floating_u_mach_flux .and. bcs(bnd_type)%floating_u) apply_cs = .false.
           !---------------------------------------------------------------------------------------------------                      
 
           if (  ( (k == var_psi     ) .and. bcs(bnd_type)%dirichlet%psi     )  .or.  &
@@ -422,6 +423,8 @@ do i=1, n_local_elms !=== do elements
             if ( (k==var_zj   ) .and. (.not. apply_current_BC) )       cycle
             if ( (k==var_vpar ) .and.  apply_cs .and. (bnd_type/=3)  ) cycle  ! vpar=cs is a special case (this is done below)
                                                                               ! however bnd_type=3 needs both BCs for different directions
+            if (k==var_vpar .and. floating_u_mach_flux .and. bcs(bnd_type)%floating_u &
+                .and. bcs(bnd_type)%mach1) cycle ! quadrature flow constraint supplies this trace
 
 !            if ((k.eq.7) .and. (node_list%node(inode)%boundary .eq. 3)) cycle  !=== better included for ITER extended wall
 
@@ -926,12 +929,12 @@ if ( floating_u_diag ) then
     call MPI_Bcast(fd_pe_Z(fd_t), 1, MPI_DOUBLE_PRECISION, fd_owner, MPI_COMM_WORLD, err)
   enddo
   if ( my_id .eq. 0 ) then
-    write(*,'(A)') ' [floating_u] type   |u-uf|[V]    |vE.n|[m/s]      Pe      Pe at (R,Z)          min rho    min T[eV]   vE.n out    vE.n IN'
+    write(*,'(A)') ' [floating_u] type   |u-uf|[V]    |vE.n|[m/s]    Pe_core  Pe at (R,Z)          min rho    min T[eV]   vE.n out    vE.n IN'
     do fd_t = 1, FD_NT
       if ( fd_res_max(fd_t) .lt. 0.d0 ) cycle
       write(*,'(A,I3,4X,ES10.3,4X,ES10.3,4X,ES9.2,2X,A,F6.3,A,F7.3,A,4X,ES10.3,3X,ES10.3,3X,ES10.3,2X,ES10.3)') &
         ' [floating_u] ', fd_t,                                    &
-        fd_res_max(fd_t) / fu_C_V,                                 &
+        fd_res_max(fd_t) / abs(fu_C_V),                            &
         fd_vn_max(fd_t)  / fd_sq,                                  &
         fd_pe_max(fd_t),                                           &
         '(', fd_pe_R(fd_t), ',', fd_pe_Z(fd_t), ')',               &
