@@ -3,7 +3,7 @@ module mod_boundary_matrix_open
 contains
 
 subroutine boundary_matrix_open(vertex, direction, element, nodes, xpoint2, xcase2, R_axis, Z_axis, psi_axis, &
-                                psi_bnd, R_xpoint, Z_xpoint, ELM, RHS, i_tor_min, i_tor_max)
+                                psi_bnd, R_xpoint, Z_xpoint, ELM, RHS, i_tor_min, i_tor_max, diagnostic_owner)
 !---------------------------------------------------------------------
 ! calculates the matrix contribution of the boundaries of one element
 ! implements the natural boundary conditions
@@ -17,7 +17,7 @@ use phys_module
 use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
-use mod_sheath_bc, only: sheath_frame_det, sheath_frame_frozen
+use mod_sheath_bc, only: sheath_frame_det, sheath_frame_frozen, sheath_incidence, sheath_bohm_state
 use mod_sheath_bc, only: sheath_current, sheath_norm, sheath_get_lambda, sheath_V_wall_at, &
                          sheath_temp_floor, dsheath_temp_floor_dT
 use mod_sheath_diag, only: sheath_diag_add, sheath_diag_add_weak
@@ -30,6 +30,8 @@ type (type_element)   :: element
 type (type_node)      :: nodes(n_vertex_max)        ! the two nodes containing the boundary nodes
 integer, intent(in)   :: i_tor_min   
 integer, intent(in)   :: i_tor_max   
+logical, intent(in), optional :: diagnostic_owner
+logical :: collect_diagnostics
 
 real*8     :: x_g(n_gauss), x_s(n_gauss), x_t(n_gauss), x_ss(n_gauss)
 real*8     :: y_g(n_gauss), y_s(n_gauss), y_t(n_gauss), y_ss(n_gauss)
@@ -83,11 +85,9 @@ real*8     :: sh_ramp_t, sh_act
 ! --- evaluated here instead where dS is available and correctly weighted. Contributes nothing to
 ! --- rhs_ij or amat.
 logical    :: diag_sheath_zj
-logical    :: weak_sheath_zj   ! penalty enforcement of the characteristic at the Gauss points
-real*8     :: wk_res            ! bounded sheath residual driving the weak term
-real*8     :: wk_dfac           ! d(bounded)/d(raw), the factor every Jacobian column carries
-real*8     :: wk_cap, wk_den   ! the cap itself and the saturating denominator
-real*8     :: wk_wgt, wk_rat  ! validity weight and the ratio it is built from
+logical    :: weak_sheath_zj   ! current trace projection at Gauss points
+real*8     :: wk_res            ! raw current mismatch (with optional continuation)
+real*8     :: wk_wgt  ! validity weight and the ratio it is built from
 real*8     :: wk_gate         !< the VALIDITY weight alone, before the u-fade is applied
 real*8     :: wk_Dv(2,2,n_tor) !< D_a carrying the validity weight ONLY. W = D/D0 conflates two
                               !! different questions once the fade multiplies wk_wgt: "is the
@@ -111,11 +111,16 @@ integer    :: wk_i, wk_j, wk_m
 ! --- with a = (i,j) the test trace DOF and b = (k,l) the trial one. Axisymmetric only, so no
 ! --- toroidal index - initialise_parameters refuses n_tor_local > 1 with sheath_zj_weak.
 real*8     :: tr_J(2,2,2,2,n_var), tr_F(2,2)
+! Mach1 uses the SAME edge test space, instead of last-writer nodal corner rows.
+logical :: weak_mach
+real*8 :: ma_J(2,2,2,2,n_var), ma_Jp(2,2,2,2), ma_F(2,2), ma_S(2,2)
+real*8 :: ma_v, ma_vb, ma_dT(2), ma_dbT(2), ma_dbTb(2), ma_dps, ma_dpt, ma_cs
 real*8     :: tr_Jp(2,2,2,2)      !< psi column of the weak sheath row, on the
                                   !! direction_perp DOFs (the ones dirichlet%psi
                                   !! leaves free). Separate array because the
                                   !! existing tr_J columns all sit on direction().
 real*8     :: dzj_dpt, dzj_dg, dzj_dB, dpx_dpt, dpy_dpt, dB_dpt, dbn_dpt
+real*8     :: dzj_dps, dpx_dps, dpy_dps, dB_dps, dbn_dps
 real*8     :: dg_dpt, dfac_dbn, zt_arg
 integer    :: tr_col(4), tr_var(4), tr_k, tr_l, tr_nc
 real*8     :: tr_vals(4)
@@ -225,8 +230,12 @@ if ( bcs(bnd_type2)%dirichlet%u .or.                                            
 
 ! --- If one of the nodes has a boundary type where natural BCs are applied, apply boundary integral for the full bnd element
 diag_sheath_zj = bcs(bnd_type1)%sheath_zj .or. bcs(bnd_type2)%sheath_zj
-weak_sheath_zj = ( bcs(bnd_type1)%sheath_zj_weak .or. bcs(bnd_type2)%sheath_zj_weak )
+! Explicit coverage at BOTH ends: a type-3 corner must not sheath a 2--3 PFR edge.
+weak_sheath_zj = bcs(bnd_type1)%sheath_zj_weak .and. bcs(bnd_type2)%sheath_zj_weak
+weak_mach = weak_sheath_zj .and. with_vpar .and. (bcs(bnd_type1)%mach1 .or. bcs(bnd_type2)%mach1)
 diag_sheath_zj = diag_sheath_zj .or. weak_sheath_zj
+collect_diagnostics = .false.
+if (present(diagnostic_owner)) collect_diagnostics = diagnostic_owner
 
 do i_var=1, n_var
   if ( (i_var==var_rho ) .and. (bcs(bnd_type1)%natural%rho  .or. bcs(bnd_type2)%natural%rho ))  apply_natural_bc(i_var)=.true.
@@ -295,6 +304,7 @@ n_tor_local = i_tor_max - i_tor_min +1
 
 wk_D = 0.d0; wk_D0 = 0.d0; wk_Dv = 0.d0; wk_F = 0.d0; wk_S = 0.d0; tr_J = 0.d0; tr_F = 0.d0
 tr_Jp = 0.d0
+ma_J=0.d0; ma_Jp=0.d0; ma_F=0.d0; ma_S=0.d0
 
 !--------------------------------------------------- sum over the Gaussian integration points
 do ms=1, n_gauss
@@ -304,6 +314,10 @@ do ms=1, n_gauss
   dl   = sqrt(x_s(ms)**2 + y_s(ms)**2) 
   xjac = x_s(ms)*y_t(ms) - x_t(ms)*y_s(ms)
   BigR = x_g(ms)
+  if (dl <= 0.d0 .or. xjac == 0.d0 .or. BigR <= 0.d0) then
+    write(*,*) 'ERROR: singular boundary map (side, Gauss point, dl, xjac, R): ',vertex(1),ms,dl,xjac,BigR
+    error stop 1
+  endif
 
   grad_t = (/ - y_s(ms),   x_s(ms) /) / xjac
 
@@ -425,14 +439,8 @@ do ms=1, n_gauss
     normal_sign3 = sign(1.d0,ps0_s) * normal_sign
 
     c_1 = vpar_smoothing_coef(1); c_2 = vpar_smoothing_coef(2); c_3 = vpar_smoothing_coef(3)
-    if (vpar_smoothing) then
-      factor = 0.25d0 * ( 1.d0 + tanh( (abs(bdotn) - c_1) / c_2 ) )**2 - c_3
-      ! --- Nothing bounded this below. c_3 larger than the tanh term makes factor negative, which
-      ! --- flips the sign of g_bn and swaps the ion and electron branches on the tangential wall.
-      factor = max( factor, 0.d0 )
-    else
-      factor = 1.d0
-    endif
+    call sheath_incidence(bdotn, g_bn, dfac_dbn)
+    factor = abs(g_bn)
 
     factor_cs_bnd_integral = 0.d0
     if (mach_one_bnd_integral) factor_cs_bnd_integral = 1.d0
@@ -555,7 +563,7 @@ do ms=1, n_gauss
       endif
 
       ! --- wall current / potential diagnostic; dS is the toroidally integrated surface element
-      call sheath_diag_add(bnd_type1, zj_sh, zj0, zj_sat_g, x_sheath, u0, Te0_corr, sh_Bn, &
+      if (collect_diagnostics) call sheath_diag_add(bnd_type1, zj_sh, zj0, zj_sat_g, x_sheath, u0, Te0_sh, sh_Bn, &
                            ws * dl * BigR * TWOPI / dble(n_plane), sh_wgt_bn,             &
                            sheath_V_wall_at(BigR), BigR)
     endif
@@ -569,8 +577,8 @@ do ms=1, n_gauss
     ! --- filled when the nodal/diagnostic branch runs. A hard zero makes the term vanish rather
     ! --- than pick up whatever the previous Gauss point left behind.
     dzj_sh = 0.d0; dzj_d1 = 0.d0; dzj_d2 = 0.d0; dzj_d3 = 0.d0; dzj_d4 = 0.d0; dzj_d5 = 0.d0
-    dzj_sat = 0.d0; wk_res = 0.d0; wk_dfac = 0.d0; wk_wgt = 0.d0; wk_wrx = 0.d0
-    dzj_dpt = 0.d0; dzj_dg = 0.d0; dzj_dB = 0.d0 ! must not survive from the previous Gauss point
+    dzj_sat = 0.d0; wk_res = 0.d0; wk_wgt = 0.d0; wk_wrx = 0.d0
+    dzj_dpt = 0.d0; dzj_dps = 0.d0; dzj_dg = 0.d0; dzj_dB = 0.d0
 
     if ( diag_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
       call sheath_current(u0, r0_corr, Ti0_sh, Te0_sh, g_bn, normal_sign, Btot, &
@@ -579,7 +587,7 @@ do ms=1, n_gauss
       dzj_wgt = 1.d0
       if ( sheath_min_bn .gt. 0.d0 ) &
         dzj_wgt = bdotn**2 / ( bdotn**2 + sheath_min_bn**2 )
-      call sheath_diag_add(bnd_type1, dzj_sh, zj0, dzj_sat, dzj_x, u0, Te0_corr, sh_Bn, &
+      if (collect_diagnostics) call sheath_diag_add(bnd_type1, dzj_sh, zj0, dzj_sat, dzj_x, u0, Te0_sh, sh_Bn, &
                            ws * dl * BigR * TWOPI / dble(n_plane), dzj_wgt,             &
                            sheath_V_wall_at(BigR), BigR)
 
@@ -606,49 +614,29 @@ do ms=1, n_gauss
         ! --- d(g_bn)/d(bdotn). g_bn = normal_sign*factor(|bdotn|) and normal_sign = sign(bdotn),
         ! --- so the two sign factors cancel and this is just d(factor)/d|bdotn|. Zero where the
         ! --- factor was clipped at 0, and zero without vpar_smoothing (factor is then constant).
-        dfac_dbn = 0.d0
-        if ( vpar_smoothing .and. factor .gt. 0.d0 ) then
-          zt_arg   = ( abs(bdotn) - c_1 ) / c_2
-          dfac_dbn = 0.5d0 * ( 1.d0 + tanh(zt_arg) ) * ( 1.d0 - tanh(zt_arg)**2 ) / c_2
-        endif
+        ! dfac_dbn is the derivative returned by the SAME incidence evaluator.
         dg_dpt  = dfac_dbn * dbn_dpt
         dzj_dpt = dzj_dg * dg_dpt + dzj_dB * dB_dpt
+        dpx_dps = +y_t(ms)/xjac
+        dpy_dps = -x_t(ms)/xjac
+        dB_dps = (ps0_x*dpx_dps+ps0_y*dpy_dps)/(BigR**2*Btot)
+        dbn_dps = (dpy_dps*normal(1)-dpx_dps*normal(2))/(BigR*Btot)-bdotn*dB_dps/Btot
+        dzj_dps = dzj_dg*dfac_dbn*dbn_dps+dzj_dB*dB_dps
       endif
-
-      ! --- Trust region on the residual. zj_sh - zj is unbounded on the electron branch - at
-      ! --- u = 0 the characteristic sits at X = -Lambda, f = 1-exp(Lambda) ~ -19 - so from a
-      ! --- restart whose wall is not already near the floating potential the penalty is asked for
-      ! --- ~20*j_sat of driving force on the first step. Measured doing exactly that: ePhi/kTe
-      ! --- 0.00/0.01/0.03, e-limited 100%, I_sheath -12 kA against I_Ampere +1 kA, blow-up in 4
-      ! --- steps. r/(1+|r|/cap) is the IDENTITY for |r| << cap, so the fixed point and the local
-      ! --- convergence rate are untouched, and saturates at cap however far off the state starts.
-      ! --- Its derivative 1/(1+|r|/cap)^2 decays only algebraically, unlike a tanh clip whose
-      ! --- exponential decay would leave the row effectively explicit during the approach.
-      ! --- Validity weight, reusing sheath_zj_ratio_max. Where the plasma demands |zj/zj_sat| far
-      ! --- outside what the characteristic can deliver, the relation carries no information and
-      ! --- driving zj toward it is what destroys the run - measured, a local j_sat collapse took
-      ! --- INNER max|j/jsat| 13 -> 18.7 -> 354 in three steps and ended a 550-step run. The trust
-      ! --- region cannot cover this: it bounds the residual by rmax*j_sat_local, which vanishes
-      ! --- with j_sat itself. Applied to F_a, D_a AND J_ab alike, so the normalised row stays a
-      ! --- consistent weighted residual and simply fades out there, leaving those Gauss points to
-      ! --- the assembled equation. Smooth, monotone, 1 to within 6% for ratio < 0.5*max.
-      wk_wgt = 1.d0
-      if ( sheath_zj_ratio_max .gt. 0.d0 ) then
-        ! --- Guard inversion: if |zj_sat| underflows, wk_rat stayed 0 and wk_wgt came out 1 -
-        ! --- FULL weight at exactly the points where the gate should close hardest. A vanishing
-        ! --- j_sat means the ratio is effectively infinite, so the weight must go to 0, not 1.
-        if ( abs(dzj_sat) .gt. 1.d-30 ) then
-          ! --- Both sides of the mismatch. The gate was built from the PLASMA demand alone, so a
-          ! --- Gauss point pinned at f = -19 by a frozen u reported a ratio of 2.39 and sailed
-          ! --- through at full weight - which is why W came out 1.000 while the row was poisoned.
-          wk_rat = abs( zj0 / dzj_sat )
-          if ( sheath_weak_ufade ) wk_rat = max( wk_rat, abs( dzj_sh / dzj_sat ) )
-          wk_wgt = 1.d0 / ( 1.d0 + (wk_rat/sheath_zj_ratio_max)**4 )
-        else
-          wk_rat = 0.d0
-          wk_wgt = 0.d0
+      if (weak_mach) then
+        call sheath_bohm_state([Ti0,Te0], [0.d0,0.d0], g_bn/Btot, 0.d0, &
+                               ma_v,ma_vb,ma_dT,ma_dbT,ma_dbTb)
+        ma_cs=sqrt(GAMMA*(Ti0_sh+Te0_sh))
+        ma_dps=0.d0; ma_dpt=0.d0
+        if (sheath_psi_jacobian) then
+          ma_dps=ma_cs*(dfac_dbn*dbn_dps/Btot-g_bn*dB_dps/Btot**2)
+          ma_dpt=ma_cs*(dfac_dbn*dbn_dpt/Btot-g_bn*dB_dpt/Btot**2)
         endif
       endif
+
+      ! Fixed test space. Dynamic gates change the equation and can delete live rows.
+      ! Unsupported legacy gate parameters are rejected during initialization.
+      wk_wgt = 1.d0
 
       wk_gate = wk_wgt          ! validity only; the fade below must not enter the gate
 
@@ -685,13 +673,7 @@ do ms=1, n_gauss
       ! --- still couples u to zj at every stage, so u is constrained throughout, and only the
       ! --- distance travelled toward the target per step is eased in.
       wk_res  = ( dzj_sh - zj0 ) * sh_ramp_t
-      wk_dfac = 1.d0
-      if ( sheath_weak_rmax .gt. 0.d0 ) then
-        wk_cap  = sheath_weak_rmax * max(abs(dzj_sat), 1.d-30)
-        wk_den  = 1.d0 + abs(wk_res) / wk_cap
-        wk_res  = wk_res  / wk_den
-        wk_dfac = 1.d0 / wk_den**2
-      endif
+      ! Integrate the RAW moment. Clipping individual Gauss residuals changes its roots.
 
       ! --- DIAGNOSTIC ONLY (mod_sheath_geom_diag). Nothing here feeds back into any row.
       ! --- Placed at the END of this block on purpose: wk_wgt is only final after the validity
@@ -705,7 +687,7 @@ do ms=1, n_gauss
       ! --- exactly - g is a tanh of |b_n| (:429), not proportional to it, so it cannot be
       ! --- reconstructed from the angle. dS is the same measure sheath_diag_add is given, so
       ! --- areas are comparable between the two diagnostics.
-      call sheath_geom_add(bnd_type1, vertex(1), xjac, x_s(ms), y_s(ms), x_t(ms), y_t(ms), &
+      if (collect_diagnostics) call sheath_geom_add(bnd_type1, vertex(1), xjac, x_s(ms), y_s(ms), x_t(ms), y_t(ms), &
                            x_g(ms), y_g(ms), r0_corr, Ti0_corr, Te0_corr,                  &
                            abs(bdotn), cs0, g_bn, Btot, zj0, dzj_sat,                      &
                            ws * dl * BigR * TWOPI / dble(n_plane), wk_wgt)
@@ -744,18 +726,7 @@ do ms=1, n_gauss
           if ( apply_natural_bc(var_w) ) &
             rhs_ij(var_w)  = + v * BigR * gradu0dotn * dl
 
-          ! --- WEAK sheath characteristic: integral(beta * v * (zj_sh - zj)) over the boundary,
-          ! --- added to the zj equation instead of replacing its rows. The nodal route satisfies
-          ! --- the characteristic at the nodes (measured |zj-zj_sh|/|zj_sat| = 1.8e-2) and misses
-          ! --- it by 3.9 at the Gauss points where the currents are integrated - so I_Ampere and
-          ! --- I_sheath cannot close no matter how the characteristic or the gates are tuned.
-          ! --- Enforcing it at the Gauss points closes that gap by construction, and zj_sh is
-          ! --- evaluated there with the LOCAL g_bn, |B| and R, so the incomplete chain rule of
-          ! --- the nodal tangential-derivative row (which treats |B| and R as constant along the
-          ! --- boundary) does not arise either. Algebraic equation: no theta, no tstep.
-          ! --- Galerkin trace residual, diagnostic only. Uses the SAME test function v, quadrature
-          ! --- weight and geometric measure as the rows the assembly writes, so F_a/D_a is
-          ! --- directly the coefficient a projection would have to remove.
+          ! Raw weak moments, with the same trace basis and measure as row assembly.
           if ( diag_sheath_zj ) then
             wk_D(i,j,im-i_tor_min+1) = wk_D(i,j,im-i_tor_min+1)                        &
                                      + v * v * wk_wgt       * ws * dl / BigR
@@ -769,12 +740,14 @@ do ms=1, n_gauss
                                      + v * abs(dzj_sat)     * wk_wgt * ws * dl / BigR
           endif
 
-          ! --- Residual driving the replacement row, using the TRUST-REGION-bounded value. The
-          ! --- Jacobian is deliberately left unbounded: the Newton step solves J dx = F, so
-          ! --- damping J would MAGNIFY dx by 1/dfac, the opposite of what a trust region is for.
-          ! --- Bounding F alone caps the step at rmax*j_sat and is exact Newton near the solution.
-          if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) )                    &
-            tr_F(i,j) = tr_F(i,j) + v * wk_res * wk_wrx * ws * dl / BigR
+          ! Current and Mach equations share quadrature, not a penalty.
+          if (weak_sheath_zj .and. .not. apply_natural_bc(var_u)) then
+            tr_F(i,j)=tr_F(i,j)+v*wk_res*wk_wrx*ws*dl/BigR
+            if (weak_mach) then
+              ma_F(i,j)=ma_F(i,j)+v*(ma_v-Vpar0)*ws*dl/BigR
+              ma_S(i,j)=ma_S(i,j)+v*abs(ma_v)*ws*dl/BigR
+            endif
+          endif
 
           ! --- Surface term of the current definition (zj = Delta*psi). REFUSED for the same
           ! --- reason as the w term above, and equally unnecessary: the frozen zj trace cancels
@@ -932,6 +905,19 @@ do ms=1, n_gauss
                   ! --- column list at emission.
                   tr_Jp(i,j,k,l)        = tr_Jp(i,j,k,l)                                   &
                                         - v * dzj_dpt * psi_t * wk_wrx * ws * dl / BigR
+                  tr_J(i,j,k,l,var_psi) = tr_J(i,j,k,l,var_psi) &
+                                        - v * dzj_dps * psi_s * wk_wrx * ws * dl / BigR
+                  if (weak_mach) then
+                    ma_J(i,j,k,l,var_vpar)=ma_J(i,j,k,l,var_vpar)+v*psi*ws*dl/BigR
+                    ma_J(i,j,k,l,var_psi)=ma_J(i,j,k,l,var_psi)-v*ma_dps*psi_s*ws*dl/BigR
+                    ma_Jp(i,j,k,l)=ma_Jp(i,j,k,l)-v*ma_dpt*psi_t*ws*dl/BigR
+                    if (with_TiTe) then
+                      ma_J(i,j,k,l,var_Ti)=ma_J(i,j,k,l,var_Ti)-v*ma_dT(1)*psi*ws*dl/BigR
+                      ma_J(i,j,k,l,var_Te)=ma_J(i,j,k,l,var_Te)-v*ma_dT(2)*psi*ws*dl/BigR
+                    else
+                      ma_J(i,j,k,l,var_T)=ma_J(i,j,k,l,var_T)-v*0.5d0*sum(ma_dT)*psi*ws*dl/BigR
+                    endif
+                  endif
                   tr_J(i,j,k,l,var_rho) = tr_J(i,j,k,l,var_rho)                        &
                                         - v * dzj_d2 * psi * wk_wrx * ws * dl / BigR
                   if ( var_vpar .gt. 0 ) &
@@ -1070,7 +1056,7 @@ enddo
 ! --- value/derivative combinations, so an unnormalised Galerkin row block spans orders of
 ! --- magnitude internally - which is why a large penalty on it fails where a pointwise Dirichlet,
 ! --- assigning the same zbig to both row types, does not.
-if ( diag_sheath_zj ) then
+if ( diag_sheath_zj .and. collect_diagnostics ) then
   do wk_m = 1, n_tor_local
     do wk_i = 1, 2
       do wk_j = 1, 2
@@ -1090,22 +1076,9 @@ endif
 if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
   do wk_i = 1, 2
 
-    ! --- A j-V relation needs a free V. weak_sheath_zj is an OR over the edge's two nodes (:183),
-    ! --- which is right for a surface integral but writes a REPLACED row on both nodes, corners
-    ! --- included. sheath_trace_apply runs after the Dirichlet loop and add_one_entry ASSIGNS,
-    ! --- so on a node whose u is frozen the sheath row overwrites the Dirichlet zj row and
-    ! --- becomes a pure current source with no feedback: u = 0 gives X = -Lambda exactly, hence
-    ! --- f = 1 - exp(Lambda) = -19.1, i.e. -19*j_sat hard-wired at zbig. MEASURED on the type-3
-    ! --- corner: 2508 A/m^2 against 12.9 A/m^2 on type 1, present from step 1 and independent of
-    ! --- every sheath parameter - which is why three parameter scans gave identical trajectories.
-    ! ---
-    ! --- Skip rather than pick a policy: release dirichlet%u on the corner and the row IS written
-    ! --- (the corner then carries a real sheath); leave it frozen and the corner keeps its
-    ! --- Dirichlet zj row. Both are self-consistent. Only the mixture was not.
-    ! --- Same policy, same reason, for a node whose frame is too degenerate to carry the
-    ! --- constraint: mod_boundary_conditions has frozen its u, so it keeps its Dirichlet zj
-    ! --- row and is not a sheath node. Freezing zj here while leaving u free would be the
-    ! --- "u free, zj pinned" configuration that produced the boundary current filament.
+    ! Only explicitly selected, free-u nodes receive a current constraint.
+    ! The legacy static frame exclusion is not a mesh repair.
+    if (.not. bcs(nodes(wk_i)%boundary)%sheath_zj_weak) cycle
     if ( bcs(nodes(wk_i)%boundary)%dirichlet%u .or.                                    &
          sheath_frame_frozen(nodes(wk_i)%x(1,2,1:2), nodes(wk_i)%x(1,3,1:2)) ) cycle
 
@@ -1122,7 +1095,7 @@ if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
       enddo
       ! --- one variable at a time: the column list is the same four trace DOFs for each
       do tr_k = 1, n_var
-        if ( (tr_k .ne. var_zj) .and. (tr_k .ne. var_u) .and. (tr_k .ne. var_rho) .and.  &
+        if ( (tr_k .ne. var_zj) .and. (tr_k .ne. var_u) .and. (tr_k .ne. var_psi) .and. (tr_k .ne. var_rho) .and.  &
              (tr_k .ne. var_Ti) .and. (tr_k .ne. var_Te) .and. (tr_k .ne. var_T)  .and.  &
              ( (tr_k .ne. var_vpar) .or. (.not. sheath_jsat_from_vpar) ) ) cycle
         if ( tr_k .eq. 0 ) cycle
@@ -1164,6 +1137,53 @@ if ( weak_sheath_zj .and. (.not. apply_natural_bc(var_u)) ) then
         call sheath_trace_add( nodes(wk_i)%index(direction(wk_j)), nodes(wk_i)%boundary, &
                                0.d0, 0.d0, 0.d0, 0.d0, 0.d0, 0.d0, sh_det,              &
                                tr_nc, tr_col, tr_var, tr_vals )
+      endif
+    enddo
+  enddo
+endif
+
+! Do not gate the flow projection with a current-validity or frame threshold.
+! A corner value receives moments from every selected incident material edge.
+if (weak_mach) then
+  do wk_i=1,2
+    if (.not. bcs(nodes(wk_i)%boundary)%mach1) cycle
+    sh_det=sheath_frame_det(nodes(wk_i)%x(1,2,1:2),nodes(wk_i)%x(1,3,1:2))
+    do wk_j=1,2
+      if (wk_D0(wk_i,wk_j,1) <= 0.d0) cycle
+      do tr_k=1,n_var
+        if (tr_k /= var_vpar .and. tr_k /= var_psi .and. tr_k /= var_T .and. &
+            tr_k /= var_Ti .and. tr_k /= var_Te) cycle
+        tr_nc=0
+        do tr_l=1,2
+          do wk_m=1,2
+            tr_nc=tr_nc+1
+            tr_col(tr_nc)=nodes(tr_l)%index(direction(wk_m))
+            tr_var(tr_nc)=tr_k
+            tr_vals(tr_nc)=ma_J(wk_i,wk_j,tr_l,wk_m,tr_k)
+          enddo
+        enddo
+        if (tr_k == var_vpar) then
+          call sheath_trace_add(nodes(wk_i)%index(direction(wk_j)),nodes(wk_i)%boundary, &
+            wk_D0(wk_i,wk_j,1),wk_D0(wk_i,wk_j,1),wk_D0(wk_i,wk_j,1), &
+            ma_F(wk_i,wk_j),-ma_F(wk_i,wk_j),ma_S(wk_i,wk_j),sh_det, &
+            tr_nc,tr_col,tr_var,tr_vals,equation=var_vpar)
+        else
+          call sheath_trace_add(nodes(wk_i)%index(direction(wk_j)),nodes(wk_i)%boundary, &
+            0.d0,0.d0,0.d0,0.d0,0.d0,0.d0,sh_det,tr_nc,tr_col,tr_var,tr_vals,equation=var_vpar)
+        endif
+      enddo
+      if (sheath_psi_jacobian) then
+        tr_nc=0
+        do tr_l=1,2
+          do wk_m=1,2
+            tr_nc=tr_nc+1
+            tr_col(tr_nc)=nodes(tr_l)%index(direction_perp(wk_m))
+            tr_var(tr_nc)=var_psi
+            tr_vals(tr_nc)=ma_Jp(wk_i,wk_j,tr_l,wk_m)
+          enddo
+        enddo
+        call sheath_trace_add(nodes(wk_i)%index(direction(wk_j)),nodes(wk_i)%boundary, &
+          0.d0,0.d0,0.d0,0.d0,0.d0,0.d0,sh_det,tr_nc,tr_col,tr_var,tr_vals,equation=var_vpar)
       endif
     enddo
   enddo

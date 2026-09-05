@@ -3,6 +3,27 @@ implicit none
 !> This module provides routines to factorize code in boundary conditions from each models
 
 contains
+  !> Clear every coefficient of one owned scalar equation, across ALL adjacent
+  !! node blocks, variables and harmonics. Unlike add_one_entry this is actual
+  !! row replacement; sparse index metadata and other equations are preserved.
+  subroutine boundary_conditions_clear_row(index_node, k, in, index_min, index_max, a_mat)
+    use mod_parameters, only: n_var
+    use mod_integer_types, only: int_all
+    use data_structure, only: type_SP_MATRIX
+    integer, intent(in) :: index_node, k, in, index_min, index_max
+    type(type_SP_MATRIX), intent(inout) :: a_mat
+    integer :: local_row, nt, width
+    integer(kind=int_all) :: block, first
+    if (k == 0 .or. index_node < index_min .or. index_node > index_max) return
+    nt = a_mat%i_tor_max-a_mat%i_tor_min+1
+    width = n_var*nt
+    local_row = index_node-index_min+1
+    do block=1,a_mat%ijA_size(local_row)
+      first = a_mat%ijA_index(local_row,block)+((k-1)*nt+in-a_mat%i_tor_min)*width
+      a_mat%val(first:first+width-1) = 0.d0
+    enddo
+  end subroutine boundary_conditions_clear_row
+
   !>
   !! Subroutine: boundary_conditions_add_one_entry
   !!

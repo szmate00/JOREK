@@ -12,7 +12,7 @@ contains
   subroutine elementary_matrix_build(element, nodes, xpoint2, xcase2, R_axis,         &
        &                             Z_axis, psi_axis, psi_bnd, R_xpoint, Z_xpoint,   &
        &                             omp_tid, ife, ielm, n_local_elms, node_list, i_tor_min, i_tor_max, &
-                                     aux_nodes)
+                                     aux_nodes, diagnostic_index_min, diagnostic_index_max, report_boundary)
 
     ! --- Modules
     use mod_parameters,           only : n_tor, jorek_model, n_vertex_max, n_degrees, unified_element_matrix
@@ -22,6 +22,10 @@ contains
     use mod_elt_matrix,           only : element_matrix
     use mod_elt_matrix_fft,       only : element_matrix_fft
     use mpi_mod
+#if JOREK_MODEL == 600
+    use phys_module, only: bcs
+    use mod_sheath_boundary_edges, only: sheath_edge_is_exterior
+#endif
 	
     ! --- Routine parameters
     type (type_element),              intent(inout)  :: element
@@ -42,12 +46,16 @@ contains
     integer,                          intent(in)     :: i_tor_max   
     TYPE (type_node_list),            intent(in)     :: node_list
     type (type_node), optional,       intent(inout)  :: aux_nodes(n_vertex_max)
+    integer, optional, intent(in) :: diagnostic_index_min, diagnostic_index_max
+    logical, optional, intent(in) :: report_boundary
     
     ! -- internal parameters
     integer :: iv, iv2, iv3, iv4, inode1, inode2, inode3, inode4, i, j
     integer :: vertex(2), direction(n_degrees_1d), bnd1, bnd2, side1, side2
     integer :: i_max   ! for keep_n0_const max index which should be updated
     integer :: n_tor_local
+    logical :: diagnostic_owner
+    integer :: edge_owner_index
 
 #ifdef COMPARE_ELEMENT_MATRIX
     integer  :: jvertex, jorder, jvar, jtor, ivertex, iorder, ivar, itor
@@ -100,6 +108,11 @@ contains
         
         ! --- carry on only if on boundary
         if ( (bnd1 .eq. 0) .or. (bnd2 .eq. 0)) cycle
+#if JOREK_MODEL == 600
+        if (any(bcs(:)%sheath_zj_weak)) then
+          if (.not. sheath_edge_is_exterior(ielm,iv)) cycle
+        endif
+#endif
         
         call make_deep_copy_node(node_list%node(inode1), nodes(1))
         call make_deep_copy_node(node_list%node(inode2), nodes(2))
@@ -178,7 +191,20 @@ contains
           
 
         ! --- Build matrix elements for boundary
-#if JOREK_MODEL == 183
+#if JOREK_MODEL == 600
+        ! The owner of the smaller endpoint value DOF necessarily assembles
+        ! this element. Restrict diagnostics ONLY, never the algebraic rows.
+        diagnostic_owner = .false.
+        if (present(diagnostic_index_min) .and. present(diagnostic_index_max) .and. present(report_boundary)) then
+          edge_owner_index = min(nodes(1)%index(1), nodes(2)%index(1))
+          diagnostic_owner = report_boundary .and. edge_owner_index >= diagnostic_index_min &
+                             .and. edge_owner_index <= diagnostic_index_max
+        endif
+        call boundary_matrix_open(vertex, direction, element, nodes, &
+                                  xpoint2, xcase2, R_axis, Z_axis, psi_axis, psi_bnd, R_xpoint, Z_xpoint, &
+                                  thread_struct(omp_tid)%ELM, thread_struct(omp_tid)%RHS, i_tor_min, i_tor_max, &
+                                  diagnostic_owner)
+#elif JOREK_MODEL == 183
         call boundary_matrix_open(vertex, direction, element, nodes, & 
                                   xpoint2, xcase2, R_axis, Z_axis, psi_axis, psi_bnd, R_xpoint, Z_xpoint, &
                                   thread_struct(omp_tid)%ELM, thread_struct(omp_tid)%RHS, i_tor_min, i_tor_max, ielm)
@@ -320,6 +346,7 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   use mod_sheath_diag, only: sheath_diag_reset, sheath_diag_report
   use mod_sheath_geom_diag, only: sheath_geom_reset, sheath_geom_report
   use mod_sheath_trace, only: sheath_trace_reset
+  use mod_sheath_boundary_edges, only: sheath_edges_build
 #endif
   use global_distributed_matrix, only: global_matrix_structure_vacuum
   
@@ -473,7 +500,10 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   ! --- preconditioner matrix, which would otherwise double count)
   if ( (.not. harmonic_matrix) .and. ( any(bcs(:)%natural%u) .or. any(bcs(:)%sheath_zj) .or. any(bcs(:)%sheath_zj_weak) ) ) call sheath_diag_reset()
   if ( (.not. harmonic_matrix) .and. ( any(bcs(:)%natural%u) .or. any(bcs(:)%sheath_zj) .or. any(bcs(:)%sheath_zj_weak) ) ) call sheath_geom_reset()
-  if ( (.not. harmonic_matrix) .and. any(bcs(:)%sheath_zj_weak) ) call sheath_trace_reset()
+  ! Each construction owns a fresh trace, including directly built PC matrices.
+  if ( any(bcs(:)%sheath_zj_weak) ) &
+    call sheath_trace_reset(2*n_degrees*count(node_list%node(1:node_list%n_nodes)%boundary > 0))
+  if ( any(bcs(:)%sheath_zj_weak) ) call sheath_edges_build(element_list, node_list)
 #endif
 
   ! --- Declare shared and private variables for omp
@@ -545,7 +575,8 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
     endif
 
     call elementary_matrix_build(element, nodes, xpoint2, xcase2, R_axis, Z_axis, psi_axis,        &
-      psi_bnd, R_xpoint, Z_xpoint, omp_tid, ife, ielm, n_local_elms, node_list, a_mat%i_tor_min, a_mat%i_tor_max, aux_nodes)
+      psi_bnd, R_xpoint, Z_xpoint, omp_tid, ife, ielm, n_local_elms, node_list, a_mat%i_tor_min, a_mat%i_tor_max, aux_nodes, &
+      my_ind_min, my_ind_max, .not. harmonic_matrix)
 
     ! Transform basis functions for the axis nodes. mhd_sim% will solve for new degrees of freedom at the axis.
     if(treat_axis .and. (nodes(1)%axis_node .or. nodes(2)%axis_node .or. nodes(3)%axis_node .or. nodes(4)%axis_node) ) then
@@ -901,4 +932,3 @@ end subroutine check_if_distributed
 
 
 end module construct_matrix_mod
-

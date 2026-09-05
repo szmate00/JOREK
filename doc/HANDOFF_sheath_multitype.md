@@ -1,5 +1,12 @@
 # Handoff: the weak-form sheath j-V boundary condition, and why multiple node types are hard
 
+> **2026-09-05 implementation update:** this file records the historical campaign.
+> Its signs, regularization recommendations and nodal Mach/trace implementation
+> descriptions are not the current implementation. See
+> [the source review](REVIEW_weak_sheath_2026-09-05.md) and
+> [the fixes, input migration and remaining validation gaps](WEAK_SHEATH_FIXES_2026-09-05.md).
+> No all-boundary production-stability claim has been established.
+
 Repo: JOREK. Branch **`sheath-jsat-vpar-38ab278`**, head `ab2c8caa8`. `model600`, ASDEX Upgrade
 shot 38773, `n_tor = 1` (axisymmetric), `n_order = 3`. Cluster runs; the laptop has no MPI
 toolchain, so nothing here is compiled locally beyond single-module syntax checks.

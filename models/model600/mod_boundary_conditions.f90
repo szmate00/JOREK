@@ -34,7 +34,8 @@ use data_structure
 use vacuum, ONLY: is_freebound
 use corr_neg, only: corr_neg_temp, corr_neg_dens, dcorr_neg_dens_drho1
 use mod_sheath_bc, only: sheath_get_lambda, sheath_current, sheath_V_wall_at, sheath_temp_floor
-use mod_sheath_bc, only: sheath_frame_frozen
+use mod_sheath_bc, only: sheath_frame_frozen, sheath_norm
+use mod_sheath_boundary_edges, only: sheath_edge_is_exterior
 use mod_sheath_diag, only: sheath_psi0, sheath_store_psi0, sheath_diag_add_nodal
 use mod_sheath_trace, only: sheath_trace_apply, sheath_trace_report
 use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_cos_dR, dpsi_RMP_cos_dZ, &
@@ -133,7 +134,7 @@ integer :: ilarge_vp, ilarge_vp2, bnd_type
 integer :: kp, j, err, itest, i_mid, i_bnd, idir, iv_dir, iv_perp_dir, k_max
 !> This node's frame is too degenerate to carry the sheath: freeze BOTH u and zj here,
 !! i.e. treat it as an ordinary non-sheath boundary node whatever its boundary type says.
-logical :: frame_frozen
+logical :: frame_frozen, weak_material_edge
 integer :: n_rmp_harm, N_rmp_har_block_size
 
 real*8  :: R_out, Z_out, s_elm, t_elm, QR,QR_s,QR_t,QR_st,QR_ss,QR_tt,QZ,QZ_s,QZ_t,QZ_st,QZ_ss,QZ_tt
@@ -251,6 +252,13 @@ do i=1, n_local_elms !=== do elements
       inode3 = element_list%element(ielm)%vertex(iv3)
 
       if (node_list%node(inode2)%boundary .eq. 0) cycle
+      if (any(bcs(:)%sheath_zj_weak)) then
+        if (idir == 1) then
+          if (.not. sheath_edge_is_exterior(ielm,iv)) cycle
+        else
+          if (.not. sheath_edge_is_exterior(ielm,iv2)) cycle
+        endif
+      endif
 
       if ((iv*iv2 .eq. 2) .or. (iv*iv2 .eq. 12)) then
         s_constant_boundary = .false.
@@ -273,6 +281,8 @@ do i=1, n_local_elms !=== do elements
       normal_direction = (/R_mid - R_center, Z_mid - Z_center /) / norm2((/R_mid - R_center, Z_mid - Z_center /))
 
       bnd_type = node_list%node(inode)%boundary
+      weak_material_edge = bcs(bnd_type)%sheath_zj_weak .and. &
+                           bcs(node_list%node(inode2)%boundary)%sheath_zj_weak
 
       ! --- sheath_weak_detmin: a node whose two first-derivative DOF directions are nearly
       ! --- PARALLEL has a derivative basis conditioned as 1/det, and zj = Delta*psi is built
@@ -292,7 +302,8 @@ do i=1, n_local_elms !=== do elements
       ! --- the trace accumulator it cannot be bypassed by an edge whose weight vanished -
       ! --- which it would be, since sheath_weak_ufade drives wk_wgt to zero on an edge with
       ! --- BOTH ends frozen, and the accumulator skips a row with wk_D <= 0.
-      frame_frozen = sheath_frame_frozen( node_list%node(inode)%x(1,2,1:2),                  &
+      frame_frozen = bcs(bnd_type)%sheath_zj_weak .and. &
+                     sheath_frame_frozen( node_list%node(inode)%x(1,2,1:2),                  &
                                           node_list%node(inode)%x(1,3,1:2) )
 
       do in=a_mat%i_tor_min, a_mat%i_tor_max  ! === do n_tor
@@ -387,6 +398,10 @@ do i=1, n_local_elms !=== do elements
             apply_cs = .true.
           endif
 
+          ! Weak-sheath Mach moments are accumulated with the current moments.
+          ! Never write a nodal value once per incident edge: corner normals differ.
+          if (bcs(bnd_type)%sheath_zj_weak) apply_cs = .false.
+
           !------------ Decide when to replace the Dirichlet BC on u by the sheath j-V BC --------
           apply_sheath_u = bcs(bnd_type)%sheath_u
           apply_sheath_zj = bcs(bnd_type)%sheath_zj
@@ -411,6 +426,7 @@ do i=1, n_local_elms !=== do elements
                 ( (k == var_nre     ) .and. bcs(bnd_type)%dirichlet%nre     )        &
              ) then
 
+            if (k == var_vpar .and. weak_material_edge .and. bcs(bnd_type)%mach1) cycle
             ! --- If special conditions apply (e.g. freeboundary, mach1), do not apply Dirichlet even if specified in the namelist
             if ( (k==var_psi  ) .and. (.not. apply_psi_BC    ) )       cycle
             if ( (k==var_zj   ) .and. (.not. apply_current_BC) )       cycle
@@ -430,6 +446,10 @@ do i=1, n_local_elms !=== do elements
               do ll = 1,(n_order+1)/2
                 if ( (iv_dir .eq. 2) .and. (ll .gt. 1) ) cycle ! do only s-derivatives and node value
                 index_tmp = node_indices(kk,ll)
+                ! On an artificial incident edge preserve its tangential derivative
+                ! condition, but do not overwrite the shared Mach value at the corner.
+                if (k == var_vpar .and. bcs(bnd_type)%sheath_zj_weak .and. &
+                    bcs(bnd_type)%mach1 .and. index_tmp == 1) cycle
                 index_node = node_list%node(inode)%index(index_tmp)
                 call boundary_conditions_add_one_entry(                 &
                        index_node, k, in, index_node, k, in,            &
@@ -908,17 +928,7 @@ do i=1, n_local_elms !=== do elements
             if ( sheath_u_relax_time .gt. 0.d0 ) &
               sh_relax = min( 1.d0, tstep / sheath_u_relax_time )
 
-            ! --- Normalisation constants (Artola eqs. 5 and 8; c_sat = -a_n/2 identically).
-            ! --- NOTE the leading minus: the electrostatic potential is Phi = -F0*u in the code's
-            ! --- variables. The JOREK reference paper (Hoelzl et al 2021 eq. 26) defines u = Phi/F0
-            ! --- for v_pol = -R grad(u) x e_phi, while model600 implements v_pol = +R grad(u) x e_phi,
-            ! --- so the code's u is minus the paper's. Flipping a_n propagates the correct sign to
-            ! --- c_sat, to u_target and to every coefficient below, since all of them derive from it.
-            sh_a_n   = - 2.d0 * EL_CHG * F0 * sqrt(MU_ZERO * central_density * 1.d20 * central_mass * ATOMIC_MASS_UNIT) &
-                     / (central_mass * ATOMIC_MASS_UNIT)
-            sh_c_sat = - 0.5d0 * sh_a_n
-            ! --- local wall potential, so an antisymmetric bias between the targets is felt
-            sh_vw    = EL_CHG * sheath_V_wall_at(BigR) * MU_ZERO * central_density * 1.d20
+            call sheath_norm(sh_a_n, sh_c_sat, sh_vw, sheath_V_wall_at(BigR))
 
             ! --- State at the boundary node (axisymmetric component)
             sh_rho   = max( node_list%node(inode)%values(1,1,var_rho), sheath_rho_floor )

@@ -444,12 +444,65 @@ if (my_id .eq. 0) then
        .or. any(bcs(:)%sheath_zj) .or. any(bcs(:)%sheath_zj_weak) ) then
 
     ! --- only the SURFACE terms live in that branch; the nodal sheath_zj rows do not
-    if ( ( any(bcs(:)%natural%u) .or. any(bcs(:)%natural%w) .or. any(bcs(:)%natural%zj) ) &
+    if ( ( any(bcs(:)%natural%u) .or. any(bcs(:)%natural%w) .or. any(bcs(:)%natural%zj) &
+           .or. any(bcs(:)%sheath_zj_weak) ) &
          .and. (.not. bc_natural_open) ) then
       write(*,*) 'ERROR: bcs(:)%natural%u / %w / %zj require bc_natural_open = .true.,'
       write(*,*) '       because the boundary integrals are only assembled in that branch of'
       write(*,*) '       construct_matrix.'
       stop
+    endif
+
+    if (any(bcs(:)%natural%u) .or. any(bcs(:)%sheath_zj) .or. any(bcs(:)%sheath_zj_weak)) then
+      if (F0 == 0.d0 .or. central_mass <= 0.d0 .or. central_density <= 0.d0) then
+        write(*,*) 'ERROR: sheath normalization needs nonzero F0 and positive reference mass/density.'
+        stop 1
+      endif
+      if (sheath_Lambda > 30.d0) then
+        write(*,*) 'ERROR: sheath_Lambda > 30 is outside the supported collection model.'
+        stop 1
+      endif
+      if (sheath_sat_slope /= 0.d0 .or. sheath_sat_slope_e /= 0.d0 .or. &
+          sheath_v_perp /= 0.d0 .or. sheath_dfdx_min /= 0.d0) then
+        write(*,*) 'ERROR: remove sheath_sat_slope, sheath_sat_slope_e, sheath_v_perp and sheath_dfdx_min.'
+        write(*,*) '       Artificial saturation tails/floors are not the bounded physical wall law.'
+        write(*,*) '       See doc/WEAK_SHEATH_FIXES_2026-09-05.md before restarting an old run.'
+        stop 1
+      endif
+      if (sheath_jsat_from_vpar .and. .not. with_vpar) then
+        write(*,*) 'ERROR: sheath_jsat_from_vpar requires a model with Vpar; zero is not missing data.'
+        stop 1
+      endif
+      if (sheath_jsat_vpar_min < 0.d0 .or. sheath_jsat_vpar_min > 1.d0) then
+        write(*,*) 'ERROR: sheath_jsat_vpar_min must be in [0,1]. Default zero adds no ion source.'
+        stop 1
+      endif
+      if (sheath_jsat_from_vpar .and. sheath_jsat_vpar_min > 0.d0) &
+        write(*,*) 'WARNING: sheath_jsat_vpar_min adds an artificial ion-collection floor.'
+      if (vpar_smoothing .and. vpar_smoothing_coef(2) <= 0.d0 .and. vpar_smoothing_coef(1) <= 0.d0) then
+        write(*,*) 'ERROR: tanh incidence smoothing requires a positive width.'
+        stop 1
+      endif
+      write(*,*) 'SHEATH: Phi=+F0*u; separate ion/electron collection; bounded electron saturation at Phi=Vwall.'
+      write(*,*) '        sheath_X_min and sheath_smooth_dX no longer modify the forward current law.'
+    endif
+    if (any(bcs(:)%sheath_zj_weak)) then
+      if (mach_one_bnd_integral) then
+        write(*,*) 'ERROR: weak sheath uses its own Galerkin Mach1 projection; disable mach_one_bnd_integral.'
+        stop 1
+      endif
+      if (n_order /= 3 .or. refinement) then
+        write(*,*) 'ERROR: weak sheath trace currently supports cubic, unrefined elements only.'
+        write(*,*) '       Higher-order and hanging-node trace transforms are not implemented.'
+        stop 1
+      endif
+      if (sheath_zj_ratio_max > 0.d0 .or. sheath_weak_wmin > 0.d0 .or. sheath_weak_rmax > 0.d0) then
+        write(*,*) 'ERROR: weak sheath requires sheath_zj_ratio_max=0, sheath_weak_wmin=0, sheath_weak_rmax=0.'
+        write(*,*) '       Solution-dependent row gates and clipped quadrature residuals are not supported.'
+        stop 1
+      endif
+      write(*,*) 'WARNING: zj trace replacement is NOT a validated tangent-wall closure.'
+      write(*,*) '         Weak-sheath Mach1 uses field-aligned flow, without division by B.n.'
     endif
 
     do i = 1, max_bnd_types
@@ -518,16 +571,8 @@ if (my_id .eq. 0) then
           write(*,*) '       > 1 over-corrects, which is the instability it exists to damp.'
           stop
         endif
-        if ( .not. bcs(i)%mach1 ) then
-          write(*,*) 'WARNING: bcs(', i, ')%sheath_zj_weak without mach1. Note the presets turn'
-          write(*,*) '         mach1 ON for types 1, 3-5, 9, 11, 15 and 19, so reaching this means'
-          write(*,*) '         it was switched off deliberately or this is another type.'
-          write(*,*) '         The ion current is built from c_s = sqrt(gamma*(Ti+Te)), not from'
-          write(*,*) '         the actual v_par, i.e. it ASSUMES the Bohm condition v_par = c_s at'
-          write(*,*) '         the sheath entrance - which is what mach1 imposes. With mach1 off'
-          write(*,*) '         nothing enforces it, and the characteristic carries no dependence'
-          write(*,*) '         on v_par (sheath_current has no such argument), so the two are'
-          write(*,*) '         never reconciled. The same caveat applies to the nodal route.'
+        if (.not. bcs(i)%mach1 .and. .not. sheath_jsat_from_vpar) then
+          write(*,*) 'WARNING: weak sheath without Mach1 uses a prescribed Bohm ion flux, not the solved Vpar.'
         endif
         if ( n_tor .gt. 1 ) then
           write(*,*) 'ERROR: bcs(', i, ')%sheath_zj_weak with n_tor > 1. The trace accumulator'
@@ -571,37 +616,8 @@ if (my_id .eq. 0) then
           write(*,*) '      only sets the active-area weight in the sheath diagnostics; use it to'
           write(*,*) '      interpret the output, not as a weak-row stabilisation parameter.'
         endif
-        if ( sheath_sat_slope_e .lt. 0.d0 .or. sheath_sat_slope_e .ge. 1.d0 ) then
-          write(*,*) 'ERROR: sheath_sat_slope_e must lie in [0,1). It is the fraction of the raw'
-          write(*,*) '       exponent blended back past the electron clamp; 1 would remove the'
-          write(*,*) '       clamp entirely and let X run to -inf.'
-          stop
-        endif
-        if ( count(bcs(:)%sheath_zj_weak) .gt. 1 .and. sheath_sat_slope_e .le. 0.d0 ) then
-          write(*,*) 'WARNING: more than one sheath_zj_weak boundary type with'
-          write(*,*) '         sheath_sat_slope_e = 0. On the electron branch the replaced row'
-          write(*,*) '         keeps no u column, so u closes an undamped circuit between the two'
-          write(*,*) '         sheath surfaces. Every previous attempt at two surfaces blew up'
-          write(*,*) '         within ~10 steps. Try sheath_sat_slope_e = 0.05 - 0.2.'
-        endif
-        if ( sheath_sat_slope .le. 0.d0 ) then
-          write(*,*) 'WARNING: bcs(', i, ')%sheath_zj_weak with sheath_sat_slope = 0 (the'
-          write(*,*) '         DEFAULT). The ion branch then saturates exactly, so df/dX -> 0 and'
-          write(*,*) '         the characteristic carries no information about u wherever the'
-          write(*,*) '         plasma is overdriving the sheath. Measured: 0.02 -> 0.3 took mean'
-          write(*,*) '         ePhi/kTe from 5.5 to 3.2 and max from 17.9 to 7.2.'
-        endif
-        if ( (.not. sheath_init_u) .and. (sheath_ramp_time .le. 0.d0) ) then
-          write(*,*) 'WARNING: bcs(', i, ')%sheath_zj_weak with neither sheath_init_u nor'
-          write(*,*) '         sheath_ramp_time. The characteristic is UNBOUNDED on the electron'
-          write(*,*) '         side: if the restart has u ~ 0 then X = -Lambda and'
-          write(*,*) '         f = 1-exp(Lambda) ~ -19, so the penalty is asked on the very first'
-          write(*,*) '         step to drag zj to 19*j_sat of electron current. Observed doing'
-          write(*,*) '         exactly that: e-limited 100%, I_sheath -12 kA against I_Ampere'
-          write(*,*) '         +1 kA, blow-up in four steps. Either restart from a state whose'
-          write(*,*) '         wall is already near the floating potential, or set'
-          write(*,*) '         sheath_init_u = .true., or ramp the penalty in.'
-        endif
+        if ((.not. sheath_init_u) .and. sheath_ramp_time <= 0.d0) &
+          write(*,*) 'NOTE: initialize from a compatible plasma-wall voltage; abrupt changes can launch flows.'
         if ( sheath_diag_R_split .le. 0.d0 ) then
           write(*,*) 'NOTE: bcs(', i, ')%sheath_zj_weak with sheath_diag_R_split = 0. The SHEATH'
           write(*,*) '      output then reports both targets summed, and an inner-outer'
@@ -615,13 +631,9 @@ if (my_id .eq. 0) then
           write(*,*) '       that path. Use one route or the other.'
           stop
         endif
-        write(*,*) 'NOTE: bcs(', i, ')%sheath_zj_weak imposes the sheath characteristic as a'
-        write(*,*) '      boundary penalty at the GAUSS POINTS rather than as a nodal row.'
-        write(*,*) '      Motivation, measured: the nodal route gives |zj-zj_sh|/|zj_sat| ='
-        write(*,*) '      1.8e-2 at the nodes and 3.9 at the Gauss points - the row is satisfied'
-        write(*,*) '      where it is imposed and violated where the currents are integrated,'
-        write(*,*) '      which is why I_Ampere and I_sheath never closed. Watch that ratio and'
-        write(*,*) '      the per-target currents to confirm the penalty is doing its job.'
+        write(*,*) 'NOTE: weak sheath replaces current trace rows with raw Galerkin moments, not a penalty.'
+        write(*,*) '      An edge is selected only when BOTH endpoint types enable the weak sheath.'
+
       endif
 
       if ( bcs(i)%sheath_zj ) then

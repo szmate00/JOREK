@@ -1,38 +1,10 @@
-!> Weak (Galerkin) sheath characteristic on the boundary trace space.
+!> Weak sheath trace moments, accumulated from every incident local element.
+!! Row owners have every incident element under distribute_nodes_elements.
+!! Do not all-reduce the replicated contributions. Only owned rows are applied
+!! and included in the global row statistics.
 !!
-!! The nodal route (bcs%sheath_zj) imposes zj = zj_sh POINTWISE at boundary nodes. Measured, it
-!! does that essentially exactly - |zj-zj_sh|/|zj_sat| reaches 1.8e-4 at the nodes - and yet the
-!! integrated currents still differ by 33% on the inner target, because the cubic trace BETWEEN
-!! the nodes is not controlled. The weak residual
-!!
-!!     F_a = integral over Gamma of  N_a * (zj_sh - zj) dS
-!!
-!! stays at O(1) while the nodal residual falls by four decades, so a projection onto the trace
-!! space has real work to do that the nodal constraint is not doing.
-!!
-!! This module accumulates that projection and replaces the boundary zj rows with it.
-!!
-!! WHY REPLACE RATHER THAN PENALISE. zj = Delta*psi is integrated by parts and its surface term
-!! is refused (its Jacobian needs normal-derivative columns the trial loop cannot produce). That
-!! is harmless while dirichlet%zj freezes the trace - the code says so - but the weak route has to
-!! release it, and the equation is then incomplete at the boundary. Adding a penalty to a wrong
-!! equation cannot fix it: measured, beta = 1e-2 left the incomplete equation dominant and beta = 1
-!! drove a period-2 divergence. Writing the row with zbig annihilates it instead, exactly as every
-!! Dirichlet in this code already does.
-!!
-!! WHY ROW NORMALISATION IS MANDATORY. A Galerkin trace block has internal scale structure that a
-!! pointwise Dirichlet does not: its mass matrix goes as h (value x value), h^2 (value x
-!! derivative) and h^3 (derivative x derivative), so at h ~ 1 mm the block spans ~1e6 internally.
-!! A uniform coefficient on it therefore cannot work at any magnitude - beta = 1e9 died in one
-!! step. Dividing each row by its own diagonal D_a = int N_a N_a dS makes every row O(1), after
-!! which a single zbig makes them all uniformly dominant and no penalty parameter is needed.
-!!
-!! KNOWN LIMITATION (MPI). Rows are written only by the rank that owns them, so a trace DOF whose
-!! two adjacent boundary edges live on different ranks is assembled from the local edge only. Both
-!! F_a and D_a lose the same contribution, so the NORMALISED row is still a valid weighted-residual
-!! statement - just tested against a function supported on one edge rather than two. A full fix
-!! needs a halo exchange of the accumulator. Affected DOFs are those on an MPI partition boundary
-!! that also lie on the sheath boundary.
+!! Replacement clears the full scalar row, then divides by its largest absolute
+!! coefficient. This is row equilibration, NOT column/basis equilibration.
 module mod_sheath_trace
 
   implicit none
@@ -40,7 +12,7 @@ module mod_sheath_trace
 
   public :: sheath_trace_reset, sheath_trace_add, sheath_trace_apply, sheath_trace_report
 
-  integer, parameter :: st_max_row = 8000    !< trace DOFs per rank; 424 observed on two types
+  integer, save :: st_capacity = 0 ! allocated from the boundary-node graph at construction
   !> Columns per row. Only the variables the characteristic actually depends on appear: zj (the
   !! unit diagonal), u, rho, Ti/Te (or T), optionally vpar, and the normal-derivative psi DOFs that
   !! change g(B.n) and |B|. w is absent because the characteristic does not depend on it.
@@ -49,31 +21,32 @@ module mod_sheath_trace
   !! 64 leaves headroom; the overflow is fatal rather than silent, so being generous costs memory.
   integer, parameter :: st_max_col = 96
 
+  integer, save :: st_owner_min = 1, st_owner_max = 0
   integer, save :: st_n = 0
-  integer, save :: st_row(st_max_row)
-  real*8,  save :: st_D(st_max_row)
-  real*8,  save :: st_F(st_max_row)
-  real*8,  save :: st_D0(st_max_row)    !< UNWEIGHTED diagonal; W_a = st_D/st_D0 in [0,1]
-  real*8,  save :: st_Dv(st_max_row)    !< diagonal with the VALIDITY weight only (no u-fade), so
+  integer, allocatable, save :: st_row(:), st_equation(:)
+  real*8,  allocatable, save :: st_D(:)
+  real*8,  allocatable, save :: st_F(:)
+  real*8,  allocatable, save :: st_D0(:)    !< UNWEIGHTED diagonal; W_a = st_D/st_D0 in [0,1]
+  real*8,  allocatable, save :: st_Dv(:)    !< diagonal with the VALIDITY weight only (no u-fade), so
                                         !! W_valid = st_Dv/st_D0 answers "is the characteristic
                                         !! solvable here" without being contaminated by "is u free
                                         !! here". sheath_weak_wmin gates on this one.
-  real*8,  save :: st_Fd(st_max_row)    !< DIAGNOSTIC residual: raw (zj0-zj_sh), weight wk_wgt.
+  real*8,  allocatable, save :: st_Fd(:)    !< DIAGNOSTIC residual: raw (zj0-zj_sh), weight wk_wgt.
                                         !! NOT st_F, which is the trust-region-bounded residual
                                         !! carrying a different weight (wk_wrx) and is what the
                                         !! row actually asks for. Only st_Fd/st_S is comparable
                                         !! to the printed global |F_a/D_a|/|S_a/D_a|.
-  real*8,  save :: st_S(st_max_row)     !< scale S_a, so |Fd_a/S_a| is the row residual in j_sat
-  real*8,  save :: st_det(st_max_row)   !< node-frame determinant |x2 x x3| of the row's OWN
+  real*8,  allocatable, save :: st_S(:)     !< scale S_a, so |Fd_a/S_a| is the row residual in j_sat
+  real*8,  allocatable, save :: st_det(:)   !< node-frame determinant |x2 x x3| of the row's OWN
                                         !! node: |sin(angle)| between the two first-derivative
                                         !! DOF directions. A STATIC property of the mesh, so
                                         !! unlike every other gate here it is fixed from step 1
                                         !! and cannot respond to the solution.
-  integer, save :: st_bnd(st_max_row)   !< boundary type of the row's OWN node (not the element's)
-  integer, save :: st_nc(st_max_row)
-  integer, save :: st_col(st_max_col, st_max_row)
-  integer, save :: st_var(st_max_col, st_max_row)
-  real*8,  save :: st_val(st_max_col, st_max_row)
+  integer, allocatable, save :: st_bnd(:)   !< boundary type of the row's OWN node (not the element's)
+  integer, allocatable, save :: st_nc(:)
+  integer, allocatable, save :: st_col(:,:)
+  integer, allocatable, save :: st_var(:,:)
+  real*8,  allocatable, save :: st_val(:,:)
 
   logical, save :: st_over_row = .false.     !< ran out of rows
   logical, save :: st_over_col = .false.     !< ran out of columns in some row
@@ -84,30 +57,45 @@ module mod_sheath_trace
 contains
 
 !> Clear the accumulator. Once per matrix construction, before the element loop.
-subroutine sheath_trace_reset()
+subroutine sheath_trace_reset(capacity)
   implicit none
+  integer, optional, intent(in) :: capacity
+  integer :: requested
+  requested = 8000 ! standalone/legacy caller fallback, not the production mesh limit
+  if (present(capacity)) requested = max(1,capacity)
+  if (requested /= st_capacity) then
+    if (allocated(st_row)) deallocate(st_equation,st_row,st_D,st_F,st_D0,st_Dv,st_Fd,st_S,st_det,st_bnd,st_nc,st_col,st_var,st_val)
+    allocate(st_equation(requested),st_row(requested),st_D(requested),st_F(requested),st_D0(requested),st_Dv(requested), &
+             st_Fd(requested),st_S(requested),st_det(requested),st_bnd(requested),st_nc(requested), &
+             st_col(st_max_col,requested),st_var(st_max_col,requested),st_val(st_max_col,requested))
+    st_capacity=requested
+  endif
   st_n = 0
   st_over_row = .false.
   st_over_col = .false.
   st_n_applied = 0
+  st_n_skipped = 0
+  st_n_detgate = 0
+  st_owner_min = 1
+  st_owner_max = 0
 end subroutine sheath_trace_reset
 
 
 !> Slot for a global row index, creating it on first use. Linear search backwards: adjacent
 !! boundary edges share DOFs and are visited consecutively, so the hit is normally immediate.
-integer function st_slot(irow)
+integer function st_slot(irow, equation)
   implicit none
-  integer, intent(in) :: irow
+  integer, intent(in) :: irow, equation
   integer :: i
 
   do i = st_n, 1, -1
-    if ( st_row(i) .eq. irow ) then
+    if (st_row(i) == irow .and. st_equation(i) == equation) then
       st_slot = i
       return
     endif
   enddo
 
-  if ( st_n .ge. st_max_row ) then
+  if ( st_n .ge. st_capacity ) then
     st_over_row = .true.
     st_slot = 0
     return
@@ -115,6 +103,7 @@ integer function st_slot(irow)
 
   st_n            = st_n + 1
   st_row(st_n)    = irow
+  st_equation(st_n) = equation
   st_D(st_n)      = 0.d0
   st_F(st_n)      = 0.d0
   st_D0(st_n)     = 0.d0
@@ -147,14 +136,17 @@ end function st_slot
 !! @param icol  global DOF indices of the trial functions
 !! @param ivar  variable index of each column
 !! @param vals  contribution to int N_a (d(residual)/d x) N_b dS for each column
-subroutine sheath_trace_add(irow, ibnd, dD, dD0, dDv, dF, dFd, dS, dnod, nc, icol, ivar, vals)
+!! @param equation scalar equation being replaced (default var_zj; also used for weak Mach1)
+subroutine sheath_trace_add(irow, ibnd, dD, dD0, dDv, dF, dFd, dS, dnod, nc, icol, ivar, vals, equation)
+  use mod_parameters, only: var_zj
   implicit none
+  integer, optional, intent(in) :: equation
   integer, intent(in) :: irow, ibnd, nc
   real*8,  intent(in) :: dD, dD0, dDv, dF, dFd, dS, dnod
   integer, intent(in) :: icol(nc), ivar(nc)
   real*8,  intent(in) :: vals(nc)
 
-  integer :: is, ic, jc
+  integer :: is, ic, jc, row_variable
   logical :: found
 
   ! --- The element loop that calls this is OpenMP-threaded (construct_matrix_mod passes omp_tid),
@@ -165,7 +157,9 @@ subroutine sheath_trace_add(irow, ibnd, dD, dD0, dDv, dF, dFd, dS, dnod, nc, ico
   ! --- mesh, so serialising here costs little.
   !$omp critical (sheath_trace_accumulate)
 
-  is = st_slot(irow)
+  row_variable = var_zj
+  if (present(equation)) row_variable = equation
+  is = st_slot(irow, row_variable)
 
   if ( is .gt. 0 ) then
 
@@ -210,131 +204,61 @@ subroutine sheath_trace_add(irow, ibnd, dD, dD0, dDv, dF, dFd, dS, dnod, nc, ico
 end subroutine sheath_trace_add
 
 
-!> Normalise every accumulated row by its own diagonal and write it into the matrix with zbig,
-!! replacing the incomplete boundary zj equation. Called after the element loop, from
-!! boundary_conditions, which owns a_mat and RHS_loc.
+!> Replace owned current equations exactly, independently of a penalty magnitude.
 subroutine sheath_trace_apply(in, zbig, index_min, index_max, a_mat, RHS_loc)
-  use phys_module, only: sheath_weak_wmin, sheath_weak_detmin
-
   use mod_parameters
   use data_structure, only: type_SP_MATRIX
-  use mod_assembly,   only: boundary_conditions_add_one_entry, boundary_conditions_add_RHS
-
+  use mod_assembly, only: boundary_conditions_clear_row, boundary_conditions_add_one_entry, &
+                         boundary_conditions_add_RHS
+  use mpi_mod
+  use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
   implicit none
-  integer,              intent(in)    :: in, index_min, index_max
-  real*8,               intent(in)    :: zbig
+  integer, intent(in) :: in, index_min, index_max
+  real*8, intent(in) :: zbig ! retained for call compatibility; no penalty is used
   type(type_SP_MATRIX), intent(inout) :: a_mat
-  real*8,               intent(inout) :: RHS_loc(*)
+  real*8, intent(inout) :: RHS_loc(*)
+  integer :: is, ic, ierr
+  real*8 :: row_norm
 
-  integer :: is, ic
-  real*8  :: sc
-
+  st_owner_min = index_min
+  st_owner_max = index_max
   st_n_applied = 0
   st_n_skipped = 0
   st_n_detgate = 0
-
-  ! --- Degeneracy floor, relative to the largest diagonal on this rank. The spread between value
-  ! --- and derivative rows is genuine element-size scaling (measured 2.6e10 on this mesh) and
-  ! --- normalising it is exactly the point, so the floor must be far below that - it is here only
-  ! --- to catch a row that received essentially no boundary support, where 1/D_a would manufacture
-  ! --- an enormous row out of numerical noise.
-  do is = 1, st_n
-
-    ! --- THE VALIDITY GATE. wk_wgt multiplies D_a, F_a and every J_ab identically, and the row is
-    ! --- written as J/D and F/D, so a wk_wgt uniform over a row's support cancels EXACTLY - it
-    ! --- cannot fade a row that is written with zbig, it only shrinks D_a. Measured: the divertor
-    ! --- leg-end faces, whose whole support sits outside the characteristic's validity range,
-    ! --- diverge in 4-8 steps with D collapsing 8-10 orders, while the near-tangential wall at
-    ! --- 42 % gated area is fine, because there the weight VARIES within each row and does not
-    ! --- cancel. Row replacement is binary, so the fade has to be the decision whether to write
-    ! --- the row at all. W_a = D_a/D0_a is the mean validity weight over this row's own support:
-    ! --- dimensionless, mesh independent, and identical on every rank - unlike the 1e-14*d_max
-    ! --- floor it replaces, which was RANK-LOCAL, so whether a given DOF was enforced depended on
-    ! --- which other rows happened to land on that rank and on which types were enabled.
-    ! --- DEGENERACY FLOOR, RESTORED. This gate replaced a `st_D < 1e-14*d_max` floor, and at the
-    ! --- default sheath_weak_wmin = 0 the test reads `st_D < 0`, which the check above already
-    ! --- excludes - so the floor was silently unreachable. Its purpose, per the original comment,
-    ! --- is to catch a row that received essentially no boundary support, where 1/D_a manufactures
-    ! --- an enormous row out of numerical noise. Keyed on the row's OWN unweighted support D0_a it
-    ! --- is rank-independent and treats value and derivative rows alike, which the old d_max form
-    ! --- did not. wmin is an optional STRONGER gate on top; it can never disable this.
-    ! --- Two separate tests. The 1e-12 degeneracy floor is on st_D, because it protects the
-    ! --- 1/D_a normalisation and that uses st_D. The user-facing validity gate is on st_Dv, which
-    ! --- excludes the u-fade: a row beside a Dirichlet-u seam is faded deliberately and gating it
-    ! --- as though its physics had failed would freeze the seam rows first, for the wrong reason.
-    ! --- THE FRAME GATE. Every other test here keys on the SOLUTION, so it can close in
-    ! --- response to the very divergence it exists to prevent - measured, sheath_weak_wmin =
-    ! --- 0.5 took a 305-step case to 2 by deleting 706 of 920 rows at step 2. This one keys on
-    ! --- a STATIC property of the mesh: the node-frame determinant is fixed before the run
-    ! --- starts, identical on every rank, and the exact set of rows it removes is knowable in
-    ! --- advance (util/check_boundary_frames.py prints it from a restart file). It cannot feed
-    ! --- back.
-    ! ---
-    ! --- BACKSTOP ONLY, and it should normally count ZERO. A frame-degenerate node is taken
-    ! --- out of the sheath upstream: mod_boundary_conditions applies BOTH its Dirichlets (u and
-    ! --- zj) and mod_boundary_matrix_open never accumulates its row, so it does not reach here.
-    ! --- This exists so that a future path into sheath_trace_apply cannot write a replaced row
-    ! --- on a degenerate node. The runtime confirmation that the gate is live is the per-type
-    ! --- 'det min' in the report: with sheath_weak_detmin set it must come out >= that value,
-    ! --- because every row below it was removed before accumulation.
-    if ( st_D(is) .le. 0.d0 .or. st_D0(is) .le. 0.d0 .or.                          &
-         st_D(is)  .lt. 1.d-12 * st_D0(is) .or.                                    &
-         st_Dv(is) .lt. sheath_weak_wmin * st_D0(is) .or.                          &
-         ( sheath_weak_detmin .gt. 0.d0 .and.                                      &
-           st_det(is) .lt. sheath_weak_detmin ) ) then
-      st_n_skipped = st_n_skipped + 1
-      if ( sheath_weak_detmin .gt. 0.d0 .and. st_det(is) .lt. sheath_weak_detmin ) &
-        st_n_detgate = st_n_detgate + 1
-
-      ! --- A rejected sheath projection still needs a controlled boundary row. Falling through
-      ! --- to the assembled current-definition row changes the boundary condition abruptly as W
-      ! --- crosses the floor and was the last step in every observed D-collapse runaway. Freeze
-      ! --- this increment instead: the unit self-column is nonsingular, bounds zj while the local
-      ! --- characteristic is unusable, and recovers the pre-sheath Dirichlet behaviour for that
-      ! --- row. Other assembled entries are O(1) beside zbig and therefore inactive, exactly as
-      ! --- for the ordinary Dirichlet rows written by boundary_conditions.
-      call boundary_conditions_add_one_entry(                                    &
-             st_row(is), var_zj, in, st_row(is), var_zj, in, zbig,               &
-             index_min, index_max, a_mat)
-      call boundary_conditions_add_RHS(                                           &
-             st_row(is), var_zj, in, index_min, index_max, RHS_loc, 0.d0,         &
-             a_mat%i_tor_min, a_mat%i_tor_max)
-      if ( st_row(is) .ge. index_min .and. st_row(is) .le. index_max )            &
-        st_n_applied = st_n_applied + 1
-      cycle
+  if (st_over_row .or. st_over_col) then
+    write(*,*) 'ERROR: sheath trace storage exhausted; refusing a truncated boundary system.'
+    call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+    return
+  endif
+  do is=1,st_n
+    if (st_row(is) < index_min .or. st_row(is) > index_max) cycle
+    if (st_nc(is) <= 0 .or. st_D(is) <= 0.d0 .or. st_D0(is) <= 0.d0) then
+      write(*,*) 'ERROR: unsupported sheath trace row (DOF,type,D,D0): ', &
+                  st_row(is), st_bnd(is), st_D(is), st_D0(is)
+      ! Freezing only zj strands the free u. Do not invent that fallback.
+      call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+      return
     endif
-
-    ! --- Belt and braces on the same failure. sc multiplies st_val AND st_F uniformly, so clamping
-    ! --- it rescales the row in the matrix without changing the equation it states. The fallback
-    ! --- above makes this unreachable today; it is here so that a future change to the floor
-    ! --- cannot resurrect the 1/D_a overflow.
-    sc = 1.d0 / max( st_D(is), 1.d-12 * st_D0(is) )
-
-    do ic = 1, st_nc(is)
-      call boundary_conditions_add_one_entry(                                   &
-             st_row(is), var_zj, in, st_col(ic,is), st_var(ic,is), in,           &
-             zbig * st_val(ic,is) * sc, index_min, index_max, a_mat)
+    if (.not. all(ieee_is_finite(st_val(1:st_nc(is),is))) .or. .not. ieee_is_finite(st_F(is))) then
+      write(*,*) 'ERROR: nonfinite sheath trace row: ', st_row(is)
+      call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+      return
+    endif
+    row_norm = maxval(abs(st_val(1:st_nc(is),is)))
+    if (row_norm <= tiny(row_norm)) then
+      write(*,*) 'ERROR: zero sheath equation at DOF ', st_row(is)
+      call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+      return
+    endif
+    call boundary_conditions_clear_row(st_row(is), st_equation(is), in, index_min, index_max, a_mat)
+    do ic=1,st_nc(is)
+      call boundary_conditions_add_one_entry(st_row(is), st_equation(is), in, st_col(ic,is), st_var(ic,is), in, &
+          st_val(ic,is)/row_norm, index_min, index_max, a_mat)
     enddo
-
-    if ( in .eq. 1 ) then
-      call boundary_conditions_add_RHS(                                          &
-             st_row(is), var_zj, in, index_min, index_max, RHS_loc,              &
-             zbig * st_F(is) * sc, a_mat%i_tor_min, a_mat%i_tor_max)
-    else
-      call boundary_conditions_add_RHS(                                          &
-             st_row(is), var_zj, in, index_min, index_max, RHS_loc,              &
-             0.d0, a_mat%i_tor_min, a_mat%i_tor_max)
-    endif
-
-    ! --- Count only rows this rank actually WROTE. boundary_conditions_add_one_entry
-    ! --- silently returns for a row outside [index_min,index_max], so a halo DOF that
-    ! --- local elements touched was being accumulated, counted as replaced, and written
-    ! --- nowhere - inflating 'N accumulated, N replaced' into false reassurance.
-    if ( st_row(is) .ge. index_min .and. st_row(is) .le. index_max ) &
-      st_n_applied = st_n_applied + 1
-
+    call boundary_conditions_add_RHS(st_row(is), st_equation(is), in, index_min, index_max, RHS_loc, &
+                                    st_F(is)/row_norm, a_mat%i_tor_min, a_mat%i_tor_max)
+    st_n_applied = st_n_applied+1
   enddo
-
 end subroutine sheath_trace_apply
 
 
@@ -356,7 +280,7 @@ subroutine sheath_trace_report(my_id)
   ! --- 4 -min(D), 5 max(D), 6 -min(W).
   real*8  :: tloc(nbt,8), tglo(nbt,8), r, w
 
-  loc(1) = dble(st_n)
+  loc(1) = dble(count(st_row(1:st_n) >= st_owner_min .and. st_row(1:st_n) <= st_owner_max))
   loc(2) = dble(st_n_applied)
   loc(3) = 0.d0
   if ( st_over_row .or. st_over_col ) loc(3) = 1.d0
@@ -364,10 +288,11 @@ subroutine sheath_trace_report(my_id)
   loc(5) = dble(st_n_detgate)
 
   dloc(1) = 1.d30; dloc(2) = -1.d30
-  if ( st_n .gt. 0 ) then
-    dloc(1) = minval(st_D(1:st_n), mask = st_D(1:st_n) .gt. 0.d0)
-    dloc(2) = maxval(st_D(1:st_n))
-  endif
+  do is=1,st_n
+    if (st_row(is) < st_owner_min .or. st_row(is) > st_owner_max) cycle
+    if (st_D(is) > 0.d0) dloc(1) = min(dloc(1),st_D(is))
+    dloc(2) = max(dloc(2),st_D(is))
+  enddo
 
   ! --- per-type: count (SUM), max|F/S| (MAX), D min (as -D, so one MAX reduce), D max (MAX)
   tloc = 0.d0
@@ -379,6 +304,7 @@ subroutine sheath_trace_report(my_id)
   tloc(:,7) = -1.d30
   tloc(:,8) = -1.d30
   do is = 1, st_n
+    if (st_row(is) < st_owner_min .or. st_row(is) > st_owner_max) cycle
     ib = st_bnd(is)
     if ( ib .lt. 1 .or. ib .gt. nbt ) cycle
     tloc(ib,1) = tloc(ib,1) + 1.d0
@@ -419,7 +345,7 @@ subroutine sheath_trace_report(my_id)
   ! --- 12 edit descriptors, 12 output items. Counted, because getting this wrong is a run-time
   ! --- severe(61) that kills rank 0 mid-write and hangs every other rank in the next collective.
   write(*,'(A,i0,A,i0,A,i0,A,i0,A,es9.2,A,es9.2)')                              &
-    '         sheath trace rows: ', nint(glo(1)),                                &
+    '         sheath trace equations (current + Mach1): ', nint(glo(1)),                                &
     ' accumulated, ',              nint(glo(2)),                                 &
     ' replaced, ',                 nint(glo(4)),                                 &
     ' below the floor (',          nint(glo(5)),                                 &
@@ -455,7 +381,7 @@ subroutine sheath_trace_report(my_id)
   if ( glo(3) .gt. 0.d0 ) then
     write(*,*) 'ERROR: the sheath trace accumulator overflowed. A truncated row is a WRONG'
     write(*,*) '       equation, not a missing one, so this cannot be allowed to continue.'
-    write(*,*) '       Raise st_max_row / st_max_col in mod_sheath_trace.f90.'
+    write(*,*) '       Check graph capacity / st_max_col in mod_sheath_trace.f90.'
     stop
   endif
 

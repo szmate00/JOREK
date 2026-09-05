@@ -176,9 +176,9 @@ subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, 
 
   if ( bnd_type .lt. 1 .or. bnd_type .gt. max_bnd_types ) return
 
-  ! --- J.n = J_par*(b.n) = zj*(B.n)/(F0*mu0)   [A/m^2]
-  jn_sheath = zj_sh * Bdotn / (F0 * MU_ZERO)
-  jn_amp    = zj0   * Bdotn / (F0 * MU_ZERO)
+  ! Field-aligned current, consistent with Jtor = -zj/(mu0*R).
+  jn_sheath = -zj_sh * Bdotn / (F0 * MU_ZERO)
+  jn_amp    = -zj0   * Bdotn / (F0 * MU_ZERO)
 
   if ( present(V_wall_loc) ) then
     call sheath_norm(a_n, c_sat, vw, V_wall_loc)
@@ -241,7 +241,8 @@ subroutine sheath_diag_add(bnd_type, zj_sh, zj0, zj_sat, x_lim, u0, Te0, Bdotn, 
   endif
   ! --- area where the electron side limiter is biting, i.e. where the wall is close to
   ! --- electron saturation and the characteristic is being held back
-  if ( x_lim .lt. sheath_X_min + 2.d0*max(sheath_smooth_dX,1.d-3) ) sd_lim_area = sd_lim_area + dS
+  ! The forward law now saturates electrons at chi=0, not at a fitted X_min.
+  if (phi_over_te <= 0.d0) sd_lim_area = sd_lim_area+dS
   !$omp end critical (sheath_diag_accumulate)
 
 end subroutine sheath_diag_add

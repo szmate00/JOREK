@@ -114,13 +114,13 @@ subroutine preset_parameters
   sheath_sat_slope_e =  0.d0  ! 0 = electron branch loses its u column (see phys_module)
   sheath_weak_wmin   =  0.d0  ! 0 = write every weak row (previous behaviour); 0.5 gates
   sheath_weak_detmin =  0.d0  ! 0 = write every weak row; 0.3 gates the degenerate corners
-  sheath_psi_jacobian = .false. ! .false. = no psi column (previous behaviour)
+  sheath_psi_jacobian = .true.  ! include both tangential and transverse magnetic sensitivities
   sheath_v_perp      =  0.d0  ! 0 = j_sat vanishes at tangency (previous behaviour)
   sheath_weak_ufade  = .false. ! .false. = frozen-u Gauss points keep full weight
   sheath_dfdx_min    =  0.d0  ! 0 = exact slope; 0.25 regularises weak potential coupling
   sheath_wall_pen    =  0.d0  ! 0 = no tangential-wall fallback (see phys_module)
   sheath_jsat_from_vpar = .false. ! .false. = j_sat from the Mach 1 velocity (see phys_module)
-  sheath_jsat_vpar_min  =  0.1d0  ! floor on |Vpar| as a fraction of the Mach 1 value
+  sheath_jsat_vpar_min  =  0.d0   ! no artificial ion flux at stagnation
   sheath_zj_relax    =  1.d0  ! strength of bcs%sheath_zj; 0 reproduces the Dirichlet freeze
   sheath_zj_ratio_max=  0.d0  ! 0 = no validity gate on the demanded current ratio
   sheath_smooth_dX   =  0.5d0
@@ -128,7 +128,7 @@ subroutine preset_parameters
   sheath_ramp_time   =  0.d0
   sheath_stiff_max   =  0.d0  ! 0 = no cap; 1.0 keeps the sheath term comparable to the polarisation term
   sheath_init_u      = .false.
-  sheath_weak_rmax   =  2.d0  ! bound the weak sheath residual at 2*j_sat; <= 0 = unbounded
+  sheath_weak_rmax   =  0.d0  ! raw Galerkin residual; quadrature clipping is no longer supported
   sheath_weak_relax  =  1.d0  ! 1 = full Newton step on the weak sheath row; 0.5-0.7 damps period-2 alternation
   sheath_weak_beta   =  0.d0  ! DEPRECATED, superseded by the mod_sheath_trace row replacement
   T_min_sheath       = -1.d0  ! < 0 = use the global T_min_neg for the sheath too
