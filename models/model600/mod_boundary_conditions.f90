@@ -962,10 +962,13 @@ if ( floating_u_diag ) then
     call MPI_Bcast(fd_pe_Z(fd_t), 1, MPI_DOUBLE_PRECISION, fd_owner, MPI_COMM_WORLD, err)
   enddo
   if ( my_id .eq. 0 ) then
-    write(*,'(A)') ' [floating_u] type   |u-uf|[V]    |vE.n|[m/s]    Pe_core  Pe at (R,Z)          min rho    min T[eV]   vE.n out    vE.n IN     m1 cs      m1 drift   drift/cs'
+    write(*,'(A)') ' [floating_u] type   |u-uf|[V]    |vE.n|[m/s]    Pe_core'   //   &
+                   '  Pe at (R,Z)          min rho    min T[eV]   vE.n out'      //   &
+                   '    vE.n IN     m1 cs      m1 drift   drift/cs'
     do fd_t = 1, FD_NT
       if ( fd_res_max(fd_t) .lt. 0.d0 ) cycle
-      write(*,'(A,I3,4X,ES10.3,4X,ES10.3,4X,ES9.2,2X,A,F6.3,A,F7.3,A,4X,ES10.3,3X,ES10.3,3X,ES10.3,2X,ES10.3,2X,ES10.3,2X,ES10.3,2X,ES9.2)') &
+      write(*,'(A,I3,4X,ES10.3,4X,ES10.3,4X,ES9.2,2X,A,F6.3,A,F7.3,A,4X,'         //  &
+            'ES10.3,3X,ES10.3,3X,ES10.3,2X,ES10.3,2X,ES10.3,2X,ES10.3,2X,ES9.2)') &
         ' [floating_u] ', fd_t,                                    &
         fd_res_max(fd_t) / abs(fu_C_V),                            &
         fd_vn_max(fd_t)  / fd_sq,                                  &
