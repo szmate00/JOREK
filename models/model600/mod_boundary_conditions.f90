@@ -423,7 +423,7 @@ do i=1, n_local_elms !=== do elements
                 ! --- The entry above is the ordinary Dirichlet diagonal; here it is completed
                 ! --- into the affine constraint
                 ! ---
-                ! ---     u - C_T*corr_neg(Te) - C_V*V_wall = 0
+                ! ---     u - C_T*Te - C_V*V_wall = 0
                 ! ---
                 ! --- by adding the Te cross-column and the residual RHS, so the matrix
                 ! --- conditioning differs from plain u = 0 only by that one extra column.
