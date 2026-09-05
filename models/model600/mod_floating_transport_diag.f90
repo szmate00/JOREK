@@ -105,7 +105,7 @@ contains
     use data_structure, only: type_node_list,type_element_list
     use mod_parameters, only: var_rho,var_Ti,var_Te
     use gauss, only: n_gauss,xgauss
-    use mod_interp, only: interp_PRZ_1
+    use mod_interp, only: interp_PRZ
     use phys_module, only: floating_u_probe_R,floating_u_probe_Z
     use mpi_mod
     type(type_node_list), intent(in) :: node_list
@@ -121,9 +121,9 @@ contains
       if (element_list%element(e)%n_sons>0) cycle
       do mt=1,n_gauss
         do ms=1,n_gauss
-          call interp_PRZ_1(node_list,element_list,e,vars,3,xgauss(ms),xgauss(mt),0.d0, &
+          call interp_PRZ(node_list,element_list,e,vars,3,xgauss(ms),xgauss(mt),0.d0, &
                             p,ps,pt,pp,R,Rs,Rt,Z,Zs,Zt)
-          call interp_PRZ_1(node_list,element_list,e,vars,3,xgauss(ms),xgauss(mt),0.d0, &
+          call interp_PRZ(node_list,element_list,e,vars,3,xgauss(ms),xgauss(mt),0.d0, &
                             d,ps,pt,pp,R,Rs,Rt,Z,Zs,Zt,deltas=.true.)
           rec=(/R,Z,p(1),p(1)-d(1),d(1),p(2:3),real(element_list%element(e)%vertex(1:4),8), &
                 real(ms,8),real(mt,8),0.d0/)
