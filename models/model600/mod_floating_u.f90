@@ -157,6 +157,10 @@ end subroutine floating_u_norm
 !! @param V_wall  wall bias in volts
 !! @param u_b     prescribed u
 !! @param du_dT   d(u_b)/d(T_raw), exact, including the positivity map's derivative
+! --- NOTE: unused. The production row is assembled inline in
+! --- mod_boundary_conditions.f90, which since 2026-09-06 applies the T_min floor that
+! --- the rest of the boundary path uses (:667/670, mod_mach1_trace). This helper still
+! --- returns the RAW-temperature relation and must not be adopted without that floor.
 subroutine floating_u_target(T_raw, V_wall, u_b, du_dT)
 
   implicit none

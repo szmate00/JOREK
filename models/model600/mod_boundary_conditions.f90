@@ -98,7 +98,7 @@ integer :: kp, j, err, itest, i_mid, i_bnd, idir, iv_dir, iv_perp_dir, k_max
 !> Prescribed floating-potential BC (bcs%floating_u). fu_var_T is the temperature trace variable
 !! this build evolves: Te under WITH_TiTe, otherwise the single T - and floating_u_norm has already
 !! halved Lambda for that case, so ONE coefficient covers both builds.
-real*8  :: fu_a_n, fu_C_T, fu_C_V, fu_u, fu_T, fu_targ
+real*8  :: fu_a_n, fu_C_T, fu_C_V, fu_u, fu_T, fu_targ, fu_act
 integer :: fu_var_T
 !> Floating-u boundary diagnostic (floating_u_diag). Per boundary type, MAX/MIN only.
 integer, parameter :: FD_NT = 12
@@ -502,16 +502,45 @@ do i=1, n_local_elms !=== do elements
                 ! --- nonlinearly inside a spectral boundary condition is worse than the disease.
                 if ( (k == var_u) .and. bcs(bnd_type)%floating_u ) then
                   call floating_u_norm(fu_a_n, fu_C_T, fu_C_V)
+                  ! --- TEMPERATURE FLOOR, matching the rest of the boundary path.
+                  ! --- mod_boundary_conditions:667/670 (legacy Mach) and mod_mach1_trace
+                  ! --- both use max(T, T_min); this row used the RAW value and was the
+                  ! --- only thing in the boundary path that did not.
+                  ! ---
+                  ! --- Measured consequence: with raw Te, a wall node whose Te crosses
+                  ! --- zero imposes a NEGATIVE potential and therefore a REVERSED ExB
+                  ! --- drift, while cs at the same node stays floored - the two halves of
+                  ! --- the boundary condition disagreeing about the temperature. On the
+                  ! --- weighted run, type-1 min Te sat at +0.64 eV for 51 outputs, crossed
+                  ! --- zero, and the physical Mach residual |G|/cs began growing on the
+                  ! --- very next output while it had been flat to 2 % before.
+                  ! ---
+                  ! --- With the floor, a clamped node has u = C_T*T_min, which is CONSTANT,
+                  ! --- so its tangential derivative is zero and it drives no ExB flow at
+                  ! --- all - rather than driving one the wrong way.
+                  ! ---
+                  ! --- The branch is decided by the AXISYMMETRIC VALUE, as at :667/670, and
+                  ! --- fu_act is the exact derivative of max() on that branch - not a
+                  ! --- smooth positivity map. The relation therefore stays piecewise
+                  ! --- affine and is still imposed exactly by the single linear solve
+                  ! --- whenever the branch does not change, which is the same caveat the
+                  ! --- legacy Mach rows already carry. Applying a floor to a non
+                  ! --- axisymmetric COEFFICIENT would be meaningless, so the harmonics and
+                  ! --- the derivative DOFs carry fu_act linearly instead.
+                  fu_act = 1.d0
+                  if ( node_list%node(inode)%values(1,1,fu_var_T) .le. T_min ) fu_act = 0.d0
                   fu_u    = node_list%node(inode)%values(in, index_tmp, var_u)
                   fu_T    = node_list%node(inode)%values(in, index_tmp, fu_var_T)
-                  fu_targ = fu_C_T * fu_T
+                  fu_targ = fu_C_T * fu_act * fu_T
+                  if ( (index_tmp .eq. 1) .and. (in .eq. 1) .and. (fu_act .eq. 0.d0) ) &
+                    fu_targ = fu_C_T * T_min
                   ! --- V_wall is a constant, so it enters the VALUE equation only, and only the
                   ! --- axisymmetric harmonic. Every derivative equation is homogeneous.
                   if ( (index_tmp .eq. 1) .and. (in .eq. 1) ) &
                     fu_targ = fu_targ + fu_C_V * sheath_V_wall
                   call boundary_conditions_add_one_entry(                     &
                          index_node, var_u, in, index_node, fu_var_T, in,     &
-                         - zbig * fu_C_T, index_min, index_max, a_mat)
+                         - zbig * fu_C_T * fu_act, index_min, index_max, a_mat)
                   call boundary_conditions_add_RHS(                           &
                          index_node, var_u, in, index_min, index_max, RHS_loc,&
                          - zbig * ( fu_u - fu_targ ),                         &
