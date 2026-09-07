@@ -111,10 +111,10 @@ real*8  :: fd_m1cs_max(FD_NT), fd_m1dr_max(FD_NT)
 real*8  :: m1_dr
 !> Clipped drift-compatible Bohm correction (SOLPS BCMOM=13 without extrapolation).
 !! m1_D = R^2*u_b/psi_b (exact -vE.n/(Bn*|B|), Vpar units); m1_S = 2*cs/Btot;
-!! m1_Dr = clip(m1_D, +-m1_S); m1_mid/m1_clip select the branch (see mach1_uout_clip).
+!! m1_Dcl = clip(m1_D, +-m1_S); m1_mid/m1_clip select the branch (see mach1_uout_clip).
 !! u0_bb_r reconstructs the second tangential derivative of u from BOTH endpoints'
 !! value/slope DOFs (same stencil as ps0_bb) for the bicubic slope-row residual.
-real*8  :: m1_D, m1_S, m1_Dr, m1_mid, m1_clip, m1_dDdb, m1_dSdb, m1_dslope, u0_bb_r
+real*8  :: m1_D, m1_S, m1_Dcl, m1_mid, m1_clip, m1_dDdb, m1_dSdb, m1_dslope, u0_bb_r
 real*8  :: fd_rho_min(FD_NT), fd_T_min(FD_NT), fd_pe_R(FD_NT), fd_pe_Z(FD_NT)
 real*8  :: fd_loc(2,FD_NT)
 real*8  :: fd_es, fd_ep, fd_dl, fd_h, fd_res, fd_vn, fd_pe, fd_sq, fd_sgn
@@ -754,9 +754,9 @@ do i=1, n_local_elms !=== do elements
 
           m1_D = BigR**2 * U0_b / ps0_b
           m1_S = 2.d0 * cs0 / Btot
-          call mach1_uout_clip(m1_D, m1_S, m1_Dr, m1_mid, m1_clip)
+          call mach1_uout_clip(m1_D, m1_S, m1_Dcl, m1_mid, m1_clip)
 
-          Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0     + m1_dr * m1_Dr
+          Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0     + m1_dr * m1_Dcl
           Mach1BC_v   = - 1.0
           Mach1BC_T   =           + direction / Btot * factor  * cs0_T                  &
                                   + m1_dr * m1_clip * 2.d0 * cs0_T / Btot
@@ -769,7 +769,7 @@ do i=1, n_local_elms !=== do elements
           if ( bcs(bnd_type)%floating_u ) then
             fd_m1cs_max(bnd_type) = max( fd_m1cs_max(bnd_type),                        &
                                          abs( direction / Btot * factor * cs0 ) )
-            fd_m1dr_max(bnd_type) = max( fd_m1dr_max(bnd_type), abs(m1_Dr) )
+            fd_m1dr_max(bnd_type) = max( fd_m1dr_max(bnd_type), abs(m1_Dcl) )
           endif
           endif
           dMach1BC    = - Vpar0_b + direction / Btot * factor  * cs0_T * (Ti0_b+Te0_b)  &
