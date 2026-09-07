@@ -1086,7 +1086,10 @@ if ( floating_u_diag ) then
         fd_T_min(fd_t) / ( MU_ZERO * central_density * 1.d20 * EL_CHG ),                &
         fd_vout_max(fd_t) / fd_sq, fd_vin_max(fd_t) / fd_sq,                          &
         fd_m1cs_max(fd_t), fd_m1dr_max(fd_t),                                          &
-        fd_m1dr_max(fd_t) / max(fd_m1cs_max(fd_t), tiny(1.d0))
+        ! --- A type never visited by a Mach row keeps its -1 sentinels; dividing the
+        ! --- sentinel by tiny() printed -4.5e307. Report 0 for such types instead.
+        merge( fd_m1dr_max(fd_t) / max(fd_m1cs_max(fd_t), tiny(1.d0)),                 &
+               0.d0, fd_m1cs_max(fd_t) .gt. 0.d0 )
     enddo
   endif
 endif
