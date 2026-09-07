@@ -38,8 +38,8 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        mach_one_bnd_integral, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,                            &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                                   &
-       sheath_V_wall, floating_u_diag, D_perp, mach1_omit_drift, floating_u_mach_flux
-use mod_floating_u, only: floating_u_norm, mach1_uout_clip
+       sheath_V_wall, floating_u_diag, D_perp, mach1_omit_drift, floating_u_mach_flux, min_sheath_angle
+use mod_floating_u, only: floating_u_norm, mach1_uout_supplement
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -109,12 +109,16 @@ real*8  :: fd_vin_max(FD_NT), fd_vout_max(FD_NT)
 !! missing from the slope row on bicubic elements. Their ratio IS the inconsistency.
 real*8  :: fd_m1cs_max(FD_NT), fd_m1dr_max(FD_NT)
 real*8  :: m1_dr
-!> Clipped drift-compatible Bohm correction (SOLPS BCMOM=13 without extrapolation).
-!! m1_D = R^2*u_b/psi_b (exact -vE.n/(Bn*|B|), Vpar units); m1_S = 2*cs/Btot;
-!! m1_Dcl = clip(m1_D, +-m1_S); m1_mid/m1_clip select the branch (see mach1_uout_clip).
-!! u0_bb_r reconstructs the second tangential derivative of u from BOTH endpoints'
-!! value/slope DOFs (same stencil as ps0_bb) for the bicubic slope-row residual.
-real*8  :: m1_D, m1_S, m1_Dcl, m1_mid, m1_clip, m1_dDdb, m1_dSdb, m1_dslope, u0_bb_r
+!> One-sided, floored, clipped drift-compatible Bohm supplement (SOLPS BCMOM=13,
+!! non-marginal branch, without extrapolation - see mach1_uout_supplement).
+!! m1_D = R^2*u_b/psi_b (exact -vE.n/(Bn*|B|), Vpar units); m1_bfl = min(1,|bn|/s0)
+!! with s0 = min_sheath_angle in radians (the c_angle scale) floors the incidence;
+!! m1_S = 2*cs/Btot is the SOLPS bound; m1_sup is the applied supplement and
+!! m1_act/m1_clw select its branch. u0_bb_r reconstructs the second tangential
+!! derivative of u from BOTH endpoints' value/slope DOFs (same stencil as ps0_bb)
+!! for the bicubic slope-row residual.
+real*8  :: m1_D, m1_S, m1_bfl, m1_smin, m1_Dfl, m1_sup, m1_act, m1_clw
+real*8  :: m1_dDdb, m1_dSdb, m1_dslope, u0_bb_r
 real*8  :: fd_rho_min(FD_NT), fd_T_min(FD_NT), fd_pe_R(FD_NT), fd_pe_Z(FD_NT)
 real*8  :: fd_loc(2,FD_NT)
 real*8  :: fd_es, fd_ep, fd_dl, fd_h, fd_res, fd_vn, fd_pe, fd_sq, fd_sgn
@@ -714,62 +718,75 @@ do i=1, n_local_elms !=== do elements
           cs0_TT   = - 0.25d0 * gamma**2 / cs0**3 
           cs0_TTT  = 3.d0/8.d0* gamma**3 / cs0**5 
 
-          ! --- DRIFT-COMPATIBLE BOHM CONDITION, clipped (SOLPS BCMOM=13 without the
-          ! --- interior extrapolation; manual 3.0.9 p.407/411, linked to BCCON=14 /
-          ! --- BCENE,I=15 / BCPOT=11, all "recommended for cases with drifts").
+          ! --- DRIFT-COMPATIBLE BOHM SUPPLEMENT (SOLPS BCMOM=13, NON-MARGINAL branch -
+          ! --- the one the manual marks "recommended for cases with drifts" - without
+          ! --- the interior extrapolation a nodal row cannot have):
           ! ---
-          ! ---     Vpar*Bn + vE.n = direction*cs*|bn|   =>   Vpar = dir*cs/Btot + D
-          ! ---     D = R^2*u_b/psi_b = -vE.n/(Bn*|B|),  clipped to |D| <= 2*cs/Btot.
+          ! ---     Vpar = direction*cs/Btot + supplement,   supplement >= 0 outward
           ! ---
-          ! --- Three long-standing defects of the unclipped legacy term are repaired
-          ! --- here, and each on its own made the term lethal under bcs%floating_u
-          ! --- (dormant for years under dirichlet u, where u_b = 0 identically):
-          ! ---  1. NO factor/Btot on D. The |B| is already supplied by the psi_b
-          ! ---     denominator; dividing again was a double conversion (~2x under-
-          ! ---     applied), and the vpar_smoothing weight belongs to the sonic
-          ! ---     target, not to a kinematic identity.
-          ! ---  2. THE CLIP. D is an inversion by Bn and diverges at tangency, where
-          ! ---     no parallel flow can cancel a finite normal ExB flux (measured:
-          ! ---     |D| up to 3.3e5x|Vpar| on a few percent of the wall). The bound is
-          ! ---     SOLPS's own, stated in units of cs - no incidence cutoff, no
-          ! ---     fitted threshold. Hard clip, NOT tanh: piecewise-linear branches
-          ! ---     stay exactly linear in u within one frozen solve, while a smooth
-          ! ---     saturation's vanishing tail Jacobian turned the row into a fixed-
-          ! ---     point iteration and produced a period-2 boundary oscillation.
-          ! ---  3. The bicubic SLOPE row now receives the tangential derivative of
-          ! ---     the SAME clipped expression (below), instead of no drift at all -
-          ! ---     the value/slope inconsistency that was the original root cause.
+          ! --- The supplement is the component of the kinematic cancellation
+          ! --- D = R^2*u_b/psi_b = -vE.n/(Bn*|B|) that INCREASES the outward parallel
+          ! --- flow, i.e. it compensates INWARD ExB drift so the target stays a net
+          ! --- outflow boundary. Outward drift leaves Vpar at exactly sonic: the Bohm
+          ! --- condition is an inequality, extra outward flux is allowed, and the
+          ! --- recommended SOLPS branch never demands subsonic or reversed parallel
+          ! --- flow. (The MARGINAL branch - Vpar = cs - vE.n/bn down to full reversal -
+          ! --- was implemented first and crashed at 466 steps; outward-drift limit of
+          ! --- the recommended branch is exactly the plain sonic row, which is the
+          ! --- configuration measured stable.)
           ! ---
-          ! --- The clipped branches trade the u column for exact temperature columns
-          ! --- of the bound itself, so the Jacobian is exact on every branch. The
-          ! --- sheath ExB heat flux (mod_boundary_matrix_open) is the matched half:
-          ! --- with this row active, parallel + added ExB collection is exactly
-          ! --- cs*|bn| for outward drift - independent of u, so the Te -> Phi -> vE.n
-          ! --- -> Vpar -> heat-flux feedback loop that killed the unclipped term
-          ! --- cannot close.
+          ! --- Three safeguards, each with a measured failure behind it:
+          ! ---  1. INCIDENCE FLOOR m1_bfl = min(1,|bn|/s0), s0 = min_sheath_angle in
+          ! ---     radians - EXACTLY the c_angle scale that already floors the sheath
+          ! ---     particle and heat fluxes (mod_boundary_matrix_open:93), applied to
+          ! ---     the momentum channel with the same meaning: below s0 the sheath-
+          ! ---     entrance model is floor-dominated and the effective collection
+          ! ---     angle saturates (magnetic presheath / finite Larmor radius). This
+          ! ---     bounds every Jacobian column by ~1/s0 instead of 1/bn - the
+          ! ---     unbounded intra-solve column was how the marginal form died - and
+          ! ---     widens the grazing response band from 2*cs*bn (a step function in
+          ! ---     u) to 2*cs*s0 (a resolvable ramp). NOT a new threshold: the code's
+          ! ---     existing definition of grazing, third use. bn is frozen in time
+          ! ---     (psi is Dirichlet on the wall), so the floor is a static map.
+          ! ---  2. SOLPS CLIP at 2*cs/Btot (manual 3.0.9 p.407/411, b2stbc_cbc=1.0),
+          ! ---     stated in cs units. Hard, not tanh: piecewise-linear branches are
+          ! ---     exact within one frozen solve; the smooth version degenerated to a
+          ! ---     fixed-point iteration (period-2, crash at 319).
+          ! ---  3. ONE-SIDED and anchored at zero, so wall points whose potential
+          ! ---     gradient wobbles around zero produce nothing.
+          ! ---
+          ! --- With this row active the sheath ExB heat flux (mod_boundary_matrix_open)
+          ! --- stays consistent: total collection remains >= cs*|bn| and bounded.
           ! ---
           ! --- m1_dr = 0 (mach1_omit_drift) remains the A/B control: plain Vpar = cs.
           m1_dr = 1.d0
           if ( mach1_omit_drift ) m1_dr = 0.d0
 
-          m1_D = BigR**2 * U0_b / ps0_b
-          m1_S = 2.d0 * cs0 / Btot
-          call mach1_uout_clip(m1_D, m1_S, m1_Dcl, m1_mid, m1_clip)
+          ! --- Same convention as c_angle (radians of min_sheath_angle); bn is the
+          ! --- incidence SINE - identical to within 5e-5 at 1 degree. A non-positive
+          ! --- angle disables the floor (m1_bfl = 1), never the supplement.
+          m1_smin = min_sheath_angle * PI / 180.d0
+          m1_bfl  = 1.d0
+          if ( m1_smin .gt. 0.d0 ) m1_bfl = min( 1.d0, abs(bn)/m1_smin )
 
-          Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0     + m1_dr * m1_Dcl
+          m1_D   = BigR**2 * U0_b / ps0_b
+          m1_Dfl = m1_D * m1_bfl
+          m1_S   = 2.d0 * cs0 / Btot
+          call mach1_uout_supplement(direction*m1_Dfl, m1_S, m1_sup, m1_act, m1_clw)
+
+          Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0     + m1_dr * direction * m1_sup
           Mach1BC_v   = - 1.0
           Mach1BC_T   =           + direction / Btot * factor  * cs0_T                  &
-                                  + m1_dr * m1_clip * 2.d0 * cs0_T / Btot
-          Mach1BC_u   =             m1_dr * m1_mid * BigR**2 * element_size_0/ps0_b
+                                  + m1_dr * m1_clw * direction * 2.d0 * cs0_T / Btot
+          Mach1BC_u   =             m1_dr * m1_act * m1_bfl * BigR**2 * element_size_0/ps0_b
 
-          ! --- Report the APPLIED (clipped) drift and the sonic term. Their ratio is
-          ! --- bounded by 2/factor by construction (=2 wherever vpar_smoothing has not
-          ! --- reduced the sonic target) - the acceptance check for the clip.
+          ! --- Report the APPLIED supplement and the sonic term. Their ratio is
+          ! --- bounded by 2/factor by construction - the acceptance check.
           if ( floating_u_diag .and. (bnd_type .ge. 1) .and. (bnd_type .le. FD_NT) ) then
           if ( bcs(bnd_type)%floating_u ) then
             fd_m1cs_max(bnd_type) = max( fd_m1cs_max(bnd_type),                        &
                                          abs( direction / Btot * factor * cs0 ) )
-            fd_m1dr_max(bnd_type) = max( fd_m1dr_max(bnd_type), abs(m1_Dcl) )
+            fd_m1dr_max(bnd_type) = max( fd_m1dr_max(bnd_type), abs(m1_sup) )
           endif
           endif
           dMach1BC    = - Vpar0_b + direction / Btot * factor  * cs0_T * (Ti0_b+Te0_b)  &
@@ -783,45 +800,47 @@ do i=1, n_local_elms !=== do elements
                                   + direction / Btot * Hfact_b * cs0_T
           dMach1BC_Tb =           + direction / Btot * factor  * cs0_T * element_size_0
 
-          ! --- SLOPE ROW OF THE CLIPPED DRIFT (bicubic). The tangential derivative of
+          ! --- SLOPE ROW OF THE SUPPLEMENT (bicubic). The tangential derivative of
           ! --- the same expression the value row imposes, on the branch frozen for
           ! --- this solve:
-          ! ---   middle:  d/db [R^2*u_b/psi_b], with u_bb reconstructed from both
-          ! ---            endpoints (u0_bb_r) and psi_bb = ps0_bb;
-          ! ---   clipped: d/db [+-2*cs/Btot], temperature part (field lagged, as the
-          ! ---            whole block already lags magnetic geometry).
-          ! --- RESIDUAL-ONLY for the u dependence: the middle-branch derivative
+          ! ---   active:  d/db [m1_bfl * R^2*u_b/psi_b], with u_bb reconstructed from
+          ! ---            both endpoints (u0_bb_r), psi_bb = ps0_bb, and the floor
+          ! ---            m1_bfl treated as frozen geometry (bn is Dirichlet-static);
+          ! ---   clipped: d/db [direction*2*cs/Btot], temperature part (field lagged,
+          ! ---            as the whole block already lags magnetic geometry);
+          ! ---   inactive: zero.
+          ! --- RESIDUAL-ONLY for the u dependence: the active-branch derivative
           ! --- involves BOTH endpoints' u DOFs, and cross-node columns written into a
           ! --- row that several edges visit are exactly the stale-column trap fixed
-          ! --- for the value row below. The term is bounded (next paragraph) and the
-          ! --- row keeps its strong Vpar_b diagonal, so lagging it is plain Picard on
-          ! --- a bounded term. The clipped branches' exact temperature columns ARE
-          ! --- carried (dMach1BC_Ti/Te/Tb below).
+          ! --- for the value row below. With the incidence floor the term is smooth
+          ! --- and bounded, and the row keeps its strong Vpar_b diagonal, so lagging
+          ! --- it is plain Picard on a bounded term. The clipped branch's exact
+          ! --- temperature columns ARE carried (dMach1BC_Ti/Te/Tb below).
           ! ---
-          ! --- BOUNDED at 2*m1_S: the imposed function b -> D_r(b) lives in the band
-          ! --- [-S,+S], so its mean slope across one edge cannot exceed the band
-          ! --- width 2*S per unit parameter; steeper pointwise structure is
-          ! --- sub-element and not representable in the Hermite slope DOF anyway.
-          ! --- Derived from the clip, not a new threshold.
+          ! --- SAFETY CLAMP at 2*m1_S: the imposed function b -> sup(b) lives in
+          ! --- [0,S], so its mean slope across one edge cannot exceed the band per
+          ! --- unit parameter; steeper pointwise structure is sub-element and not
+          ! --- representable in the Hermite slope DOF anyway. Derived from the clip,
+          ! --- not a new threshold; with the floor active it is rarely reached.
           m1_dslope = 0.d0
           if ( n_order .eq. 3 .and. m1_dr .ne. 0.d0 ) then
             m1_dDdb = ( 2.d0*BigR*R_b*U0_b + BigR**2*u0_bb_r                           &
                         - BigR**2*U0_b*ps0_bb/ps0_b ) / ps0_b
             m1_dSdb = 2.d0 * cs0_T * (Ti0_b+Te0_b) / Btot
-            m1_dslope = m1_mid * m1_dDdb + m1_clip * m1_dSdb
+            m1_dslope = m1_act * m1_bfl * m1_dDdb + m1_clw * direction * m1_dSdb
             m1_dslope = max( -2.d0*m1_S, min( 2.d0*m1_S, m1_dslope ) )
             dMach1BC    = dMach1BC + m1_dr * m1_dslope
-            dMach1BC_T  = dMach1BC_T  + m1_dr * m1_clip * 2.d0 * cs0_TT * T0_b / Btot
-            dMach1BC_Ti = dMach1BC_Ti + m1_dr * m1_clip * 2.d0 * cs0_TT * T0_b / Btot
-            dMach1BC_Te = dMach1BC_Te + m1_dr * m1_clip * 2.d0 * cs0_TT * T0_b / Btot
-            dMach1BC_Tb = dMach1BC_Tb + m1_dr * m1_clip * 2.d0 * cs0_T * element_size_0 / Btot
+            dMach1BC_T  = dMach1BC_T  + m1_dr * m1_clw * direction * 2.d0 * cs0_TT * T0_b / Btot
+            dMach1BC_Ti = dMach1BC_Ti + m1_dr * m1_clw * direction * 2.d0 * cs0_TT * T0_b / Btot
+            dMach1BC_Te = dMach1BC_Te + m1_dr * m1_clw * direction * 2.d0 * cs0_TT * T0_b / Btot
+            dMach1BC_Tb = dMach1BC_Tb + m1_dr * m1_clw * direction * 2.d0 * cs0_T * element_size_0 / Btot
           endif
 
           if (n_order .ge. 5) then
-            ! --- Same convention as the value row: no factor/Btot, gated off on the
-            ! --- clipped branches where the drift has no u dependence.
-            dMach1BC     = dMach1BC + m1_dr * m1_mid * BigR**2 * U0_bb/ps0_b
-            dMach1BC_ubb = + m1_dr * m1_mid * BigR**2 * element_size_3/ps0_b
+            ! --- Same convention as the value row: floored, gated off outside the
+            ! --- active branch where the supplement has no u dependence.
+            dMach1BC     = dMach1BC + m1_dr * m1_act * m1_bfl * BigR**2 * U0_bb/ps0_b
+            dMach1BC_ubb = + m1_dr * m1_act * m1_bfl * BigR**2 * element_size_3/ps0_b
             d2Mach1BC    = - Vpar0_bb + direction / Btot * factor   * cs0_TT * (Ti0_b+Te0_b)**2   &
                                       + direction / Btot * factor   * cs0_T  * (Ti0_bb+Te0_bb)   !&
                                       !+ direction / Btot * Hfact_b  * cs0_T  * T0_b *2.0 !&

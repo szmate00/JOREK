@@ -51,44 +51,58 @@ module mod_floating_u
   private
 
   public :: floating_u_norm, floating_u_target, floating_u_volts, floating_u_selftest
-  public :: mach1_uout_clip
+  public :: mach1_uout_supplement
 
 contains
 
-!> SOLPS's bound on the ExB contribution to the drift-compatible Bohm condition
-!! (manual 3.0.9 p.407/411, BCMOM=13/BCCON=14: V_ExB "restricted to not exceed
-!! +-2 c_{s,a}|b_x|"; multiplier b2stbc_cbc = 1.0 by default), applied to the Mach1
-!! row's kinematic cancellation D = R^2*u_q/psi_q, which is -vE.n/(Bn*|B|) ALREADY in
-!! Vpar = v_par/|B| units. The bound in those units is S = 2*cs/|B|.
+!> One-sided supplement of the drift-compatible Bohm condition (SOLPS BCMOM=13,
+!! NON-marginal branch - the one the manual marks "recommended for cases with
+!! drifts", p.83/411 - without the interior extrapolation JOREK's nodal row cannot
+!! have). Given x = direction*D_floored, the component of the (floored) kinematic
+!! cancellation that INCREASES the outward parallel flow, and the SOLPS bound
+!! S = 2*cs/Btot:
 !!
-!! HARD CLIP, deliberately not a smooth saturation. min/max are piecewise linear, so
-!! within a branch the boundary row stays exactly linear in u and a branch frozen for
-!! one linear solve is exact. A smooth tanh was tried and produced a period-2 boundary
-!! oscillation: its saturated tail has Jacobian ~0 against an O(cs) residual, which in
-!! a one-solve-per-step code degenerates to a fixed-point iteration.
+!!     supplement = min( max(x, 0), S )
+!!
+!! ONE-SIDED: the recommended branch imposes V_par >= cs and never subsonic or
+!! reversed parallel flow; outward drift simply means total flux above sonic, which
+!! the Bohm INEQUALITY allows. The marginal branch's V_par = cs - vE.n/bn (down to
+!! reversal at the clip) was tried and crashed at 466 steps. Anchored at zero, so a
+!! wall point whose potential gradient wobbles around zero produces nothing.
+!!
+!! HARD CLIP at S, deliberately not smooth: min/max are piecewise linear, so within
+!! a branch the row stays exactly linear in u and a branch frozen for one linear
+!! solve is exact, whereas a smooth saturation's vanishing tail Jacobian degenerated
+!! into a fixed-point iteration (period-2 oscillation, crash at 319).
+!!
+!! The FLOOR on the incidence (applied by the caller, D_floored = D*min(1,|bn|/s0)
+!! with s0 = min_sheath_angle in radians - the same c_angle scale that already
+!! floors the sheath particle and heat fluxes) is what makes the whole object
+!! well behaved: it bounds every Jacobian column by ~1/s0 instead of 1/bn, and it
+!! widens the response band at grazing incidence from 2*cs*bn (a step function in
+!! u) to 2*cs*s0 (a resolvable ramp).
 !!
 !! Three mutually exclusive branches with exact derivatives:
-!!   D <= -S :  D_r = -S   dD_r/dD = 0   dD_r/dS = -1   (w_mid=0, w_clip=-1)
-!!   |D| < S :  D_r =  D   dD_r/dD = 1   dD_r/dS =  0   (w_mid=1, w_clip= 0)
-!!   D >=  S :  D_r = +S   dD_r/dD = 0   dD_r/dS = +1   (w_mid=0, w_clip=+1)
-!! Non-positive S disables the term outright.
-pure subroutine mach1_uout_clip(D, S, D_r, w_mid, w_clip)
+!!   x <= 0     :  sup = 0   dsup/dx = 0   dsup/dS = 0   (w_act=0, w_clip=0)
+!!   0 < x < S  :  sup = x   dsup/dx = 1   dsup/dS = 0   (w_act=1, w_clip=0)
+!!   x >= S     :  sup = S   dsup/dx = 0   dsup/dS = 1   (w_act=0, w_clip=1)
+!! Non-positive S disables the supplement outright.
+pure subroutine mach1_uout_supplement(x, S, sup, w_act, w_clip)
 
   implicit none
-  real*8, intent(in)  :: D, S
-  real*8, intent(out) :: D_r, w_mid, w_clip
+  real*8, intent(in)  :: x, S
+  real*8, intent(out) :: sup, w_act, w_clip
 
-  D_r = 0.d0 ; w_mid = 0.d0 ; w_clip = 0.d0
+  sup = 0.d0 ; w_act = 0.d0 ; w_clip = 0.d0
   if ( S .le. 0.d0 ) return
-  if ( D .ge. S ) then
-    D_r = S ;  w_clip = +1.d0
-  elseif ( D .le. -S ) then
-    D_r = -S ; w_clip = -1.d0
-  else
-    D_r = D ;  w_mid = 1.d0
+  if ( x .ge. S ) then
+    sup = S ;  w_clip = 1.d0
+  elseif ( x .gt. 0.d0 ) then
+    sup = x ;  w_act = 1.d0
   endif
 
-end subroutine mach1_uout_clip
+end subroutine mach1_uout_supplement
+
 
 
 !> Normalisation of the prescribed floating condition, in JOREK units.

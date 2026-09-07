@@ -200,28 +200,38 @@ contains
   !> The Mach-row clip: bound, branch exclusivity, exact identity in the middle
   !! branch, continuity at both kinks, and the disabled non-positive-bound case.
   subroutine test_uout_clip()
-    use mod_floating_u, only: mach1_uout_clip
-    real*8 :: S,D,Dr,wm,wc,Dr2,wm2,wc2
+    use mod_floating_u, only: mach1_uout_supplement
+    real*8 :: S,x,y,wa,wc,y2,wa2,wc2,bfl,bn,s0
     integer :: n
     S=1.7d0
     do n=-40,40
-      D=0.25d0*dble(n)*S
-      call mach1_uout_clip(D,S,Dr,wm,wc)
-      if (abs(Dr)>S) error stop 'clip exceeded the SOLPS bound'
-      if (wm*wc/=0.d0) error stop 'clip branches are not exclusive'
-      if (abs(D)<S .and. (Dr/=D .or. wm/=1.d0)) error stop 'middle branch is not the identity'
-      if (D>=S .and. (Dr/=S .or. wc/=1.d0)) error stop 'upper clip branch'
-      if (D<=-S .and. (Dr/=-S .or. wc/=-1.d0)) error stop 'lower clip branch'
+      x=0.25d0*dble(n)*S
+      call mach1_uout_supplement(x,S,y,wa,wc)
+      if (y<0.d0 .or. y>S) error stop 'supplement outside [0,S]'
+      if (wa*wc/=0.d0) error stop 'supplement branches are not exclusive'
+      if (x<=0.d0 .and. (y/=0.d0 .or. wa/=0.d0 .or. wc/=0.d0)) error stop 'one-sidedness: inactive branch'
+      if (x>0.d0 .and. x<S .and. (y/=x .or. wa/=1.d0)) error stop 'active branch is not the identity'
+      if (x>=S .and. (y/=S .or. wc/=1.d0)) error stop 'clip branch'
     enddo
-    call mach1_uout_clip(S*(1.d0-1.d-12),S,Dr,wm,wc)
-    call mach1_uout_clip(S*(1.d0+1.d-12),S,Dr2,wm2,wc2)
-    if (abs(Dr-Dr2)>1.d-11*S) error stop 'clip is discontinuous at the upper kink'
-    call mach1_uout_clip(-S*(1.d0-1.d-12),S,Dr,wm,wc)
-    call mach1_uout_clip(-S*(1.d0+1.d-12),S,Dr2,wm2,wc2)
-    if (abs(Dr-Dr2)>1.d-11*S) error stop 'clip is discontinuous at the lower kink'
-    call mach1_uout_clip(5.d0,0.d0,Dr,wm,wc)
-    if (Dr/=0.d0 .or. wm/=0.d0 .or. wc/=0.d0) error stop 'non-positive bound must disable'
-    write(*,*) 'PASS: Mach-row U_out clip - bound, branches, continuity, disabled case'
+    ! continuity at both kinks
+    call mach1_uout_supplement( 1.d-13*S,S,y,wa,wc)
+    call mach1_uout_supplement(-1.d-13*S,S,y2,wa2,wc2)
+    if (abs(y-y2)>1.d-12*S) error stop 'supplement discontinuous at zero'
+    call mach1_uout_supplement(S*(1.d0-1.d-12),S,y,wa,wc)
+    call mach1_uout_supplement(S*(1.d0+1.d-12),S,y2,wa2,wc2)
+    if (abs(y-y2)>1.d-11*S) error stop 'supplement discontinuous at the clip'
+    call mach1_uout_supplement(5.d0,0.d0,y,wa,wc)
+    if (y/=0.d0 .or. wa/=0.d0 .or. wc/=0.d0) error stop 'non-positive bound must disable'
+    ! the incidence floor as applied at the call site: bounded column and exact
+    ! agreement with |vE.n|/max(bn,s0) in flux terms
+    s0=1.d0*3.14159265358979d0/180.d0
+    do n=1,30
+      bn=10.d0**(-dble(n)/5.d0)
+      bfl=min(1.d0,bn/s0)
+      ! D ~ 1/bn (unit numerator): floored D*bfl = 1/max(bn,s0)
+      if (abs(bfl/bn-1.d0/max(bn,s0))>1.d-12/max(bn,s0)) error stop 'floor identity'
+    enddo
+    write(*,*) 'PASS: Mach-row supplement - one-sided, clipped, continuous, floor identity'
   end subroutine
   !> d(RHS)/dx by central differences, for every DOF, into fd(row,col).
   subroutine sweep(fd)
