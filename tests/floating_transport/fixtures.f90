@@ -132,6 +132,13 @@ contains
   end subroutine
 end module
 module mod_interp
+  ! Production code calls the GENERIC interp_PRZ with the `deltas` keyword
+  ! (mod_floating_transport_diag), so the fixture has to expose the same generic
+  ! name, not only the specific one - otherwise the keyword has no explicit
+  ! interface and the build fails before any test runs.
+  interface interp_PRZ
+    module procedure interp_PRZ_1
+  end interface
 contains
   subroutine interp_PRZ_1(nodes,elements,e,vars,n,s,t,phi,p,ps,pt,pp,R,Rs,Rt,Z,Zs,Zt,deltas)
     use data_structure

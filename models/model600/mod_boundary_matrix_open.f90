@@ -68,6 +68,9 @@ integer    :: n_tor_local
 logical    :: apply_natural_bc(0:n_var)
 logical :: fu_edge, fu_mach, fu_wall
 real*8 :: fu_ven, fu_bn, fu_vn, fu_orient, fu_mres, fu_mjac(3), fu_ven_trial
+!> Outward ExB normal speed entering the SHEATH TRANSMISSION term, and the exact
+!! derivative flag of the clip that bounds it. See the block where they are set.
+real*8 :: fu_ven_sh, fu_ven_act, fu_ven_clip
 real*8 :: fu_particle, fu_heat_i, fu_heat_e, fu_dp(2), fu_dhi(2), fu_dhe(2)
 real*8 :: fu_slope_i, fu_slope_e, fu_knee, fu_area
 real*8 :: fu_a,fu_ct,fu_cv,fu_qjac,fu_res
@@ -155,7 +158,10 @@ case(12)
 case(4)
   fu_side=4
 end select
-if (fu_edge .and. (floating_u_mach_flux.or.floating_u_wall_flux.or.floating_u_transport_diag)) then
+! The sheath ExB energy flux below needs this too, and construct_matrix_mod now
+! builds the topology whenever any boundary type carries the floating potential,
+! so the refinement is no longer tied to the opt-in transport experiments.
+if (fu_edge) then
   if (.not. present(element_id)) error stop 'floating transport requires the exterior edge identity'
   fu_edge=floating_edge_is_exterior(element_id,fu_side)
 endif
@@ -346,6 +352,53 @@ do ms=1, n_gauss
     fu_ven = -fu_orient*BigR*eq_s(mp,var_u,ms)/dl
     fu_bn = (ps0_y*normal(1)-ps0_x*normal(2))/BigR
     fu_vn = fu_bn*Vpar0+fu_ven
+    ! --- SHEATH TRANSMISSION MUST SEE THE ExB FLUX THAT REACHES THE WALL.
+    ! ---
+    ! --- The volume energy equation convects with the FULL velocity: the ExB terms
+    ! --- (Ti0_s*u0_t-Ti0_t*u0_s, 2*GAMMA*R*u0_y) and the parallel terms sit side by
+    ! --- side in mod_elt_matrix_fft. The boundary term below supplies the sheath
+    ! --- transmission in EXCESS of that convection, which is why it carries
+    ! --- (gamma_sheath-1). But it was computed from vpar0*ps0_s*normal_sign3, which
+    ! --- is identically (fu_bn*Vpar0)*BigR*dl - the PARALLEL normal flux alone. So
+    ! --- the two halves of one sheath transmission were evaluated on two different
+    ! --- flows. With dirichlet u the trace of u along the wall is constant, fu_ven
+    ! --- is identically zero and the inconsistency is invisible; bcs%floating_u ties
+    ! --- u to Te, and it becomes the dominant term on a grazing wall.
+    ! ---
+    ! --- Added here as a SEPARATE flux so the existing expression is untouched and
+    ! --- every non-floating run is bit-identical.
+    ! ---
+    ! --- OUTWARD ONLY. A material wall absorbs; it does not emit plasma. On 3.3 % of
+    ! --- the wall (measured) the ExB beats the sonic outflow and the total normal
+    ! --- flow points inward; there the wall collects nothing extra rather than
+    ! --- turning this sink into a source. This is SOLPS's U_out = max(...,c_s) floor
+    ! --- written in flux form: with the Mach row holding, fu_bn*Vpar0 = cs*|fu_bn|,
+    ! --- so fu_bn*Vpar0 + max(fu_ven,0) is exactly max(fu_vn, cs*|fu_bn|).
+    ! ---
+    ! --- CLIPPED AT 2*cs*|b_n|, which is SOLPS's own bound on the ExB contribution to
+    ! --- this condition (manual 3.0.9 p.407/411, BCMOM=13/BCCON=14; multiplier
+    ! --- b2stbc_cbc = 1.0). Stated in units of c_s, so it introduces no incidence
+    ! --- cutoff and no fitted threshold, and it caps the sheath transmission at three
+    ! --- times its Bohm value. min/max are PIECEWISE LINEAR, so within a branch the
+    ! --- term is exactly linear in u and a branch frozen for one linear solve is
+    ! --- exact - which a smooth saturation would not be, in a code that takes one
+    ! --- solve per step.
+    ! --- Three branches, mutually exclusive, each with an EXACT derivative:
+    ! ---   fu_ven <= 0          absent      d/du = 0        d/dT = 0
+    ! ---   0 < fu_ven < bound   the flux    d/du = trial    d/dT = 0
+    ! ---   fu_ven >= bound      the bound   d/du = 0        d/dT = 2*cs_T*|b_n|
+    ! --- fu_ven_act and fu_ven_clip select the middle and the upper branch.
+    fu_ven_sh   = 0.d0
+    fu_ven_act  = 0.d0
+    fu_ven_clip = 0.d0
+    if (fu_edge) then
+      fu_ven_sh = min( max(fu_ven,0.d0), 2.d0*cs0*abs(fu_bn) )
+      if ( fu_ven >= 2.d0*cs0*abs(fu_bn) ) then
+        fu_ven_clip = 1.d0
+      elseif ( fu_ven > 0.d0 ) then
+        fu_ven_act = 1.d0
+      endif
+    endif
     if (floating_u_transport_diag .and. fu_edge .and. mp==1) then
       fu_qjac=abs(xjac)/(dl*norm2((/x_t(ms),y_t(ms)/)))
       fu_res=eq_g(mp,var_u,ms)-fu_ct*Te0-fu_cv*sheath_V_wall
@@ -410,13 +463,16 @@ do ms=1, n_gauss
             ! --- Sheath heat flux (c_angle for mininum heat fluxes at grazing angles)
             if (with_TiTe) then
               rhs_ij(var_Ti)  = - v * (gamma_sheath_i-1.d0) * r0 * Ti0 * vpar0 * ps0_s * normal_sign3 * tstep &
+                                - v * (gamma_sheath_i-1.d0) * r0 * Ti0 * fu_ven_sh * BigR * dl        * tstep &
                                 - v * (gamma_sheath_i-1.d0) * r0 * Ti0 * cs0    * BigR * dl * c_angle * tstep & 
                                 - v * (GAMMA - 1.d0) * vpar0 * visco_par_heating * gradvpar0dotn * BigR * dl  * tstep  
 
               rhs_ij(var_Te)  = - v * (gamma_sheath_e-1.d0) * r0 * Te0 * vpar0 * ps0_s * normal_sign3 * tstep &
+                                - v * (gamma_sheath_e-1.d0) * r0 * Te0 * fu_ven_sh * BigR * dl        * tstep &
                                 - v * (gamma_sheath_e-1.d0) * r0 * Te0 * cs0  * BigR * dl * c_angle   * tstep  
             else
               rhs_ij(var_T)   = - v * (gamma_sheath  -1.d0) * r0 * T0  * vpar0 * ps0_s * normal_sign3 * tstep &
+                                - v * (gamma_sheath  -1.d0) * r0 * T0  * fu_ven_sh * BigR * dl        * tstep &
                                 - v * (gamma_sheath  -1.d0) * r0 * T0  * cs0    * BigR * dl * c_angle * tstep & 
                                 - v * (GAMMA - 1.d0) * vpar0 * visco_par_heating * gradvpar0dotn * BigR * dl  * tstep  
             endif
@@ -522,17 +578,33 @@ do ms=1, n_gauss
                   if (with_TiTe) then                
                     amat(var_Ti,var_psi)  = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * vpar0 * psi_s * normal_sign3 * theta * tstep 
                     amat(var_Ti,var_rho)  = + v * (gamma_sheath_i-1.d0) * rho * Ti0 * vpar0 * ps0_s * normal_sign3 * theta * tstep & 
+                                            + v * (gamma_sheath_i-1.d0) * rho * Ti0 * fu_ven_sh * BigR * dl        * theta * tstep &
                                             + v * (gamma_sheath_i-1.d0) * rho * Ti0 * cs0   * BigR  * dl * c_angle * theta * tstep 
                     amat(var_Ti,var_Ti)   = + v * (gamma_sheath_i-1.d0) * r0  * Ti  * vpar0 * ps0_s * normal_sign3 * theta * tstep & 
+                                            + v * (gamma_sheath_i-1.d0) * r0  * Ti  * fu_ven_sh * BigR * dl        * theta * tstep &
                                             + v * (gamma_sheath_i-1.d0) * r0  * Ti  * cs0   * BigR  * dl * c_angle * theta * tstep &
                                             + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * cs_Ti * BigR  * dl * c_angle * theta * tstep
+                    ! --- Exact derivative of the clipped outward ExB flux: fu_ven_act is 1
+                    ! --- only in the unclipped branch, so the column is exactly right there
+                    ! --- and exactly zero on either saturated branch. The cs and |b_n| in the
+                    ! --- clip BOUND are lagged, as the magnetic geometry already is here.
+                    amat(var_Ti,var_u)    = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * fu_ven_act * fu_ven_trial * BigR * dl * theta * tstep
+                    amat(var_Ti,var_Ti)   = amat(var_Ti,var_Ti)                                                                     &
+                                          + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * fu_ven_clip * 2.d0*cs_Ti*abs(fu_bn) * BigR * dl * theta * tstep
+                    amat(var_Ti,var_Te)   = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * fu_ven_clip * 2.d0*cs_Te*abs(fu_bn) * BigR * dl * theta * tstep
 
                     amat(var_Te,var_psi)  = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * vpar0 * psi_s * normal_sign3 * theta * tstep 
                     amat(var_Te,var_rho)  = + v * (gamma_sheath_e-1.d0) * rho * Te0 * vpar0 * ps0_s * normal_sign3 * theta * tstep & 
+                                            + v * (gamma_sheath_e-1.d0) * rho * Te0 * fu_ven_sh * BigR * dl        * theta * tstep &
                                             + v * (gamma_sheath_e-1.d0) * rho * Te0 * cs0   * BigR  * dl * c_angle * theta * tstep 
                     amat(var_Te,var_Te)   = + v * (gamma_sheath_e-1.d0) * r0  * Te  * vpar0 * ps0_s * normal_sign3 * theta * tstep &
+                                            + v * (gamma_sheath_e-1.d0) * r0  * Te  * fu_ven_sh * BigR * dl        * theta * tstep &
                                             + v * (gamma_sheath_e-1.d0) * r0  * Te  * cs0   * BigR  * dl * c_angle * theta * tstep &
                                             + v * (gamma_sheath_e-1.d0) * r0  * Te0 * cs_Te * BigR  * dl * c_angle * theta * tstep
+                    amat(var_Te,var_u)    = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * fu_ven_act * fu_ven_trial * BigR * dl * theta * tstep
+                    amat(var_Te,var_Te)   = amat(var_Te,var_Te)                                                                     &
+                                          + v * (gamma_sheath_e-1.d0) * r0  * Te0 * fu_ven_clip * 2.d0*cs_Te*abs(fu_bn) * BigR * dl * theta * tstep
+                    amat(var_Te,var_Ti)   = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * fu_ven_clip * 2.d0*cs_Ti*abs(fu_bn) * BigR * dl * theta * tstep
 
                     amat(var_Ti,var_vpar) = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * vpar  * ps0_s * normal_sign3 * theta * tstep &
                                             + v * (GAMMA - 1.d0) * vpar * visco_par_heating * gradvpar0dotn * BigR * dl    * theta * tstep &
@@ -541,10 +613,15 @@ do ms=1, n_gauss
                   else
                     amat(var_T,var_psi)   = + v * (gamma_sheath  -1.d0) * r0  *  T0 * vpar0 * psi_s * normal_sign3 * theta * tstep 
                     amat(var_T,var_rho)   = + v * (gamma_sheath  -1.d0) * rho *  T0 * vpar0 * ps0_s * normal_sign3 * theta * tstep &
+                                            + v * (gamma_sheath  -1.d0) * rho *  T0 * fu_ven_sh * BigR * dl        * theta * tstep &
                                             + v * (gamma_sheath  -1.d0) * rho *  T0 * cs0   * BigR  * dl * c_angle * theta * tstep 
                     amat(var_T,var_T)     = + v * (gamma_sheath  -1.d0) * r0  *  T  * vpar0 * ps0_s * normal_sign3 * theta * tstep &
+                                            + v * (gamma_sheath  -1.d0) * r0  *  T  * fu_ven_sh * BigR * dl        * theta * tstep &
                                             + v * (gamma_sheath  -1.d0) * r0  *  T  * cs0   * BigR  * dl * c_angle * theta * tstep &
                                             + v * (gamma_sheath  -1.d0) * r0  *  T0 * cs_T  * BigR  * dl * c_angle * theta * tstep
+                    amat(var_T,var_u)     = + v * (gamma_sheath  -1.d0) * r0  *  T0 * fu_ven_act * fu_ven_trial * BigR * dl * theta * tstep
+                    amat(var_T,var_T)     = amat(var_T,var_T)                                                                       &
+                                          + v * (gamma_sheath  -1.d0) * r0  *  T0 * fu_ven_clip * 2.d0*cs_T *abs(fu_bn) * BigR * dl * theta * tstep
 
                     amat(var_T,var_vpar)  = + v * (gamma_sheath  -1.d0) * r0  * T0  * vpar  * ps0_s * normal_sign3 * theta * tstep & 
                                             + v * (GAMMA - 1.d0) * vpar * visco_par_heating * gradvpar0dotn * BigR * dl    * theta * tstep &

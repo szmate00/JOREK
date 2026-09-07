@@ -461,7 +461,12 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
 
   ! --- Memory allocation
 #if JOREK_MODEL == 600
-  if (floating_u_mach_flux .or. floating_u_wall_flux .or. floating_u_transport_diag) &
+  ! The sheath ExB energy flux in mod_boundary_matrix_open needs the exterior-edge
+  ! identity too, so build it whenever any boundary type carries the floating
+  ! potential - not only for the opt-in transport experiments. Building it is a
+  ! connectivity pass over the local elements; it changes no equation by itself.
+  if (floating_u_mach_flux .or. floating_u_wall_flux .or. floating_u_transport_diag &
+      .or. any(bcs(:)%floating_u)) &
     call floating_edges_build(element_list,node_list)
   if (floating_u_transport_diag) call transport_diag_reset()
 #endif
