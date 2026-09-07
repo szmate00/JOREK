@@ -193,9 +193,36 @@ program test_boundary
       endif
     enddo
   enddo
+  call test_uout_clip()
   write(*,*) 'PASS: sheath ExB energy flux - absent without a wall potential gradient, outward only, clipped, FD Jacobian'
   write(*,*) 'PASS: production boundary assembler finite-difference Jacobians and type-2 exclusion'
 contains
+  !> The Mach-row clip: bound, branch exclusivity, exact identity in the middle
+  !! branch, continuity at both kinks, and the disabled non-positive-bound case.
+  subroutine test_uout_clip()
+    use mod_floating_u, only: mach1_uout_clip
+    real*8 :: S,D,Dr,wm,wc,Dr2,wm2,wc2
+    integer :: n
+    S=1.7d0
+    do n=-40,40
+      D=0.25d0*dble(n)*S
+      call mach1_uout_clip(D,S,Dr,wm,wc)
+      if (abs(Dr)>S) error stop 'clip exceeded the SOLPS bound'
+      if (wm*wc/=0.d0) error stop 'clip branches are not exclusive'
+      if (abs(D)<S .and. (Dr/=D .or. wm/=1.d0)) error stop 'middle branch is not the identity'
+      if (D>=S .and. (Dr/=S .or. wc/=1.d0)) error stop 'upper clip branch'
+      if (D<=-S .and. (Dr/=-S .or. wc/=-1.d0)) error stop 'lower clip branch'
+    enddo
+    call mach1_uout_clip(S*(1.d0-1.d-12),S,Dr,wm,wc)
+    call mach1_uout_clip(S*(1.d0+1.d-12),S,Dr2,wm2,wc2)
+    if (abs(Dr-Dr2)>1.d-11*S) error stop 'clip is discontinuous at the upper kink'
+    call mach1_uout_clip(-S*(1.d0-1.d-12),S,Dr,wm,wc)
+    call mach1_uout_clip(-S*(1.d0+1.d-12),S,Dr2,wm2,wc2)
+    if (abs(Dr-Dr2)>1.d-11*S) error stop 'clip is discontinuous at the lower kink'
+    call mach1_uout_clip(5.d0,0.d0,Dr,wm,wc)
+    if (Dr/=0.d0 .or. wm/=0.d0 .or. wc/=0.d0) error stop 'non-positive bound must disable'
+    write(*,*) 'PASS: Mach-row U_out clip - bound, branches, continuity, disabled case'
+  end subroutine
   !> d(RHS)/dx by central differences, for every DOF, into fd(row,col).
   subroutine sweep(fd)
     real*8,intent(out)::fd(nd,nd)

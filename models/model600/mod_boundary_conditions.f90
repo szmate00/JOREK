@@ -39,7 +39,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                                   &
        sheath_V_wall, floating_u_diag, D_perp, mach1_omit_drift, floating_u_mach_flux
-use mod_floating_u, only: floating_u_norm
+use mod_floating_u, only: floating_u_norm, mach1_uout_clip
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -109,6 +109,12 @@ real*8  :: fd_vin_max(FD_NT), fd_vout_max(FD_NT)
 !! missing from the slope row on bicubic elements. Their ratio IS the inconsistency.
 real*8  :: fd_m1cs_max(FD_NT), fd_m1dr_max(FD_NT)
 real*8  :: m1_dr
+!> Clipped drift-compatible Bohm correction (SOLPS BCMOM=13 without extrapolation).
+!! m1_D = R^2*u_b/psi_b (exact -vE.n/(Bn*|B|), Vpar units); m1_S = 2*cs/Btot;
+!! m1_Dr = clip(m1_D, +-m1_S); m1_mid/m1_clip select the branch (see mach1_uout_clip).
+!! u0_bb_r reconstructs the second tangential derivative of u from BOTH endpoints'
+!! value/slope DOFs (same stencil as ps0_bb) for the bicubic slope-row residual.
+real*8  :: m1_D, m1_S, m1_Dr, m1_mid, m1_clip, m1_dDdb, m1_dSdb, m1_dslope, u0_bb_r
 real*8  :: fd_rho_min(FD_NT), fd_T_min(FD_NT), fd_pe_R(FD_NT), fd_pe_Z(FD_NT)
 real*8  :: fd_loc(2,FD_NT)
 real*8  :: fd_es, fd_ep, fd_dl, fd_h, fd_res, fd_vn, fd_pe, fd_sq, fd_sgn
@@ -583,6 +589,15 @@ do i=1, n_local_elms !=== do elements
                  + element_list%element(ielm)%size(iv2,1)      * node_list%node(inode2)%values(1,1,var_psi)      * H1_ss(2,1) &
                  + element_list%element(ielm)%size(iv2,iv_dir) * node_list%node(inode2)%values(1,iv_dir,var_psi) * H1_ss(2,2)
 
+          ! --- Second tangential derivative of u along the edge, reconstructed from
+          ! --- both endpoints' value/slope DOFs exactly as ps0_bb above. Needed by the
+          ! --- slope row's drift residual; no second-derivative nodal DOF exists at
+          ! --- bicubic order.
+          u0_bb_r= element_list%element(ielm)%size(iv ,1)      * node_list%node(inode )%values(1,1,var_u)        * H1_ss(1,1) &
+                 + element_list%element(ielm)%size(iv ,iv_dir) * node_list%node(inode )%values(1,iv_dir,var_u)   * H1_ss(1,2) &
+                 + element_list%element(ielm)%size(iv2,1)      * node_list%node(inode2)%values(1,1,var_u)        * H1_ss(2,1) &
+                 + element_list%element(ielm)%size(iv2,iv_dir) * node_list%node(inode2)%values(1,iv_dir,var_u)   * H1_ss(2,2)
+
           R_bb = + element_list%element(ielm)%size(iv ,1)      * node_list%node(inode )%x(1,1,1)      * H1_ss(1,1)  &
                  + element_list%element(ielm)%size(iv ,iv_dir) * node_list%node(inode )%x(1,iv_dir,1) * H1_ss(1,2)  &
                  + element_list%element(ielm)%size(iv2,1)      * node_list%node(inode2)%x(1,1,1)      * H1_ss(2,1)  &
@@ -699,33 +714,62 @@ do i=1, n_local_elms !=== do elements
           cs0_TT   = - 0.25d0 * gamma**2 / cs0**3 
           cs0_TTT  = 3.d0/8.d0* gamma**3 / cs0**5 
 
-          ! --- INCONSISTENCY (mach1_omit_drift). The ExB drift compensation
-          ! --- + factor/Btot*R^2*U0_b/ps0_b appears in the VALUE row below, but the
-          ! --- tangential-DERIVATIVE row dMach1BC only receives its derivative inside
-          ! --- the "n_order .ge. 5" branch further down. On bicubic elements the value
-          ! --- and slope rows therefore impose DIFFERENT relations for Vpar. The
-          ! --- mismatch is proportional to U0_b, so it is identically zero while u is
-          ! --- constant on the wall and becomes large once bcs%floating_u ties u to Te.
-          ! --- It also carries 1/ps0_b, so it is worst at grazing incidence.
+          ! --- DRIFT-COMPATIBLE BOHM CONDITION, clipped (SOLPS BCMOM=13 without the
+          ! --- interior extrapolation; manual 3.0.9 p.407/411, linked to BCCON=14 /
+          ! --- BCENE,I=15 / BCPOT=11, all "recommended for cases with drifts").
           ! ---
-          ! --- m1_dr = 0 drops the term from BOTH rows, making them consistent. That is
-          ! --- a DIAGNOSTIC, not a fix: it removes the drift compatibility of the Bohm
-          ! --- condition, which SOLPS requires whenever drifts are active.
+          ! ---     Vpar*Bn + vE.n = direction*cs*|bn|   =>   Vpar = dir*cs/Btot + D
+          ! ---     D = R^2*u_b/psi_b = -vE.n/(Bn*|B|),  clipped to |D| <= 2*cs/Btot.
+          ! ---
+          ! --- Three long-standing defects of the unclipped legacy term are repaired
+          ! --- here, and each on its own made the term lethal under bcs%floating_u
+          ! --- (dormant for years under dirichlet u, where u_b = 0 identically):
+          ! ---  1. NO factor/Btot on D. The |B| is already supplied by the psi_b
+          ! ---     denominator; dividing again was a double conversion (~2x under-
+          ! ---     applied), and the vpar_smoothing weight belongs to the sonic
+          ! ---     target, not to a kinematic identity.
+          ! ---  2. THE CLIP. D is an inversion by Bn and diverges at tangency, where
+          ! ---     no parallel flow can cancel a finite normal ExB flux (measured:
+          ! ---     |D| up to 3.3e5x|Vpar| on a few percent of the wall). The bound is
+          ! ---     SOLPS's own, stated in units of cs - no incidence cutoff, no
+          ! ---     fitted threshold. Hard clip, NOT tanh: piecewise-linear branches
+          ! ---     stay exactly linear in u within one frozen solve, while a smooth
+          ! ---     saturation's vanishing tail Jacobian turned the row into a fixed-
+          ! ---     point iteration and produced a period-2 boundary oscillation.
+          ! ---  3. The bicubic SLOPE row now receives the tangential derivative of
+          ! ---     the SAME clipped expression (below), instead of no drift at all -
+          ! ---     the value/slope inconsistency that was the original root cause.
+          ! ---
+          ! --- The clipped branches trade the u column for exact temperature columns
+          ! --- of the bound itself, so the Jacobian is exact on every branch. The
+          ! --- sheath ExB heat flux (mod_boundary_matrix_open) is the matched half:
+          ! --- with this row active, parallel + added ExB collection is exactly
+          ! --- cs*|bn| for outward drift - independent of u, so the Te -> Phi -> vE.n
+          ! --- -> Vpar -> heat-flux feedback loop that killed the unclipped term
+          ! --- cannot close.
+          ! ---
+          ! --- m1_dr = 0 (mach1_omit_drift) remains the A/B control: plain Vpar = cs.
           m1_dr = 1.d0
           if ( mach1_omit_drift ) m1_dr = 0.d0
 
-          Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0     + m1_dr * factor / Btot * BigR**2 * U0_b/ps0_b 
-          Mach1BC_v   = - 1.0
-          Mach1BC_T   =           + direction / Btot * factor  * cs0_T 
-          Mach1BC_u   =                                                   m1_dr * factor / Btot * BigR**2 * element_size_0/ps0_b 
+          m1_D = BigR**2 * U0_b / ps0_b
+          m1_S = 2.d0 * cs0 / Btot
+          call mach1_uout_clip(m1_D, m1_S, m1_Dr, m1_mid, m1_clip)
 
-          ! --- Measure the inconsistency instead of assuming it is large.
+          Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0     + m1_dr * m1_Dr
+          Mach1BC_v   = - 1.0
+          Mach1BC_T   =           + direction / Btot * factor  * cs0_T                  &
+                                  + m1_dr * m1_clip * 2.d0 * cs0_T / Btot
+          Mach1BC_u   =             m1_dr * m1_mid * BigR**2 * element_size_0/ps0_b
+
+          ! --- Report the APPLIED (clipped) drift and the sonic term. Their ratio is
+          ! --- bounded by 2/factor by construction (=2 wherever vpar_smoothing has not
+          ! --- reduced the sonic target) - the acceptance check for the clip.
           if ( floating_u_diag .and. (bnd_type .ge. 1) .and. (bnd_type .le. FD_NT) ) then
           if ( bcs(bnd_type)%floating_u ) then
             fd_m1cs_max(bnd_type) = max( fd_m1cs_max(bnd_type),                        &
                                          abs( direction / Btot * factor * cs0 ) )
-            fd_m1dr_max(bnd_type) = max( fd_m1dr_max(bnd_type),                        &
-                                         abs( factor / Btot * BigR**2 * U0_b/ps0_b ) )
+            fd_m1dr_max(bnd_type) = max( fd_m1dr_max(bnd_type), abs(m1_Dr) )
           endif
           endif
           dMach1BC    = - Vpar0_b + direction / Btot * factor  * cs0_T * (Ti0_b+Te0_b)  &
@@ -739,10 +783,45 @@ do i=1, n_local_elms !=== do elements
                                   + direction / Btot * Hfact_b * cs0_T
           dMach1BC_Tb =           + direction / Btot * factor  * cs0_T * element_size_0
 
+          ! --- SLOPE ROW OF THE CLIPPED DRIFT (bicubic). The tangential derivative of
+          ! --- the same expression the value row imposes, on the branch frozen for
+          ! --- this solve:
+          ! ---   middle:  d/db [R^2*u_b/psi_b], with u_bb reconstructed from both
+          ! ---            endpoints (u0_bb_r) and psi_bb = ps0_bb;
+          ! ---   clipped: d/db [+-2*cs/Btot], temperature part (field lagged, as the
+          ! ---            whole block already lags magnetic geometry).
+          ! --- RESIDUAL-ONLY for the u dependence: the middle-branch derivative
+          ! --- involves BOTH endpoints' u DOFs, and cross-node columns written into a
+          ! --- row that several edges visit are exactly the stale-column trap fixed
+          ! --- for the value row below. The term is bounded (next paragraph) and the
+          ! --- row keeps its strong Vpar_b diagonal, so lagging it is plain Picard on
+          ! --- a bounded term. The clipped branches' exact temperature columns ARE
+          ! --- carried (dMach1BC_Ti/Te/Tb below).
+          ! ---
+          ! --- BOUNDED at 2*m1_S: the imposed function b -> D_r(b) lives in the band
+          ! --- [-S,+S], so its mean slope across one edge cannot exceed the band
+          ! --- width 2*S per unit parameter; steeper pointwise structure is
+          ! --- sub-element and not representable in the Hermite slope DOF anyway.
+          ! --- Derived from the clip, not a new threshold.
+          m1_dslope = 0.d0
+          if ( n_order .eq. 3 .and. m1_dr .ne. 0.d0 ) then
+            m1_dDdb = ( 2.d0*BigR*R_b*U0_b + BigR**2*u0_bb_r                           &
+                        - BigR**2*U0_b*ps0_bb/ps0_b ) / ps0_b
+            m1_dSdb = 2.d0 * cs0_T * (Ti0_b+Te0_b) / Btot
+            m1_dslope = m1_mid * m1_dDdb + m1_clip * m1_dSdb
+            m1_dslope = max( -2.d0*m1_S, min( 2.d0*m1_S, m1_dslope ) )
+            dMach1BC    = dMach1BC + m1_dr * m1_dslope
+            dMach1BC_T  = dMach1BC_T  + m1_dr * m1_clip * 2.d0 * cs0_TT * T0_b / Btot
+            dMach1BC_Ti = dMach1BC_Ti + m1_dr * m1_clip * 2.d0 * cs0_TT * T0_b / Btot
+            dMach1BC_Te = dMach1BC_Te + m1_dr * m1_clip * 2.d0 * cs0_TT * T0_b / Btot
+            dMach1BC_Tb = dMach1BC_Tb + m1_dr * m1_clip * 2.d0 * cs0_T * element_size_0 / Btot
+          endif
 
           if (n_order .ge. 5) then
-            dMach1BC     = dMach1BC + m1_dr * factor / Btot * BigR**2 * U0_bb/ps0_b
-            dMach1BC_ubb = + m1_dr * factor / Btot * BigR**2 * element_size_3/ps0_b
+            ! --- Same convention as the value row: no factor/Btot, gated off on the
+            ! --- clipped branches where the drift has no u dependence.
+            dMach1BC     = dMach1BC + m1_dr * m1_mid * BigR**2 * U0_bb/ps0_b
+            dMach1BC_ubb = + m1_dr * m1_mid * BigR**2 * element_size_3/ps0_b
             d2Mach1BC    = - Vpar0_bb + direction / Btot * factor   * cs0_TT * (Ti0_b+Te0_b)**2   &
                                       + direction / Btot * factor   * cs0_T  * (Ti0_bb+Te0_bb)   !&
                                       !+ direction / Btot * Hfact_b  * cs0_T  * T0_b *2.0 !&
@@ -787,6 +866,19 @@ do i=1, n_local_elms !=== do elements
                  index_min, index_max, a_mat)
           endif
 
+          ! --- CORNER DOUBLE-WRITE FIX. add_one_entry ASSIGNS, and at a geometric
+          ! --- corner the two incident edges write this row's u column at DIFFERENT
+          ! --- columns (node index(2) vs index(3)), so both used to survive while
+          ! --- only the last RHS did - a spurious extra ExB column with its own
+          ! --- 1/ps0_b amplification. Each visit now zeroes the OTHER tangential
+          ! --- column first, so the last-visiting edge's relation is the only one
+          ! --- left in the row. On a straight boundary the other column is written
+          ! --- to the zero it already holds. Dormant when Mach1BC_u = 0 - which is
+          ! --- exactly why it went unnoticed under dirichlet u.
+          call boundary_conditions_add_one_entry(                            &
+               index_node,  kv, in, node_list%node(inode)%index(5-iv_dir), ku, in, &
+               0.d0,                                                         &
+               index_min, index_max, a_mat)
           call boundary_conditions_add_one_entry(             &
                index_node,  kv, in, index_node2, ku, in,      &
                - zbig * Mach1BC_u,                            &

@@ -51,8 +51,45 @@ module mod_floating_u
   private
 
   public :: floating_u_norm, floating_u_target, floating_u_volts, floating_u_selftest
+  public :: mach1_uout_clip
 
 contains
+
+!> SOLPS's bound on the ExB contribution to the drift-compatible Bohm condition
+!! (manual 3.0.9 p.407/411, BCMOM=13/BCCON=14: V_ExB "restricted to not exceed
+!! +-2 c_{s,a}|b_x|"; multiplier b2stbc_cbc = 1.0 by default), applied to the Mach1
+!! row's kinematic cancellation D = R^2*u_q/psi_q, which is -vE.n/(Bn*|B|) ALREADY in
+!! Vpar = v_par/|B| units. The bound in those units is S = 2*cs/|B|.
+!!
+!! HARD CLIP, deliberately not a smooth saturation. min/max are piecewise linear, so
+!! within a branch the boundary row stays exactly linear in u and a branch frozen for
+!! one linear solve is exact. A smooth tanh was tried and produced a period-2 boundary
+!! oscillation: its saturated tail has Jacobian ~0 against an O(cs) residual, which in
+!! a one-solve-per-step code degenerates to a fixed-point iteration.
+!!
+!! Three mutually exclusive branches with exact derivatives:
+!!   D <= -S :  D_r = -S   dD_r/dD = 0   dD_r/dS = -1   (w_mid=0, w_clip=-1)
+!!   |D| < S :  D_r =  D   dD_r/dD = 1   dD_r/dS =  0   (w_mid=1, w_clip= 0)
+!!   D >=  S :  D_r = +S   dD_r/dD = 0   dD_r/dS = +1   (w_mid=0, w_clip=+1)
+!! Non-positive S disables the term outright.
+pure subroutine mach1_uout_clip(D, S, D_r, w_mid, w_clip)
+
+  implicit none
+  real*8, intent(in)  :: D, S
+  real*8, intent(out) :: D_r, w_mid, w_clip
+
+  D_r = 0.d0 ; w_mid = 0.d0 ; w_clip = 0.d0
+  if ( S .le. 0.d0 ) return
+  if ( D .ge. S ) then
+    D_r = S ;  w_clip = +1.d0
+  elseif ( D .le. -S ) then
+    D_r = -S ; w_clip = -1.d0
+  else
+    D_r = D ;  w_mid = 1.d0
+  endif
+
+end subroutine mach1_uout_clip
+
 
 !> Normalisation of the prescribed floating condition, in JOREK units.
 !!
