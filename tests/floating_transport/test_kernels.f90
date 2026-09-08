@@ -18,10 +18,36 @@ program test_kernels
       call floating_mach_flux(xm(1),xm(2),bn,bmag,xm(3),.true.,coef,rm,junk)
       call close(j(k),(rp-rm)/(2*eps),'Mach Jacobian')
     enddo
-    ! With f=1, exact drift cancellation has NO extra factor/Bmag.
-    vp=(abs(bn/bmag)*x(3)-x(2))/bn
+    ! NON-MARGINAL target: Bn*Vpar = |a|*cs + min(max(-ven,0), 2*cs*|a|).
+    ! x(2) = -0.03 is INWARD here, and |ven| < 2*cs*|a| = 2*0.08*0.0684 = 0.0109?
+    ! no: 2*cs*|a| = 0.0109 < 0.03, so this sits on the CLIPPED branch.
+    vp=(abs(bn/bmag)*x(3) + min(max(-x(2),0.d0),2.d0*x(3)*abs(bn/bmag)))/bn
     call floating_mach_flux(vp,x(2),bn,bmag,x(3),.false.,coef,r,j)
     call close(r,0.d0,'finite incidence normal Mach target')
+    ! FD the ACTIVE (unclipped inward) branch: that is where the ven column - the
+    ! whole point of the drift term - is nonzero, and the sweep above sits on the
+    ! clipped branch where it is legitimately zero.
+    x=(/0.22d0,-0.004d0,0.08d0/)          ! 0 < -ven=0.004 < 2*cs*|a|=0.0109
+    call floating_mach_flux(x(1),x(2),bn,bmag,x(3),.false.,coef,r,j)
+    if (j(2)==0.d0) error stop 'active branch must have a ven column'
+    do k=1,3
+      xp=x; xm=x; xp(k)=xp(k)+eps; xm(k)=xm(k)-eps
+      call floating_mach_flux(xp(1),xp(2),bn,bmag,xp(3),.false.,coef,rp,junk)
+      call floating_mach_flux(xm(1),xm(2),bn,bmag,xm(3),.false.,coef,rm,junk)
+      call close(j(k),(rp-rm)/(2*eps),'Mach Jacobian, active branch')
+    enddo
+    x=(/0.22d0,-0.03d0,0.08d0/)
+    ! Outward drift must reduce to the plain sonic row, with no supplement at all.
+    vp=abs(bn/bmag)*x(3)/bn
+    call floating_mach_flux(vp,+0.03d0,bn,bmag,x(3),.false.,coef,r,j)
+    call close(r,0.d0,'outward drift reduces to the sonic row')
+    if (j(2)/=0.d0) error stop 'outward drift must have no ven column'
+    ! Bn*Vpar is bounded into [|a|*f*cs, 3*cs*|a|] for ANY inward drift.
+    do k=-6,0
+      call floating_mach_flux(0.d0,dble(k)*0.5d0,bn,bmag,x(3),.false.,coef,r,j)
+      ! residual at vpar=0 is -a*(target); recover the target and bound it
+      call inrange(-r/a_of(bn,bmag), abs(bn/bmag)*x(3), 3.d0*x(3)*abs(bn/bmag))
+    enddo
   enddo
   call floating_mach_flux(100.d0,-0.1d0,0.d0,2.d0,0.1d0,.true.,coef,r,j)
   call close(r,0.d0,'tangent residual')
@@ -66,6 +92,17 @@ program test_kernels
   call close(floating_temperature_slope(0.1d0,0.03d0,(/0.5d0,0.5d0/)),1.d0,'warm temperature slope')
   write(*,*) 'PASS: production floating transport kernels, Jacobians, flux balances and orientation'
 contains
+  real*8 function a_of(b,bm)
+    real*8,intent(in)::b,bm
+    a_of=b/bm
+  end function
+  subroutine inrange(val,lo,hi)
+    real*8,intent(in)::val,lo,hi
+    if (val<lo-1.d-12 .or. val>hi+1.d-12) then
+      write(*,*) 'FAIL target out of [f*cs,3cs]*|a| :',val,lo,hi
+      error stop 1
+    endif
+  end subroutine
   subroutine close(a,b,name)
     real*8, intent(in) :: a,b
     character(*), intent(in) :: name
