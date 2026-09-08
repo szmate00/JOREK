@@ -447,13 +447,19 @@ do ms=1, n_gauss
       if (.not. with_TiTe) &
         call floating_wall_flux(fu_vn,cs0,c_angle,gamma_sheath,fu_particle,fu_heat_i,fu_dp,fu_dhi)
     endif
-    if (fu_wall .or. fu_mach) then
-      fu_knee = T_min_neg
-      if (fu_knee < 0.d0) fu_knee=T_1
-      fu_slope_i = floating_temperature_slope(Ti0,fu_knee,corr_neg_temp_coef)
-      fu_slope_e = floating_temperature_slope(Te0,fu_knee,corr_neg_temp_coef)
-      if (.not. with_TiTe) fu_slope_i=floating_temperature_slope(T0,fu_knee,corr_neg_temp_coef)
-    endif
+    ! --- UNCONDITIONAL. cs0 above is built from corr_neg_temp1(T), so d(cs)/dT carries
+    ! --- corr_neg_temp1'(T) - which is exactly what floating_temperature_slope returns.
+    ! --- It used to be formed only for the opt-in wall/mach experiments, so every
+    ! --- production run differentiated a corrected sound speed as if it were
+    ! --- uncorrected. Below the corr_neg knee that overstates d(cs)/dT badly (a factor
+    ! --- 3 at 0.65 eV with T_min_neg = 3e-5, and exponentially worse below), and the
+    ! --- divertor wall in this campaign sits exactly there - so the implicit solve
+    ! --- believed the sheath sink relaxes with T far more strongly than it does.
+    fu_knee = T_min_neg
+    if (fu_knee < 0.d0) fu_knee=T_1
+    fu_slope_i = floating_temperature_slope(Ti0,fu_knee,corr_neg_temp_coef)
+    fu_slope_e = floating_temperature_slope(Te0,fu_knee,corr_neg_temp_coef)
+    if (.not. with_TiTe) fu_slope_i=floating_temperature_slope(T0,fu_knee,corr_neg_temp_coef)
 
     bdotn = (+ ps0_y * normal(1) - ps0_x * normal(2)) / x_g(ms) / Btot
     gradvpar0dotn = (+ vpar0_x * normal(1) + vpar0_y * normal(2)) 
@@ -580,11 +586,13 @@ do ms=1, n_gauss
 
                 gradvpardotn  = (+ vpar_x * normal(1) + vpar_y * normal(2)) 
 
-                cs_T   = gamma * T  / (2.d0 * cs0)
-                cs_Ti  = gamma * Ti / (2.d0 * cs0)
-                cs_Te  = gamma * Te / (2.d0 * cs0)
+                ! --- d(cs)/dT of the CORRECTED sound speed: the corr_neg_temp1 slope
+                ! --- belongs here, not only in the opt-in fu_cs below.
+                cs_T   = gamma * T  / (2.d0 * cs0) * fu_slope_i
+                cs_Ti  = gamma * Ti / (2.d0 * cs0) * fu_slope_i
+                cs_Te  = gamma * Te / (2.d0 * cs0) * fu_slope_e
                 if (fu_mach .or. fu_wall) then
-                  fu_cs=(/cs_T*fu_slope_i,cs_Ti*fu_slope_i,cs_Te*fu_slope_e/)
+                  fu_cs=(/cs_T,cs_Ti,cs_Te/)   ! slope now already in cs_T/cs_Ti/cs_Te
                 endif
                 fu_ven_trial = -fu_orient*BigR*psi_s/dl
                 ! The true trace basis has zero t derivative here. Independent

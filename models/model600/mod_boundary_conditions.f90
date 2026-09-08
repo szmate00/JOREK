@@ -118,7 +118,7 @@ real*8  :: m1_dr
 !! derivative of u from BOTH endpoints' value/slope DOFs (same stencil as ps0_bb)
 !! for the bicubic slope-row residual.
 real*8  :: m1_D, m1_S, m1_bfl, m1_smin, m1_Dfl, m1_sup, m1_act, m1_clw
-real*8  :: m1_dDdb, m1_dSdb, m1_dslope, m1_dfdb, m1_clamp, m1_raw, u0_bb_r
+real*8  :: m1_dDdb, m1_dSdb, m1_dslope, m1_ucol, m1_clamp, m1_raw, u0_bb_r
 real*8  :: fd_rho_min(FD_NT), fd_T_min(FD_NT), fd_pe_R(FD_NT), fd_pe_Z(FD_NT)
 real*8  :: fd_loc(2,FD_NT)
 real*8  :: fd_es, fd_ep, fd_dl, fd_h, fd_res, fd_vn, fd_pe, fd_sq, fd_sgn
@@ -795,11 +795,25 @@ do i=1, n_local_elms !=== do elements
           ! --- incidence SINE - identical to within 5e-5 at 1 degree. A non-positive
           ! --- angle disables the floor (m1_bfl = 1), never the supplement.
           m1_smin = min_sheath_angle * PI / 180.d0
-          m1_bfl  = 1.d0
-          if ( m1_smin .gt. 0.d0 ) m1_bfl = min( 1.d0, abs(bn)/m1_smin )
 
-          m1_D   = BigR**2 * U0_b / ps0_b
-          m1_Dfl = m1_D * m1_bfl
+          ! --- NEVER FORM THE SINGULAR FACTOR. bn_1 below shows |bn| = |ps0_b|/(R*Btot*dl)
+          ! --- EXACTLY, so on the floored branch the 1/ps0_b of D cancels identically
+          ! --- against the |bn| of the floor. Writing D*f as a product instead evaluated
+          ! --- 0*Inf = NaN wherever psi has a local extremum along the wall (ps0_b = 0 at
+          ! --- baffle tops and PFR corners), and lost precision near them. Forming the
+          ! --- cancelled expression directly removes the singularity, and removes bn_b
+          ! --- from this path - which also removes a sign defect, since the per-vertex
+          ! --- flips applied to bn_1/bn_2 below are NOT applied to bn_b.
+          if ( m1_smin .gt. 0.d0 .and. abs(bn) .lt. m1_smin ) then
+            m1_bfl  = abs(bn) / m1_smin
+            m1_Dfl  = sign(1.d0,ps0_b) * BigR * U0_b          / (Btot*dl*m1_smin)
+            m1_ucol = sign(1.d0,ps0_b) * BigR * element_size_0 / (Btot*dl*m1_smin)
+          else
+            m1_bfl  = 1.d0
+            m1_Dfl  = BigR**2 * U0_b          / ps0_b
+            m1_ucol = BigR**2 * element_size_0 / ps0_b
+          endif
+          m1_D   = m1_Dfl
           m1_S   = 2.d0 * cs0 / Btot
           call mach1_uout_supplement(direction*m1_Dfl, m1_S, m1_sup, m1_act, m1_clw)
 
@@ -807,7 +821,7 @@ do i=1, n_local_elms !=== do elements
           Mach1BC_v   = - 1.0
           Mach1BC_T   =           + direction / Btot * factor  * cs0_T                  &
                                   + m1_dr * m1_clw * direction * 2.d0 * cs0_T / Btot
-          Mach1BC_u   =             m1_dr * m1_act * m1_bfl * BigR**2 * element_size_0/ps0_b
+          Mach1BC_u   =             m1_dr * m1_act * m1_ucol
 
           ! --- Report the APPLIED supplement and the sonic term. Their ratio is
           ! --- bounded by 2/factor by construction - the acceptance check.
@@ -860,14 +874,20 @@ do i=1, n_local_elms !=== do elements
             ! --- its tangential derivative bn_b is already formed above. On the
             ! --- unfloored branch f = 1 identically, so f' = 0 there and the term is
             ! --- present only where the floor is actually doing something.
-            m1_dfdb = 0.d0
-            if ( m1_smin .gt. 0.d0 .and. abs(bn) .lt. m1_smin ) &
-              m1_dfdb = sign(1.d0,bn) * bn_b / m1_smin
-            m1_dDdb = ( 2.d0*BigR*R_b*U0_b + BigR**2*u0_bb_r                           &
-                        - BigR**2*U0_b*ps0_bb/ps0_b ) / ps0_b
+            ! --- Derivative of the SAME branch the value row took, so no separate
+            ! --- floor-derivative term is needed (and none that uses bn_b).
+            if ( m1_smin .gt. 0.d0 .and. abs(bn) .lt. m1_smin ) then
+              ! --- d/db of sign(ps0_b)*R*u_b/(Btot*dl*s0), with Btot ~ F0/R for the
+              ! --- geometric part - the same vacuum-field approximation the legacy
+              ! --- sonic slope already makes through Hfact_b.
+              m1_dDdb = sign(1.d0,ps0_b) * ( 2.d0*R_b*U0_b + BigR*u0_bb_r              &
+                                             - BigR*U0_b*dl_b/dl ) / (Btot*dl*m1_smin)
+            else
+              m1_dDdb = ( 2.d0*BigR*R_b*U0_b + BigR**2*u0_bb_r                         &
+                          - BigR**2*U0_b*ps0_bb/ps0_b ) / ps0_b
+            endif
             m1_dSdb = 2.d0 * cs0_T * (Ti0_b+Te0_b) / Btot
-            m1_raw  = m1_act * ( m1_bfl*m1_dDdb + m1_dfdb*m1_D )                       &
-                    + m1_clw * direction * m1_dSdb
+            m1_raw  = m1_act * m1_dDdb + m1_clw * direction * m1_dSdb
             ! --- The safety clamp is a branch like any other, so differentiate the
             ! --- branch that is actually taken: on the clamp the imposed slope is
             ! --- +-2*m1_S = +-4*cs/Btot, whose temperature derivative is +-4*cs_T/Btot
@@ -896,7 +916,7 @@ do i=1, n_local_elms !=== do elements
             ! --- Same convention as the value row: floored, gated off outside the
             ! --- active branch where the supplement has no u dependence.
             dMach1BC     = dMach1BC + m1_dr * m1_act * m1_bfl * BigR**2 * U0_bb/ps0_b
-            dMach1BC_ubb = + m1_dr * m1_act * m1_bfl * BigR**2 * element_size_3/ps0_b
+            dMach1BC_ubb = + m1_dr * m1_act * m1_bfl * BigR**2 * element_size_3/ps0_b ! n_order>=5 not production; unchanged
             d2Mach1BC    = - Vpar0_bb + direction / Btot * factor   * cs0_TT * (Ti0_b+Te0_b)**2   &
                                       + direction / Btot * factor   * cs0_T  * (Ti0_bb+Te0_bb)   !&
                                       !+ direction / Btot * Hfact_b  * cs0_T  * T0_b *2.0 !&

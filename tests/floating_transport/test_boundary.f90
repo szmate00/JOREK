@@ -257,9 +257,36 @@ program test_boundary
       enddo
     enddo
   enddo
+  ! 8. floating_temperature_slope must BE corr_neg_temp1', since cs0 is built from
+  !    corr_neg_temp1(T) and d(cs)/dT is now formed as gamma*T/(2*cs0)*slope on the
+  !    production path (it used to omit the slope entirely, which overstates d(cs)/dT
+  !    by 1/corr' - a factor 3 at 0.65 eV and exponentially worse below, exactly where
+  !    the divertor wall sits). Assembly-level sensitivity is too weak to test in this
+  !    fixture: on the default path cs_T enters only the small c_angle term. Test the
+  !    identity directly instead.
+  call test_corr_slope()
   write(*,*) 'PASS: sheath ExB energy flux - absent without a gradient, both senses, clipped, closed wall, FD Jacobian'
   write(*,*) 'PASS: production boundary assembler finite-difference Jacobians and type-2 exclusion'
 contains
+  !> floating_temperature_slope == d/dT corr_neg_temp1, by central differences.
+  subroutine test_corr_slope()
+    use corr_neg, only: corr_neg_temp1
+    use mod_floating_transport, only: floating_temperature_slope
+    real*8 :: t,h,fd,an,knee
+    integer :: n
+    knee=T_min_neg
+    do n=1,40
+      t=0.05d0*dble(n)*knee*sum(corr_neg_temp_coef)*2.d0
+      h=1.d-9*max(t,knee)
+      fd=(corr_neg_temp1(t+h)-corr_neg_temp1(t-h))/(2.d0*h)
+      an=floating_temperature_slope(t,knee,corr_neg_temp_coef)
+      if (abs(fd-an)>1.d-5*max(1.d-3,abs(an))) then
+        write(*,*) 'FAIL corr slope t,fd,analytic',t,fd,an
+        error stop 1
+      endif
+    enddo
+    write(*,*) 'PASS: floating_temperature_slope is the corr_neg_temp1 derivative'
+  end subroutine
   !> The Mach-row clip: bound, branch exclusivity, exact identity in the middle
   !! branch, continuity at both kinks, and the disabled non-positive-bound case.
   subroutine test_uout_clip()
