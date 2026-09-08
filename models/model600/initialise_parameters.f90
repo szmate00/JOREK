@@ -64,6 +64,8 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 F0,                                                 &
                 gamma_stangeby,gamma_i_stangeby,gamma_e_stangeby,   &
                 gamma_sheath, gamma_sheath_i, gamma_sheath_e,       &
+                stab_coeff_sheath_te, stab_coeff_sheath_ti,          &
+                stab_coeff_sheath_ni,                                &
                 deuterium_adas, deuterium_adas_1e20,                &
                 old_deuterium_atomic,                               &
                 density_reflection,                                 &

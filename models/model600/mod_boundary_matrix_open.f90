@@ -606,6 +606,15 @@ do ms=1, n_gauss
                   amat(var_rho,var_psi)   = - v * density_reflection * r0  * vpar0 * psi_s * normal_sign3 * theta * tstep 
                   amat(var_rho,var_rho)   = - v * density_reflection * rho * vpar0 * ps0_s * normal_sign3 * theta * tstep &
                                             + v                      * rho * cs0   * BigR * dl * c_angle  * theta * tstep 
+                  ! --- ZERO-SUM SHEATH STABILISER on the particle BC (SOLPS
+                  ! --- b2stbc_stab_coeff_sheath_ni). Jacobian only, as for Ti/Te.
+                  ! --- NOTE the particle sink here is only the c_angle floor and the
+                  ! --- reflected fraction: the bulk of the wall particle loss is carried
+                  ! --- by the strong-form volume advection, which this cannot damp. So
+                  ! --- this is the weakest of the three by construction.
+                  amat(var_rho,var_rho)   = amat(var_rho,var_rho)                                             &
+                                          + v * stab_coeff_sheath_ni * rho * ( vpar0 * ps0_s * normal_sign3   &
+                                              + fu_ven_sh * BigR * dl + cs0 * BigR * dl * c_angle ) * theta * tstep
                   amat(var_rho,var_vpar)  = - v * density_reflection * r0  * vpar  * ps0_s * normal_sign3 * theta * tstep 
 
                   ! --- Sheath heat flux
@@ -633,6 +642,15 @@ do ms=1, n_gauss
                     amat(var_Ti,var_u)    = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * fu_ven_act * fu_ven_trial * BigR * dl * theta * tstep
                     amat(var_Ti,var_Ti)   = amat(var_Ti,var_Ti)                                                                     &
                                           + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * fu_ven_clip * 2.d0*cs_Ti*fu_bnu * BigR * dl * theta * tstep
+                    ! --- ZERO-SUM SHEATH STABILISER (SOLPS b2stbc_stab_coeff_sheath_*).
+                    ! --- alpha multiplies the SAME sheath flux prefactor as the transmission
+                    ! --- coefficient and enters the JACOBIAN ONLY; the residual keeps the
+                    ! --- physical gamma. Net source therefore gains alpha*prefactor*(X_old -
+                    ! --- X_new), which vanishes identically at X_new = X_old - the steady
+                    ! --- state is unchanged and only the approach to it is damped.
+                    amat(var_Ti,var_Ti)   = amat(var_Ti,var_Ti)                                       &
+                                          + v * stab_coeff_sheath_ti * r0 * Ti * ( vpar0 * ps0_s * normal_sign3         &
+                                              + fu_ven_sh * BigR * dl + cs0 * BigR * dl * c_angle ) * theta * tstep
                     amat(var_Ti,var_Te)   = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * fu_ven_clip * 2.d0*cs_Te*fu_bnu * BigR * dl * theta * tstep
 
                     amat(var_Te,var_psi)  = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * vpar0 * psi_s * normal_sign3 * theta * tstep 
@@ -646,6 +664,15 @@ do ms=1, n_gauss
                     amat(var_Te,var_u)    = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * fu_ven_act * fu_ven_trial * BigR * dl * theta * tstep
                     amat(var_Te,var_Te)   = amat(var_Te,var_Te)                                                                     &
                                           + v * (gamma_sheath_e-1.d0) * r0  * Te0 * fu_ven_clip * 2.d0*cs_Te*fu_bnu * BigR * dl * theta * tstep
+                    ! --- ZERO-SUM SHEATH STABILISER (SOLPS b2stbc_stab_coeff_sheath_*).
+                    ! --- alpha multiplies the SAME sheath flux prefactor as the transmission
+                    ! --- coefficient and enters the JACOBIAN ONLY; the residual keeps the
+                    ! --- physical gamma. Net source therefore gains alpha*prefactor*(X_old -
+                    ! --- X_new), which vanishes identically at X_new = X_old - the steady
+                    ! --- state is unchanged and only the approach to it is damped.
+                    amat(var_Te,var_Te)   = amat(var_Te,var_Te)                                       &
+                                          + v * stab_coeff_sheath_te * r0 * Te * ( vpar0 * ps0_s * normal_sign3         &
+                                              + fu_ven_sh * BigR * dl + cs0 * BigR * dl * c_angle ) * theta * tstep
                     amat(var_Te,var_Ti)   = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * fu_ven_clip * 2.d0*cs_Ti*fu_bnu * BigR * dl * theta * tstep
 
                     ! --- The closed-wall term below must be folded into THESE assignments,
@@ -670,6 +697,15 @@ do ms=1, n_gauss
                     amat(var_T,var_u)     = + v * (gamma_sheath  -1.d0) * r0  *  T0 * fu_ven_act * fu_ven_trial * BigR * dl * theta * tstep
                     amat(var_T,var_T)     = amat(var_T,var_T)                                                                       &
                                           + v * (gamma_sheath  -1.d0) * r0  *  T0 * fu_ven_clip * 2.d0*cs_T *fu_bnu * BigR * dl * theta * tstep
+                    ! --- ZERO-SUM SHEATH STABILISER (SOLPS b2stbc_stab_coeff_sheath_*).
+                    ! --- alpha multiplies the SAME sheath flux prefactor as the transmission
+                    ! --- coefficient and enters the JACOBIAN ONLY; the residual keeps the
+                    ! --- physical gamma. Net source therefore gains alpha*prefactor*(X_old -
+                    ! --- X_new), which vanishes identically at X_new = X_old - the steady
+                    ! --- state is unchanged and only the approach to it is damped.
+                    amat(var_T,var_T)   = amat(var_T,var_T)                                       &
+                                          + v * stab_coeff_sheath_ti * r0 * T * ( vpar0 * ps0_s * normal_sign3         &
+                                              + fu_ven_sh * BigR * dl + cs0 * BigR * dl * c_angle ) * theta * tstep
 
                     amat(var_T,var_vpar)  = + v * (gamma_sheath  -1.d0) * r0  * T0  * vpar  * ps0_s * normal_sign3 * theta * tstep & 
                                             - v * (gamma_sheath  -1.d0) * r0  *  T0 * (1.d0-fu_ven_open) * fu_bn * vpar * BigR * dl * theta * tstep &

@@ -265,9 +265,47 @@ program test_boundary
   !    fixture: on the default path cs_T enters only the small c_angle term. Test the
   !    identity directly instead.
   call test_corr_slope()
+  call test_sheath_stabiliser()
   write(*,*) 'PASS: sheath ExB energy flux - absent without a gradient, both senses, clipped, closed wall, FD Jacobian'
   write(*,*) 'PASS: production boundary assembler finite-difference Jacobians and type-2 exclusion'
 contains
+  !> The SOLPS-style zero-sum sheath stabiliser: RESIDUAL bit-identical, Jacobian
+  !! diagonal linear in alpha, and nothing outside the Ti/Te/rho diagonal touched.
+  subroutine test_sheath_stabiliser()
+    real*8 :: a0(nd,nd),r0(nd),a1(nd,nd),r1(nd),a2(nd,nd),r2(nd)
+    integer :: rr,cc,vr
+    floating_u_mach_flux=.false.; floating_u_wall_flux=.false.
+    nodes=base
+    stab_coeff_sheath_te=0.d0; stab_coeff_sheath_ti=0.d0; stab_coeff_sheath_ni=0.d0
+    call assemble(a0,r0)
+    stab_coeff_sheath_te=10.d0; stab_coeff_sheath_ti=10.d0; stab_coeff_sheath_ni=10.d0
+    call assemble(a1,r1)
+    stab_coeff_sheath_te=20.d0; stab_coeff_sheath_ti=20.d0; stab_coeff_sheath_ni=20.d0
+    call assemble(a2,r2)
+    ! 1. ZERO-SUM: the residual must not move at all. This is the whole claim - the
+    !    converged solution is untouched because the term vanishes at X_new = X_old.
+    if (any(r1/=r0) .or. any(r2/=r0)) error stop 'sheath stabiliser changed the residual'
+    ! 2. It must actually do something.
+    if (all(a1==a0)) error stop 'sheath stabiliser did nothing to the Jacobian'
+    ! 3. Exactly linear in alpha.
+    do cc=1,nd
+      do rr=1,nd
+        if (abs((a2(rr,cc)-a0(rr,cc)) - 2.d0*(a1(rr,cc)-a0(rr,cc))) > &
+            1.d-12*max(1.d-30,abs(a2(rr,cc)-a0(rr,cc)))) &
+          error stop 'sheath stabiliser is not linear in alpha'
+        ! 4. Confined to the Ti/Te/rho DIAGONAL blocks.
+        if (a1(rr,cc)/=a0(rr,cc)) then
+          vr=mod(rr-1,n_var)+1
+          if (vr/=var_Ti .and. vr/=var_Te .and. vr/=var_rho) &
+            error stop 'sheath stabiliser touched a row it should not'
+          if (mod(cc-1,n_var)+1/=vr) &
+            error stop 'sheath stabiliser touched an off-diagonal column'
+        endif
+      enddo
+    enddo
+    stab_coeff_sheath_te=0.d0; stab_coeff_sheath_ti=0.d0; stab_coeff_sheath_ni=0.d0
+    write(*,*) 'PASS: zero-sum sheath stabiliser - residual untouched, Jacobian linear in alpha, diagonal only'
+  end subroutine
   !> floating_temperature_slope == d/dT corr_neg_temp1, by central differences.
   subroutine test_corr_slope()
     use corr_neg, only: corr_neg_temp1

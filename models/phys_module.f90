@@ -44,6 +44,21 @@ module phys_module
   logical :: Wdia                 !< Include diamagnetic flows in viscosity terms? (see [[wdia|here]])
   logical :: U_sheath             !< Use Stangeby BCs for electric potential
   logical :: renormalise          !< Set true to give all input MHD parameters in S.I. units (ie. renormalise them before equations)
+  !> ZERO-SUM SHEATH STABILISERS, after SOLPS-ITER's b2stbc_stab_coeff_sheath_te/ti/ni
+  !! (b2stbc_phys.F:2110,6835,8942). Each adds alpha*(the physical sheath flux prefactor)
+  !! *(X_old - X_new) to the boundary source of ne/Ti/Te, i.e. alpha is a DIMENSIONLESS
+  !! multiplier of the sheath transmission coefficient. The term vanishes identically
+  !! when X_new = X_old, so the STEADY STATE IS UNCHANGED - it damps only the approach.
+  !! In practice: use (gamma_sheath + alpha) in the Jacobian and gamma_sheath in the
+  !! residual. SOLPS recommends 1-100 to suppress target ne/Ti/Te oscillations with the
+  !! drift-compatible sheath set; default 0 reproduces the previous behaviour exactly.
+  !! NOTE: SOLPS iterates to convergence within a timestep, so there the term is purely
+  !! a convergence aid. JOREK takes ONE linear solve per step, so X_old is the previous
+  !! TIMESTEP and the term damps the physical transient as well. Steady state still
+  !! unaffected; transients are slowed.
+  real*8  :: stab_coeff_sheath_te !< zero-sum stabiliser on the electron sheath energy BC
+  real*8  :: stab_coeff_sheath_ti !< zero-sum stabiliser on the ion sheath energy BC
+  real*8  :: stab_coeff_sheath_ni !< zero-sum stabiliser on the sheath particle BC
   real*8  :: gamma_sheath         !< sheath boundary condition on open fieldlines (JOREK units); you can also provide gamma_stangeby in normal units instead!
   real*8  :: gamma_stangeby       !< Sheath tranmission coefficient given by P. Stangeby in (The plasma boundary of magnetic fusion devices)
   real*8  :: gamma_sheath_e       !< sheath boundary condition on open fieldlines (JOREK units); you can also provide gamma_stangeby in normal units instead!
