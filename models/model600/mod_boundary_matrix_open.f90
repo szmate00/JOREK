@@ -70,7 +70,7 @@ logical :: fu_edge, fu_mach, fu_wall
 real*8 :: fu_ven, fu_bn, fu_vn, fu_orient, fu_mres, fu_mjac(3), fu_ven_trial
 !> Outward ExB normal speed entering the SHEATH TRANSMISSION term, and the exact
 !! derivative flag of the clip that bounds it. See the block where they are set.
-real*8 :: fu_ven_sh, fu_ven_act, fu_ven_clip
+real*8 :: fu_ven_sh, fu_ven_act, fu_ven_clip, fu_ven_open, fu_venc, fu_vtot
 real*8 :: fu_particle, fu_heat_i, fu_heat_e, fu_dp(2), fu_dhi(2), fu_dhe(2)
 real*8 :: fu_slope_i, fu_slope_e, fu_knee, fu_area
 real*8 :: fu_a,fu_ct,fu_cv,fu_qjac,fu_res
@@ -352,51 +352,71 @@ do ms=1, n_gauss
     fu_ven = -fu_orient*BigR*eq_s(mp,var_u,ms)/dl
     fu_bn = (ps0_y*normal(1)-ps0_x*normal(2))/BigR
     fu_vn = fu_bn*Vpar0+fu_ven
-    ! --- SHEATH TRANSMISSION MUST SEE THE ExB FLUX THAT REACHES THE WALL.
+    ! --- SHEATH TRANSMISSION MUST BE CHARGED ON THE FLUX THAT ACTUALLY ARRIVES.
     ! ---
-    ! --- The volume energy equation convects with the FULL velocity: the ExB terms
-    ! --- (Ti0_s*u0_t-Ti0_t*u0_s, 2*GAMMA*R*u0_y) and the parallel terms sit side by
-    ! --- side in mod_elt_matrix_fft. The boundary term below supplies the sheath
-    ! --- transmission in EXCESS of that convection, which is why it carries
-    ! --- (gamma_sheath-1). But it was computed from vpar0*ps0_s*normal_sign3, which
-    ! --- is identically (fu_bn*Vpar0)*BigR*dl - the PARALLEL normal flux alone. So
-    ! --- the two halves of one sheath transmission were evaluated on two different
-    ! --- flows. With dirichlet u the trace of u along the wall is constant, fu_ven
-    ! --- is identically zero and the inconsistency is invisible; bcs%floating_u ties
-    ! --- u to Te, and it becomes the dominant term on a grazing wall.
+    ! --- The volume energy equation convects with the FULL velocity (the ExB terms
+    ! --- Ti0_s*u0_t-Ti0_t*u0_s and 2*GAMMA*R*u0_y sit beside the parallel ones in
+    ! --- mod_elt_matrix_fft) and its strong form integrates to the surface flux. The
+    ! --- boundary term supplies the sheath transmission in EXCESS of that convection,
+    ! --- hence (gamma_sheath-1). It was computed from vpar0*ps0_s*normal_sign3, which
+    ! --- is identically (fu_bn*Vpar0)*BigR*dl - the PARALLEL normal flux alone - so
+    ! --- the two halves of one sheath transmission used two different flows. With
+    ! --- dirichlet u the trace of u along the wall is constant, fu_ven vanishes and
+    ! --- the inconsistency is invisible; bcs%floating_u ties u to Te and it becomes
+    ! --- the dominant term on a grazing wall.
     ! ---
-    ! --- Added here as a SEPARATE flux so the existing expression is untouched and
-    ! --- every non-floating run is bit-identical.
+    ! --- The collection is therefore the TOTAL normal flow,
     ! ---
-    ! --- OUTWARD ONLY. A material wall absorbs; it does not emit plasma. On 3.3 % of
-    ! --- the wall (measured) the ExB beats the sonic outflow and the total normal
-    ! --- flow points inward; there the wall collects nothing extra rather than
-    ! --- turning this sink into a source. This is SOLPS's U_out = max(...,c_s) floor
-    ! --- written in flux form: with the Mach row holding, fu_bn*Vpar0 = cs*|fu_bn|,
-    ! --- so fu_bn*Vpar0 + max(fu_ven,0) is exactly max(fu_vn, cs*|fu_bn|).
+    ! ---     fu_vtot = fu_bn*Vpar0 + clip(fu_ven, +-2*cs*|bn|),
     ! ---
-    ! --- CLIPPED AT 2*cs*|b_n|, which is SOLPS's own bound on the ExB contribution to
-    ! --- this condition (manual 3.0.9 p.407/411, BCMOM=13/BCCON=14; multiplier
-    ! --- b2stbc_cbc = 1.0). Stated in units of c_s, so it introduces no incidence
-    ! --- cutoff and no fitted threshold, and it caps the sheath transmission at three
-    ! --- times its Bohm value. min/max are PIECEWISE LINEAR, so within a branch the
-    ! --- term is exactly linear in u and a branch frozen for one linear solve is
-    ! --- exact - which a smooth saturation would not be, in a code that takes one
-    ! --- solve per step.
-    ! --- Three branches, mutually exclusive, each with an EXACT derivative:
-    ! ---   fu_ven <= 0          absent      d/du = 0        d/dT = 0
-    ! ---   0 < fu_ven < bound   the flux    d/du = trial    d/dT = 0
-    ! ---   fu_ven >= bound      the bound   d/du = 0        d/dT = 2*cs_T*|b_n|
-    ! --- fu_ven_act and fu_ven_clip select the middle and the upper branch.
+    ! --- floored at zero because a material wall absorbs and never emits, and the
+    ! --- term added below is the difference from the parallel-only expression that
+    ! --- is already there, so nothing without a wall-tangential potential gradient
+    ! --- changes at all.
+    ! ---
+    ! --- WHY BOTH SIGNS OF fu_ven, not max(fu_ven,0) as first written: that form
+    ! --- silently assumed Vpar*Bn = cs*|bn|, which holds only with the drift term
+    ! --- disabled. Once the Mach row carries the drift supplement, Vpar is
+    ! --- supersonic by exactly the amount needed to cancel an INWARD ExB, and
+    ! --- charging "parallel + outward-ExB-only" bills the sheath for the supplement
+    ! --- while the drift it compensates carries the flux back out. Measured on the
+    ! --- production case: supplement 1.45*cs on boundary type 1 gave a 2.45x
+    ! --- over-charge, driving that type alone onto the temperature floor while
+    ! --- types 4 and 9 (supplement identically zero) stayed at 30 eV. Using the
+    ! --- total flow makes the collection exactly cs*|bn| there - the Bohm value the
+    ! --- drift-compatible condition is constructed to deliver - and is what SOLPS's
+    ! --- linked BCCON=14/BCENE,I=15 set does by sharing one U_out with BCMOM=13.
+    ! ---
+    ! --- CLIP at 2*cs*|bn| is SOLPS's own bound on the ExB contribution (manual
+    ! --- 3.0.9 p.407/411; b2stbc_cbc = 1.0). Stated in cs units, so no incidence
+    ! --- cutoff and no fitted threshold enters, and min/max are piecewise linear so
+    ! --- a branch frozen for one linear solve is exact.
+    ! ---
+    ! --- Branches, each with an exact derivative (fu_ven_open selects an open wall,
+    ! --- fu_ven_act the unclipped ExB, fu_ven_clip its SIGNED saturated branch):
+    ! ---   fu_vtot <= 0        : collection 0    d/du 0      d/dVpar -fu_bn
+    ! ---   |fu_ven| <  bound   : sh = fu_ven     d/du trial  d/dVpar 0
+    ! ---   |fu_ven| >= bound   : sh = +-bound    d/dT +-2*cs_T*|bn|
     fu_ven_sh   = 0.d0
     fu_ven_act  = 0.d0
     fu_ven_clip = 0.d0
+    fu_ven_open = 0.d0
     if (fu_edge) then
-      fu_ven_sh = min( max(fu_ven,0.d0), 2.d0*cs0*abs(fu_bn) )
-      if ( fu_ven >= 2.d0*cs0*abs(fu_bn) ) then
-        fu_ven_clip = 1.d0
-      elseif ( fu_ven > 0.d0 ) then
-        fu_ven_act = 1.d0
+      fu_venc = max( -2.d0*cs0*abs(fu_bn), min( fu_ven, 2.d0*cs0*abs(fu_bn) ) )
+      fu_vtot = fu_bn*Vpar0 + fu_venc
+      if (fu_vtot > 0.d0) then
+        fu_ven_open = 1.d0
+        fu_ven_sh   = fu_venc
+        if ( fu_ven .ge. 2.d0*cs0*abs(fu_bn) ) then
+          fu_ven_clip = +1.d0
+        elseif ( fu_ven .le. -2.d0*cs0*abs(fu_bn) ) then
+          fu_ven_clip = -1.d0
+        else
+          fu_ven_act = 1.d0
+        endif
+      else
+        ! Wall closed: total inflow, collect nothing rather than emit.
+        fu_ven_sh = -fu_bn*Vpar0
       endif
     endif
     if (floating_u_transport_diag .and. fu_edge .and. mp==1) then
@@ -592,6 +612,10 @@ do ms=1, n_gauss
                     amat(var_Ti,var_Ti)   = amat(var_Ti,var_Ti)                                                                     &
                                           + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * fu_ven_clip * 2.d0*cs_Ti*abs(fu_bn) * BigR * dl * theta * tstep
                     amat(var_Ti,var_Te)   = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * fu_ven_clip * 2.d0*cs_Te*abs(fu_bn) * BigR * dl * theta * tstep
+                    ! --- Closed-wall branch: the collection is zero, so it cancels the
+                    ! --- parallel column of the expression this term corrects.
+                    amat(var_Ti,var_vpar) = amat(var_Ti,var_vpar)                                                                   &
+                                          - v * (gamma_sheath_i-1.d0) * r0  * Ti0 * (1.d0-fu_ven_open) * fu_bn * vpar * BigR * dl * theta * tstep
 
                     amat(var_Te,var_psi)  = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * vpar0 * psi_s * normal_sign3 * theta * tstep 
                     amat(var_Te,var_rho)  = + v * (gamma_sheath_e-1.d0) * rho * Te0 * vpar0 * ps0_s * normal_sign3 * theta * tstep & 
@@ -605,6 +629,8 @@ do ms=1, n_gauss
                     amat(var_Te,var_Te)   = amat(var_Te,var_Te)                                                                     &
                                           + v * (gamma_sheath_e-1.d0) * r0  * Te0 * fu_ven_clip * 2.d0*cs_Te*abs(fu_bn) * BigR * dl * theta * tstep
                     amat(var_Te,var_Ti)   = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * fu_ven_clip * 2.d0*cs_Ti*abs(fu_bn) * BigR * dl * theta * tstep
+                    amat(var_Te,var_vpar) = amat(var_Te,var_vpar)                                                                   &
+                                          - v * (gamma_sheath_e-1.d0) * r0  * Te0 * (1.d0-fu_ven_open) * fu_bn * vpar * BigR * dl * theta * tstep
 
                     amat(var_Ti,var_vpar) = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * vpar  * ps0_s * normal_sign3 * theta * tstep &
                                             + v * (GAMMA - 1.d0) * vpar * visco_par_heating * gradvpar0dotn * BigR * dl    * theta * tstep &
@@ -622,6 +648,8 @@ do ms=1, n_gauss
                     amat(var_T,var_u)     = + v * (gamma_sheath  -1.d0) * r0  *  T0 * fu_ven_act * fu_ven_trial * BigR * dl * theta * tstep
                     amat(var_T,var_T)     = amat(var_T,var_T)                                                                       &
                                           + v * (gamma_sheath  -1.d0) * r0  *  T0 * fu_ven_clip * 2.d0*cs_T *abs(fu_bn) * BigR * dl * theta * tstep
+                    amat(var_T,var_vpar)  = amat(var_T,var_vpar)                                                                    &
+                                          - v * (gamma_sheath  -1.d0) * r0  *  T0 * (1.d0-fu_ven_open) * fu_bn * vpar * BigR * dl * theta * tstep
 
                     amat(var_T,var_vpar)  = + v * (gamma_sheath  -1.d0) * r0  * T0  * vpar  * ps0_s * normal_sign3 * theta * tstep & 
                                             + v * (GAMMA - 1.d0) * vpar * visco_par_heating * gradvpar0dotn * BigR * dl    * theta * tstep &

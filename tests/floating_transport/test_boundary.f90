@@ -131,15 +131,23 @@ program test_boundary
   !    so the term must be exactly absent. This is every non-floating production run.
   call set_u(0.d0,0.d0)
   call assemble(ac,rc)
-  ! 2. Only ONE sign of the tangential slope drives flow TOWARDS the wall. The other
-  !    must leave the equations bit-identical: a wall absorbs, it never emits.
+  ! 2. BOTH signs act, with OPPOSITE sense: the collection is the total normal flow,
+  !    so outward ExB adds to it and inward ExB subtracts. (The earlier outward-only
+  !    form silently assumed Vpar*Bn = cs*|bn| and over-charged the sheath once the
+  !    Mach row carried a drift supplement.)
   call set_u(+slope,0.d0); call assemble(ap,rp)
   changed_plus = any(rp/=rc) .or. any(ap/=ac)
   call set_u(-slope,0.d0); call assemble(am,rm)
   changed_minus = any(rm/=rc) .or. any(am/=ac)
-  if (changed_plus .eqv. changed_minus) &
-    error stop 'sheath ExB flux must act on exactly one sign of the wall potential gradient'
-  if (changed_plus) then
+  if (.not.changed_plus .or. .not.changed_minus) &
+    error stop 'sheath ExB flux must respond to both signs of the wall potential gradient'
+  do row=1,nd
+    if (mod(row-1,n_var)+1/=var_Ti .and. mod(row-1,n_var)+1/=var_Te) cycle
+    if ((rp(row)-rc(row))*(rm(row)-rc(row)) > 0.d0) &
+      error stop 'outward and inward ExB must move the sheath flux in opposite senses'
+  enddo
+  ! Pick the outward sign for the remaining branch tests.
+  if (sum(abs(rp-rc)) >= sum(abs(rm-rc))) then
     slope=+slope
   else
     slope=-slope
@@ -194,7 +202,12 @@ program test_boundary
     enddo
   enddo
   call test_uout_clip()
-  write(*,*) 'PASS: sheath ExB energy flux - absent without a wall potential gradient, outward only, clipped, FD Jacobian'
+  ! 6. The wall never emits: drive a huge INWARD ExB and check the collection is
+  !    floored at zero, i.e. the added term exactly cancels the parallel expression.
+  call set_u(-slope*1.d3,0.d0); call assemble(a,r)
+  call set_u(-slope*2.d3,0.d0); call assemble(ap,rp)
+  if (any(a/=ap) .or. any(r/=rp)) error stop 'closed-wall branch is not saturated'
+  write(*,*) 'PASS: sheath ExB energy flux - absent without a gradient, both senses, clipped, closed wall, FD Jacobian'
   write(*,*) 'PASS: production boundary assembler finite-difference Jacobians and type-2 exclusion'
 contains
   !> The Mach-row clip: bound, branch exclusivity, exact identity in the middle
