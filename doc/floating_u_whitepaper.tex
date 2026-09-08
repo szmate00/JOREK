@@ -1,0 +1,279 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=24mm]{geometry}
+\usepackage{amsmath,amssymb,booktabs,microtype,bm}
+\usepackage[colorlinks,linkcolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+\usepackage{xcolor}
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\vpar}{v_\parallel}
+\newcommand{\cs}{c_s}
+\newcommand{\bn}{b_n}
+\newcommand{\vEn}{v_{E,n}}
+\newenvironment{keybox}{\par\medskip\noindent\rule{\linewidth}{0.4pt}\par\smallskip%
+\leftskip=1em \rightskip=1em\relax}{\par\smallskip\leftskip=0pt \rightskip=0pt\noindent\rule{\linewidth}{0.4pt}\par\medskip}
+
+\title{A floating-potential wall boundary condition with self-consistent $E\times B$ drifts
+in JOREK \code{model600}\\[2pt]
+\large Implementation, the SOLPS drift bound, and the zero-sum sheath stabiliser}
+\author{}
+\date{}
+
+\begin{document}\maketitle
+\vspace{-10mm}
+
+\begin{abstract}
+\noindent
+We impose the floating-sheath condition $V_p-V_{\rm wall}=\Lambda k_BT_e/e$ on the plasma
+potential at material walls in JOREK \code{model600}. Because the wall potential then tracks
+$T_e$, a tangential electric field appears wherever $T_e$ varies along the wall, and with it a
+normal $E\times B$ flow --- physics that is absent when the potential is held fixed. Making the
+parallel-flow (Bohm--Chodura) boundary condition consistent with that drift proved to be the hard
+part: seven successive formulations of the drift-corrected Mach condition all terminated the
+simulation within $319$--$649$ time steps, always in $2$--$3$ cells at the inner strike point,
+while the drift-free condition ran indefinitely. The resolution came from a different direction.
+Porting SOLPS-ITER's \emph{zero-sum sheath stabiliser} --- a term that is identically zero at
+steady state and therefore cannot change the converged solution --- allowed the drift-consistent
+condition to run past $1100$ steps with all diagnostics converging. This note documents the
+boundary condition, the SOLPS-derived bound that keeps it finite at grazing incidence, the
+stabiliser, and the evidence.
+\end{abstract}
+
+\section{The floating-potential condition}
+
+At a material surface the wall charges negative relative to the plasma until the ion and electron
+fluxes balance. In the local zero-current limit,
+\begin{equation}
+V_p - V_{\rm wall} \;=\; \Lambda\,\frac{k_BT_e}{e},\qquad \Lambda \simeq 3 ,
+\label{eq:float}
+\end{equation}
+with $\Lambda=\ln\sqrt{m_i/2\pi m_e}$. Equation~\eqref{eq:float} is Stangeby's floating condition
+written from the plasma side: Stangeby quotes $V_{\rm wall}-V_p=-\Lambda k_BT_e/e$, the same
+statement referenced to the plasma instead of the wall.
+
+In JOREK the poloidal velocity is represented through a stream function $u$ with
+$\bm{v}_{E} = -R\,\nabla u\times \bm{e}_\phi$, and $\Phi = F_0 u$. Condition~\eqref{eq:float} is
+therefore \emph{affine} in the evolved variables,
+\begin{equation}
+u \;=\; C_T\,T_e \;+\; C_V\,V_{\rm wall},
+\qquad
+C_T=\frac{2\Lambda}{a_n},\quad
+C_V=\frac{\sqrt{\mu_0\rho_0}}{F_0},\quad
+a_n=\frac{2eF_0\sqrt{\mu_0\rho_0}}{m_i},
+\label{eq:affine}
+\end{equation}
+so it is imposed as a linear constraint on the boundary trace degrees of freedom, exactly, with a
+constant Jacobian. No Newton iteration, no relaxation and no threshold enter. The condition is
+applied to the nodal value and to the tangential derivative; both are exact because differentiating
+a constant-coefficient relation along the boundary is exact degree-of-freedom by
+degree-of-freedom. Measured residual $|u-C_TT_e-C_VV_{\rm wall}| \sim 10^{-12}\,$V throughout.
+
+\paragraph{The consequence that matters.} A wall potential that follows $T_e$ produces a tangential
+field wherever $T_e$ varies along the wall, hence a normal drift
+\begin{equation}
+\vEn \;=\; -R\,\frac{\partial u}{\partial \ell}
+\qquad\text{(exact identity, verified against the diagnostic).}
+\end{equation}
+With a fixed wall potential $\vEn\equiv 0$ and everything below is dormant. With
+condition~\eqref{eq:float} active we measure $|\vEn|$ up to $3\times10^{4}\,$m\,s$^{-1}$,
+concentrated in two narrow spikes at the inner divertor.
+
+\section{Why the drift makes the parallel-flow condition hard}
+
+\subsection{The condition and its singularity}
+The drift-compatible Bohm--Chodura condition requires the \emph{total} normal flow at the sheath
+entrance to be sonic,
+\begin{equation}
+\vpar b_n + \vEn = \pm\, \cs\,|b_n|
+\qquad\Longrightarrow\qquad
+\vpar = \pm\cs - \frac{\vEn}{b_n}.
+\label{eq:bohm}
+\end{equation}
+Solved for $\vpar$ this is an \emph{inversion}, and it is ill posed as $b_n\to0$: at grazing
+incidence no parallel flow can cancel a finite normal $E\times B$ flux. In our equilibrium the
+demand $\vEn/(\cs b_n)$ has a median of $0.15$ across the wall but exceeds unity on $8.3\%$ of it
+and reaches $3\times10^{5}$ at the worst points --- a fat tail concentrated where the field is
+nearly tangent to the surface.
+
+\subsection{The SOLPS bound}
+SOLPS-ITER solves this by bounding the $E\times B$ contribution rather than the geometry
+(manual 3.0.9, \code{BCMOM=13}; multiplier \code{b2stbc\_cbc}$=1$):
+the poloidal $E\times B$ velocity is ``restricted to not exceed $\pm2c_{s,a}|b_x|$''. We adopt the
+same bound. Critically it is stated in units of $\cs$, so it introduces no incidence cutoff and no
+fitted length or angle. We use the \emph{non-marginal} branch, which the manual marks
+``recommended for cases with drifts'': $\vpar\ge \cs$ always, never subsonic and never reversed.
+Written as a one-sided supplement,
+\begin{equation}
+\boxed{\;\vpar \;=\; \cs \;+\; \min\!\Big(\max\big(-\vEn/\max(|b_n|,\sin\theta_{\min}),\,0\big),\;2\cs\Big)\;}
+\label{eq:supp}
+\end{equation}
+so outward drift leaves the parallel flow exactly sonic (extra outward flux is permitted --- Bohm
+is an inequality) and only inward drift is compensated, boundedly. Hence $\vpar\in[\cs,3\cs]$.
+The incidence floor $\theta_{\min}$ re-uses \code{min\_sheath\_angle}$=1^\circ$, the same scale
+that already floors the sheath particle and heat fluxes, so no new parameter is introduced.
+
+\paragraph{Monotone, not smooth.} A hard $\min/\max$ is used deliberately. JOREK performs one
+linearised solve per time step, so a branch frozen during a solve must be \emph{exact} within that
+branch; piecewise-linear clipping satisfies this, whereas a smooth ($\tanh$) saturation has a
+vanishing tail Jacobian against a finite residual and degenerates into an undamped fixed-point
+iteration. A non-monotone ``graceful surrender'' variant, in which the supplement returns to zero
+when the demand becomes unachievable, was also implemented and tested; it performed \emph{worse}
+(\S\ref{sec:evidence}), because across an $E\times B$ spike it replaces one plateau by two peaks
+flanking a dip, adding tangential structure to $\vpar$ rather than removing it.
+
+\subsection{Consistency of the flux channels}
+SOLPS requires \code{BCMOM=13} to be used together with \code{BCCON=14} and \code{BCENE/I=15}:
+the momentum, particle and energy conditions must share one collection speed. Two inconsistencies
+in the JOREK implementation were found and repaired in the course of this work.
+\begin{enumerate}\itemsep2pt
+\item The sheath energy transmission was evaluated on the \emph{parallel} normal flux while the
+volume energy equation convects with the \emph{full} velocity. Since the strong-form volume
+operator integrates to the surface flux, the two halves of one sheath transmission were being
+computed on two different flows. The collection is now the total normal flow,
+$\max(b_n\vpar+\mathrm{clip}(\vEn),\,0)$, floored at zero because a material wall absorbs and never
+emits.
+\item The derivative $\partial \cs/\partial T$ omitted the positivity-map slope
+$\mathrm{corr}'$, although $\cs$ itself is built from corrected temperatures. Below the correction
+knee this overstates $\partial \cs/\partial T$ by a factor $3$ at $0.65\,$eV and exponentially more
+below --- and the divertor wall in this case sits exactly there.
+\end{enumerate}
+
+\section{The zero-sum sheath stabiliser}\label{sec:stab}
+
+Bounding the momentum condition was necessary but not sufficient: every bounded variant still
+terminated the run. The resolution came from SOLPS's own numerics rather than its physics.
+
+SOLPS ships three stabilisers, \code{b2stbc\_stab\_coeff\_sheath\_te}, \code{\_ti} and \code{\_ni},
+one for each of the linked drift-compatible conditions, documented as ``an additional zero-sum
+stabilizing term'' to suppress target $T_e$, $T_i$ and $n_e$ oscillations, with a recommended range
+$1$--$100$ and a default of zero. Reading the reference source (\code{b2stbc\_phys.F}) rather than
+the manual, all three have the same structure. Using the linearised source decomposition
+$S = S_0 + S_1 X$,
+\begin{equation}
+S_1 \;\mathrel{-}=\; (\gamma_{\rm sh}+\alpha)\,\Pi,
+\qquad
+S_0 \;\mathrel{+}=\; \alpha\,\Pi\,X_{\rm old},
+\qquad
+\Pi \equiv \text{the physical sheath flux prefactor},
+\end{equation}
+which nets to
+\begin{equation}
+\boxed{\;S_{\rm stab} \;=\; \alpha\,\Pi\,\big(X_{\rm old}-X_{\rm new}\big)\;}
+\label{eq:stab}
+\end{equation}
+Three properties follow immediately and are what make this acceptable:
+\begin{enumerate}\itemsep2pt
+\item \textbf{Zero-sum.} The term vanishes identically when $X_{\rm new}=X_{\rm old}$, so the
+\emph{steady state is unchanged}. It is a numerical relaxation of the approach to equilibrium, not
+a modification of the physics.
+\item $\alpha$ is a \emph{dimensionless multiple of the sheath transmission coefficient} --- it is
+added directly alongside $\gamma_{\rm sh}$ --- which is what makes the recommended range $1$--$100$
+meaningful.
+\item It is pure implicit diagonal: the constant part cancels the residual contribution exactly.
+\end{enumerate}
+In JOREK the implementation is correspondingly trivial: use $(\gamma_{\rm sh}+\alpha)$ in the
+\emph{Jacobian} and $\gamma_{\rm sh}$ in the \emph{residual}, for the $T_i$, $T_e$ and $\rho$
+boundary rows. With $\alpha=0$ every previous result is reproduced bit-for-bit.
+
+\paragraph{One caveat, stated explicitly.} SOLPS iterates to convergence within a time step, so
+there the term is purely a convergence aid and the step's answer is untouched. JOREK takes one
+linear solve per step, so $X_{\rm old}$ is the previous \emph{time step} and the term also damps
+the physical transient. The steady state remains unaffected; transients are slowed. For a
+simulation whose target is a stationary divertor solution this is acceptable, but it should be
+remembered when interpreting time-dependent behaviour.
+
+\paragraph{Where it acts.} Note that SOLPS provides \emph{no} such stabiliser for the momentum
+condition \code{BCMOM=13}. The reference code damps the transport rows and leaves the parallel-flow
+condition alone --- which matches the observed failure mode, in which $n_e$ and $T_e$ lose
+positivity together in the same boundary cells.
+
+\section{Evidence}\label{sec:evidence}
+
+All runs use the same equilibrium (ASDEX~Upgrade, \code{model600}, axisymmetric, bicubic elements,
+separate $T_i/T_e$, kinetic neutrals) and identical numerical settings apart from the stated change.
+
+\begin{table}[h]\centering
+\begin{tabular}{lr}
+\toprule
+Configuration & Terminates at step \\
+\midrule
+Fixed wall potential ($\Lambda=0$, no drift)                 & runs to time limit \\
+Floating potential, drift term \emph{disabled}                & runs to time limit \\
+\midrule
+Drift term, unbounded (legacy)                                & 605 \\
+Drift term, unbounded, with corrected energy flux             & 606 \\
+Drift weighted by incidence                                   & 624 \\
+Drift smoothly saturated ($\tanh$)                            & 319 \\
+Drift clipped, marginal branch (reversal permitted)           & 466 \\
+Drift clipped, non-marginal, one-sided (Eq.~\ref{eq:supp})    & 612 \\
+\quad + temperature floor on the potential row                & 616 \\
+\quad + total-flow energy transmission                        & 610 \\
+\quad + all Jacobian repairs                                  & 649 \\
+\quad + achievability weighting (non-monotone variant)        & 550 \\
+\quad + temperature shock capturing                           & 684 \\
+\midrule
+\textbf{\quad + zero-sum sheath stabiliser (Eq.~\ref{eq:stab})} & \textbf{$>1100$, converging} \\
+\bottomrule
+\end{tabular}
+\caption{Seven distinct formulations of the drift-corrected momentum condition all terminate; the
+stabiliser, which does not touch that condition at all, does not.}
+\end{table}
+
+The failure mode was identical throughout: a single-step loss of positivity in $2$--$3$ cells at
+the inner strike point, with $n_e$ and $T_e$ going negative \emph{together} --- the signature of a
+shared factor, namely the parallel compression $\nabla\!\cdot(\rho\vpar\bm{b})$, which appears with
+the same coefficient in the density and both temperature equations. No precursor: the preceding
+outputs are flat and healthy.
+
+In the stabilised run every diagnostic trends the right way, which no previous drift-enabled run
+did: minimum boundary density constant to four significant figures; $|\vEn|$ and the applied drift
+correction both decreasing; and the successive decrements of the minimum wall temperature
+\emph{shrinking} ($-1.4,-1.2,-1.1,-0.8\times10^{-3}$ per output), i.e.\ an asymptotic approach
+rather than a collapse.
+
+\section{Suggested figures}
+
+\begin{enumerate}\itemsep3pt
+\item \textbf{$\Phi$ and $3T_e$ along the wall, overlaid.} Demonstrates the condition is imposed
+exactly, and shows at a glance where the potential structure comes from. One line.
+\item \textbf{$n_e$ and $T_e$ maps at the inner strike point, at the crash step, negatives
+highlighted.} Two panels. Establishes that the failure is $2$--$3$ cells and that both fields lose
+positivity in the \emph{same} cells --- the single most diagnostic observation.
+\item \textbf{Wall profiles of $\cs$, $|\vEn|$ and $b_n$ versus poloidal angle.} Shows the
+$\sim\!150\times$ temperature contrast across $\sim\!0.3$\,rad and that the drift spikes coincide
+with the temperature fronts. Plot $\vpar$ itself, \emph{not} $\vpar b_n$: the latter hides a large
+parallel velocity wherever the field grazes the surface.
+\item \textbf{Time traces, stabilised versus unstabilised, on one axis:} minimum wall $T_e$,
+minimum wall $n_e$, and the applied drift correction. This is the result --- flat-then-dead against
+converging.
+\item \textbf{Histogram of the demand $\vEn/(\cs b_n)$ over the wall, log axis, with the $2\cs$
+bound marked.} Justifies the bound quantitatively: median $0.15$, but a tail reaching $10^5$.
+\item \textbf{Optional, for the numerics-minded:} minimum wall $T_e$ versus step for
+$\alpha=0$ and $\alpha=100$, with the steady-state values annotated as equal. Makes the zero-sum
+property visible rather than merely asserted.
+\end{enumerate}
+
+\section{Status and open points}
+
+\paragraph{Settled.} The floating condition itself is exact and is not in question. The bound of
+Eq.~\eqref{eq:supp} is SOLPS's, in $\cs$ units, and introduces no fitted parameter. The two flux
+inconsistencies of \S2.3 were genuine errors and are repaired. The stabiliser is zero-sum, so
+whatever stationary state the run reaches is the answer it would have reached without it.
+
+\paragraph{Open.}
+\begin{itemize}\itemsep2pt
+\item Confirmation that the stabilised run reaches a stationary state rather than merely a slower
+transient. The zero-sum property guarantees the endpoint, not that it is attained.
+\item $\alpha$ is a genuine numerical parameter, default zero. It should be reported with any
+result, and ideally shown not to change the converged solution (figure~6).
+\item Kinetic recycling still uses the parallel flux alone while the fluid wall now uses the total
+flow; particle conservation across the fluid--kinetic interface is therefore inconsistent at the
+strike point. This is independent of everything above and should be addressed.
+\item The alternative weak (boundary-integral) formulation of the momentum condition remains
+untested: in the one run attempted the $E\times B$ diagnostic read identically zero, which is
+unexplained and may indicate a defect in that path.
+\item The underlying divertor state --- a $\sim\!0.25$\,eV trough between $\sim\!40$\,eV shoulders
+over one to two elements --- lies in the regime where this model has no volumetric energy sink and
+the atomic physics is gated off. The boundary condition faithfully amplifies that structure; it
+does not create it.
+\end{itemize}
+
+\end{document}
