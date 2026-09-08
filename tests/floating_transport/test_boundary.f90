@@ -329,10 +329,10 @@ contains
   !! branch, continuity at both kinks, and the disabled non-positive-bound case.
   subroutine test_uout_clip()
     use mod_floating_u, only: mach1_uout_supplement
-    real*8 :: S,x,y,dx,dS,yp,ym,jp,jm,h,peak
+    real*8 :: S,x,y,dx,dS,yp,ym,jp,jm,prev
     integer :: n
     S=1.7d0
-    peak=0.d0
+    prev=-1.d0
     do n=-40,200
       x=0.05d0*dble(n)*S
       call mach1_uout_supplement(x,S,y,dx,dS)
@@ -340,34 +340,28 @@ contains
         if (y/=0.d0.or.dx/=0.d0.or.dS/=0.d0) error stop 'supplement must be one-sided'
         cycle
       endif
-      if (y<0.d0) error stop 'supplement went negative'
-      if (y>0.5d0*S*(1.d0+1.d-12)) error stop 'supplement exceeded its S/2 peak'
-      peak=max(peak,y)
-      ! exact derivatives against central differences
-      h=1.d-7*max(x,S)
-      call mach1_uout_supplement(x+h,S,yp,jp,jm); call mach1_uout_supplement(x-h,S,ym,jp,jm)
-      if (abs((yp-ym)/(2*h)-dx)>1.d-5*max(1.d0,abs(dx))) error stop 'd(sup)/dx'
-      call mach1_uout_supplement(x,S+h,yp,jp,jm); call mach1_uout_supplement(x,S-h,ym,jp,jm)
-      if (abs((yp-ym)/(2*h)-dS)>1.d-5*max(1.d0,abs(dS))) error stop 'd(sup)/dS'
+      if (y<0.d0 .or. y>S) error stop 'supplement outside [0,S]'
+      if (dx*dS/=0.d0) error stop 'branches are not exclusive'
+      ! MONOTONE. The non-monotone "graceful surrender" variant crashed at 550
+      ! against 649 for this clip: past its peak a larger drift gave a smaller
+      ! compensation, the u column reversed sign, and the supplement grew two bumps
+      ! flanking a dip across the ExB spike instead of one plateau. Keep this.
+      if (y<prev-1.d-14) error stop 'supplement must be monotone non-decreasing in x'
+      prev=y
+      if (dx<0.d0 .or. dS<0.d0) error stop 'supplement derivatives must be non-negative'
+      if (x<S .and. (y/=x .or. dx/=1.d0)) error stop 'active branch is not the identity'
+      if (x>=S .and. (y/=S .or. dS/=1.d0)) error stop 'clip branch'
     enddo
-    if (abs(peak-0.5d0*S)>1.d-3*S) error stop 'peak should be S/2 at x = S'
-    ! LIMIT 1: exact kinematic cancellation for a small demand (~94% of the wall)
-    x=1.d-4*S
-    call mach1_uout_supplement(x,S,y,dx,dS)
-    if (abs(y-x)>1.d-7*S) error stop 'small demand must give the exact cancellation'
-    if (abs(dx-1.d0)>1.d-7) error stop 'small-demand column must be unity'
-    ! LIMIT 2: GRACEFUL SURRENDER - a demand far beyond the bound falls back to
-    ! Vpar = cs, i.e. the supplement AND its column both vanish. This is the whole
-    ! point: at the measured failing node x/S = 58.
-    call mach1_uout_supplement(58.d0*S,S,y,dx,dS)
-    if (y>0.04d0*S) error stop 'large demand must fall back toward zero supplement'
-    if (abs(dx)>1.d-2) error stop 'large demand must have a vanishing column'
-    call mach1_uout_supplement(1.d8*S,S,y,dx,dS)
-    if (y>1.d-7*S .or. abs(dx)>1.d-14) error stop 'asymptotic surrender'
-    ! disabled case
+    ! continuity at both kinks
+    call mach1_uout_supplement( 1.d-13*S,S,y,dx,dS)
+    call mach1_uout_supplement(-1.d-13*S,S,yp,jp,jm)
+    if (abs(y-yp)>1.d-12*S) error stop 'discontinuous at zero'
+    call mach1_uout_supplement(S*(1.d0-1.d-12),S,y,dx,dS)
+    call mach1_uout_supplement(S*(1.d0+1.d-12),S,yp,jp,jm)
+    if (abs(y-yp)>1.d-11*S) error stop 'discontinuous at the clip'
     call mach1_uout_supplement(5.d0,0.d0,y,dx,dS)
     if (y/=0.d0.or.dx/=0.d0.or.dS/=0.d0) error stop 'non-positive bound must disable'
-    write(*,*) 'PASS: Mach supplement - one-sided, exact for small demand, surrenders for large, FD derivatives'
+    write(*,*) 'PASS: Mach supplement - one-sided, monotone, clipped, continuous, disabled case'
   end subroutine
   !> d(RHS)/dx by central differences, for every DOF, into fd(row,col).
   subroutine sweep(fd)

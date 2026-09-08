@@ -55,71 +55,61 @@ module mod_floating_u
 
 contains
 
-!> One-sided supplement of the drift-compatible Bohm condition, weighted by how
-!! ACHIEVABLE the compensation is.
+!> One-sided, hard-clipped supplement of the drift-compatible Bohm condition
+!! (SOLPS BCMOM=13, non-marginal branch - the one the manual marks "recommended for
+!! cases with drifts" - without the interior extrapolation a nodal row cannot have):
 !!
-!!     sup(x) = x * S^2 / (x^2 + S^2)     for x > 0,   0 otherwise
+!!     sup(x) = min(x, S)   for x > 0,   0 otherwise
 !!
-!! with x = the raw demand (direction*D_floored, in Vpar units) and S = 2*cs/|B|,
-!! SOLPS's bound on the ExB contribution (manual 3.0.9 p.407/411, b2stbc_cbc = 1.0).
+!! x = the demand (direction*D_floored, Vpar units), S = 2*cs/|B| = SOLPS's bound on
+!! the ExB contribution (manual 3.0.9 p.407/411, b2stbc_cbc = 1.0). ONE-SIDED, so
+!! outward drift leaves Vpar at plain sonic and the parallel flow is never subsonic
+!! or reversed; the outward limit is exactly the configuration measured stable.
+!! HARD, not smooth: min/max are piecewise linear, so within a branch the row stays
+!! exactly linear in u and a branch frozen for one linear solve is exact, whereas a
+!! tanh's vanishing tail Jacobian against an O(2*cs) residual degenerated into a
+!! fixed-point iteration (period-2 oscillation, crash at 319).
 !!
-!! WHY NOT A CLIP. A clip answers an UNSATISFIABLE demand with the largest value we
-!! permitted ourselves. Measured at the failing wall node the demand is 116*cs against
-!! a 2*cs bound, so the supplement sat pinned at its ceiling and the row imposed
-!! Vpar = 3*cs - a number with no physical content, in the one place the model had
-!! already broken down. Worse, the unclipped window there is only 0 < |vE.n| < 2*cs|bn|
-!! while |vE.n| spikes to ~37*that, so the supplement rose from 0 to its ceiling across
-!! ~3 % of the spike width: spatially a step. Vpar therefore jumped cs -> 3*cs between
-!! neighbouring nodes, and div(rho*Vpar*B) differentiates exactly that.
+!! MEASURED REFUTATION OF THE "GRACEFUL SURRENDER" ALTERNATIVE, recorded so it is not
+!! retried. The clip answers an unsatisfiable demand (116*cs at the failing node)
+!! with its ceiling, so the row imposes Vpar = 3*cs there. The obvious repair is to
+!! weight the supplement by how achievable it is, e.g. sup = x*S^2/(x^2+S^2), which
+!! is exact for x << S and returns to zero for x >> S - falling back to Vpar = cs,
+!! the configuration that runs. Implemented and run: it crashed at 550 against 649
+!! for this clip. Two reasons, both about the profile ALONG the wall rather than the
+!! value at one node:
+!!   1. Across the ExB spike the demand runs 0 -> huge -> 0. The clip gives one flat
+!!      plateau; the weighted form gives a peak at x = S, a dip toward zero at the
+!!      spike centre, then a second peak - four transitions and a local minimum
+!!      instead of two transitions. That is MORE tangential structure in Vpar, and
+!!      tangential structure in Vpar is what empties the boundary cells.
+!!   2. d(sup)/dx changes sign at x = S, so past the peak a larger drift produces a
+!!      SMALLER compensation and the row's u column reverses. The clip is monotone.
+!! Any function that equals x for small x and returns to zero for large x must turn
+!! over, so "surrender" is inherently non-monotone. Monotone saturation wins.
 !!
-!! The two limits this form takes are the principled ones:
-!!   x << S : sup -> x          the EXACT kinematic cancellation, unchanged. This is
-!!                              the median wall point (demand 0.15*cs) and ~94 % of
-!!                              the boundary, so the drift physics is untouched where
-!!                              it is meaningful.
-!!   x >> S : sup -> S^2/x -> 0 GRACEFUL SURRENDER. Where the magnetic presheath
-!!                              demonstrably cannot enforce the condition, stop
-!!                              demanding it and fall back to Vpar = cs - which is
-!!                              precisely the configuration measured stable. At the
-!!                              failing node (x/S = 58) this gives sup = 0.034*cs,
-!!                              i.e. the stable row to 3 %.
-!! The crossover is at SOLPS's own bound and the peak is sup = S/2 at x = S, so
-!! Vpar is bounded into [cs, 2*cs] - tighter than the clip's [cs, 3*cs].
+!! What actually fixed the drift-on run was not the shape of this bound but the
+!! zero-sum sheath stabiliser (stab_coeff_sheath_te/ti/ni, after SOLPS
+!! b2stbc_stab_coeff_sheath_*), which damps the boundary ne/Ti/Te response instead.
 !!
-!! AND IT IS NOT THE TANH FAILURE AGAIN. The smooth saturation tried earlier died
-!! because its tail had a vanishing Jacobian while still demanding an O(2*cs)
-!! residual - a fixed-point iteration with no derivative to solve it (period-2
-!! oscillation, crash at 319). Here the tail has a vanishing Jacobian AND a vanishing
-!! residual together: the row degenerates to Vpar = cs, which is the row that already
-!! runs stably. Same vanishing derivative, opposite consequence.
-!!
-!! HONEST SCOPE. The two limits are principled and the crossover scale is SOLPS's,
-!! not a new number. The specific rational form between them is a choice.
-!!
-!! @param x        raw demand, direction*D_floored (Vpar units); only x > 0 acts
-!! @param S        2*cs/|B|; non-positive S disables the supplement
-!! @param sup      the applied supplement
-!! @param dsup_dx  exact d(sup)/dx = S^2*(S^2 - x^2)/(x^2 + S^2)^2
-!! @param dsup_dS  exact d(sup)/dS = 2*S*x^3/(x^2 + S^2)^2
+!! Three branches, exact derivatives:
+!!   x <= 0    : sup = 0   dsup_dx = 0   dsup_dS = 0
+!!   0 < x < S : sup = x   dsup_dx = 1   dsup_dS = 0
+!!   x >= S    : sup = S   dsup_dx = 0   dsup_dS = 1
+!! Non-positive S disables the supplement.
 pure subroutine mach1_uout_supplement(x, S, sup, dsup_dx, dsup_dS)
 
   implicit none
   real*8, intent(in)  :: x, S
   real*8, intent(out) :: sup, dsup_dx, dsup_dS
 
-  real*8 :: S2, x2, den
-
   sup = 0.d0 ; dsup_dx = 0.d0 ; dsup_dS = 0.d0
   if ( S .le. 0.d0 ) return
-  if ( x .le. 0.d0 ) return
-
-  S2  = S*S
-  x2  = x*x
-  den = x2 + S2
-
-  sup     = x * S2 / den
-  dsup_dx = S2 * (S2 - x2) / (den*den)
-  dsup_dS = 2.d0 * S * x*x2 / (den*den)
+  if ( x .ge. S ) then
+    sup = S ;  dsup_dS = 1.d0
+  elseif ( x .gt. 0.d0 ) then
+    sup = x ;  dsup_dx = 1.d0
+  endif
 
 end subroutine mach1_uout_supplement
 
