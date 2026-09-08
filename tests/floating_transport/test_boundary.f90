@@ -207,6 +207,56 @@ program test_boundary
   call set_u(-slope*1.d3,0.d0); call assemble(a,r)
   call set_u(-slope*2.d3,0.d0); call assemble(ap,rp)
   if (any(a/=ap) .or. any(r/=rp)) error stop 'closed-wall branch is not saturated'
+  ! 7. FD the CLOSED branch specifically. Its Vpar column cancels the parallel
+  !    collection, and it lives in a block whose amat(*,var_vpar) entries are plain
+  !    assignments further down - accumulating into them earlier is silently
+  !    overwritten, leaving a residual that says the collection is zero and a
+  !    Jacobian that still responds as if the parallel collection were present.
+  !    Nothing in the open-branch sweep above can see that, so test it here.
+  ! Enter it reliably: the branch is fu_bn*Vpar0 + clip(vE.n) <= 0, so weaken the
+  ! parallel flow and take whichever drift sign actually closes the wall (test 2's
+  ! `slope` marks neither sense now that both act).
+  changed_plus=.false.
+  do k=1,2
+    if (k==1) then
+      call set_u(+abs(slope)*1.d3,0.d0)
+    else
+      call set_u(-abs(slope)*1.d3,0.d0)
+    endif
+    do i=1,4
+      nodes(i)%values(1,1,var_vpar)=1.d-4
+    enddo
+    base=nodes
+    nodes=base; call assemble(a,r)
+    nodes=base; nodes(1)%values(1,1,var_vpar)=nodes(1)%values(1,1,var_vpar)+1.d-3
+    call assemble(ap,rp)
+    changed_minus=.true.
+    do row=1,nd
+      if (mod(row-1,n_var)+1/=var_Ti .and. mod(row-1,n_var)+1/=var_Te) cycle
+      if (abs(rp(row)-r(row))>1.d-14) changed_minus=.false.
+    enddo
+    if (changed_minus) then
+      changed_plus=.true.
+      exit
+    endif
+  enddo
+  if (.not.changed_plus) error stop 'closed-wall branch never entered by either drift sign'
+  ! Defining property of the branch: the collection is zero, so the Ti/Te residual
+  ! does not depend on Vpar - verified just above - and therefore neither may its
+  ! Vpar column. That column lives in a block whose amat(*,var_vpar) entries are
+  ! plain assignments further down, so accumulating into them earlier is silently
+  ! overwritten, leaving a residual that says the collection is zero and a Jacobian
+  ! that still responds as if the parallel collection were present.
+  nodes=base; call assemble(a,r)
+  do row=1,nd
+    if (mod(row-1,n_var)+1/=var_Ti .and. mod(row-1,n_var)+1/=var_Te) cycle
+    do i=1,2
+      do dof=1,4
+        col=n_var*4*(i-1)+n_var*(dof-1)+var_vpar
+        if (abs(a(row,col))>1.d-14) error stop 'closed-wall branch keeps a Vpar column the residual does not have'
+      enddo
+    enddo
+  enddo
   write(*,*) 'PASS: sheath ExB energy flux - absent without a gradient, both senses, clipped, closed wall, FD Jacobian'
   write(*,*) 'PASS: production boundary assembler finite-difference Jacobians and type-2 exclusion'
 contains
