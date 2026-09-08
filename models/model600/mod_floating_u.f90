@@ -55,51 +55,71 @@ module mod_floating_u
 
 contains
 
-!> One-sided supplement of the drift-compatible Bohm condition (SOLPS BCMOM=13,
-!! NON-marginal branch - the one the manual marks "recommended for cases with
-!! drifts", p.83/411 - without the interior extrapolation JOREK's nodal row cannot
-!! have). Given x = direction*D_floored, the component of the (floored) kinematic
-!! cancellation that INCREASES the outward parallel flow, and the SOLPS bound
-!! S = 2*cs/Btot:
+!> One-sided supplement of the drift-compatible Bohm condition, weighted by how
+!! ACHIEVABLE the compensation is.
 !!
-!!     supplement = min( max(x, 0), S )
+!!     sup(x) = x * S^2 / (x^2 + S^2)     for x > 0,   0 otherwise
 !!
-!! ONE-SIDED: the recommended branch imposes V_par >= cs and never subsonic or
-!! reversed parallel flow; outward drift simply means total flux above sonic, which
-!! the Bohm INEQUALITY allows. The marginal branch's V_par = cs - vE.n/bn (down to
-!! reversal at the clip) was tried and crashed at 466 steps. Anchored at zero, so a
-!! wall point whose potential gradient wobbles around zero produces nothing.
+!! with x = the raw demand (direction*D_floored, in Vpar units) and S = 2*cs/|B|,
+!! SOLPS's bound on the ExB contribution (manual 3.0.9 p.407/411, b2stbc_cbc = 1.0).
 !!
-!! HARD CLIP at S, deliberately not smooth: min/max are piecewise linear, so within
-!! a branch the row stays exactly linear in u and a branch frozen for one linear
-!! solve is exact, whereas a smooth saturation's vanishing tail Jacobian degenerated
-!! into a fixed-point iteration (period-2 oscillation, crash at 319).
+!! WHY NOT A CLIP. A clip answers an UNSATISFIABLE demand with the largest value we
+!! permitted ourselves. Measured at the failing wall node the demand is 116*cs against
+!! a 2*cs bound, so the supplement sat pinned at its ceiling and the row imposed
+!! Vpar = 3*cs - a number with no physical content, in the one place the model had
+!! already broken down. Worse, the unclipped window there is only 0 < |vE.n| < 2*cs|bn|
+!! while |vE.n| spikes to ~37*that, so the supplement rose from 0 to its ceiling across
+!! ~3 % of the spike width: spatially a step. Vpar therefore jumped cs -> 3*cs between
+!! neighbouring nodes, and div(rho*Vpar*B) differentiates exactly that.
 !!
-!! The FLOOR on the incidence (applied by the caller, D_floored = D*min(1,|bn|/s0)
-!! with s0 = min_sheath_angle in radians - the same c_angle scale that already
-!! floors the sheath particle and heat fluxes) is what makes the whole object
-!! well behaved: it bounds every Jacobian column by ~1/s0 instead of 1/bn, and it
-!! widens the response band at grazing incidence from 2*cs*bn (a step function in
-!! u) to 2*cs*s0 (a resolvable ramp).
+!! The two limits this form takes are the principled ones:
+!!   x << S : sup -> x          the EXACT kinematic cancellation, unchanged. This is
+!!                              the median wall point (demand 0.15*cs) and ~94 % of
+!!                              the boundary, so the drift physics is untouched where
+!!                              it is meaningful.
+!!   x >> S : sup -> S^2/x -> 0 GRACEFUL SURRENDER. Where the magnetic presheath
+!!                              demonstrably cannot enforce the condition, stop
+!!                              demanding it and fall back to Vpar = cs - which is
+!!                              precisely the configuration measured stable. At the
+!!                              failing node (x/S = 58) this gives sup = 0.034*cs,
+!!                              i.e. the stable row to 3 %.
+!! The crossover is at SOLPS's own bound and the peak is sup = S/2 at x = S, so
+!! Vpar is bounded into [cs, 2*cs] - tighter than the clip's [cs, 3*cs].
 !!
-!! Three mutually exclusive branches with exact derivatives:
-!!   x <= 0     :  sup = 0   dsup/dx = 0   dsup/dS = 0   (w_act=0, w_clip=0)
-!!   0 < x < S  :  sup = x   dsup/dx = 1   dsup/dS = 0   (w_act=1, w_clip=0)
-!!   x >= S     :  sup = S   dsup/dx = 0   dsup/dS = 1   (w_act=0, w_clip=1)
-!! Non-positive S disables the supplement outright.
-pure subroutine mach1_uout_supplement(x, S, sup, w_act, w_clip)
+!! AND IT IS NOT THE TANH FAILURE AGAIN. The smooth saturation tried earlier died
+!! because its tail had a vanishing Jacobian while still demanding an O(2*cs)
+!! residual - a fixed-point iteration with no derivative to solve it (period-2
+!! oscillation, crash at 319). Here the tail has a vanishing Jacobian AND a vanishing
+!! residual together: the row degenerates to Vpar = cs, which is the row that already
+!! runs stably. Same vanishing derivative, opposite consequence.
+!!
+!! HONEST SCOPE. The two limits are principled and the crossover scale is SOLPS's,
+!! not a new number. The specific rational form between them is a choice.
+!!
+!! @param x        raw demand, direction*D_floored (Vpar units); only x > 0 acts
+!! @param S        2*cs/|B|; non-positive S disables the supplement
+!! @param sup      the applied supplement
+!! @param dsup_dx  exact d(sup)/dx = S^2*(S^2 - x^2)/(x^2 + S^2)^2
+!! @param dsup_dS  exact d(sup)/dS = 2*S*x^3/(x^2 + S^2)^2
+pure subroutine mach1_uout_supplement(x, S, sup, dsup_dx, dsup_dS)
 
   implicit none
   real*8, intent(in)  :: x, S
-  real*8, intent(out) :: sup, w_act, w_clip
+  real*8, intent(out) :: sup, dsup_dx, dsup_dS
 
-  sup = 0.d0 ; w_act = 0.d0 ; w_clip = 0.d0
+  real*8 :: S2, x2, den
+
+  sup = 0.d0 ; dsup_dx = 0.d0 ; dsup_dS = 0.d0
   if ( S .le. 0.d0 ) return
-  if ( x .ge. S ) then
-    sup = S ;  w_clip = 1.d0
-  elseif ( x .gt. 0.d0 ) then
-    sup = x ;  w_act = 1.d0
-  endif
+  if ( x .le. 0.d0 ) return
+
+  S2  = S*S
+  x2  = x*x
+  den = x2 + S2
+
+  sup     = x * S2 / den
+  dsup_dx = S2 * (S2 - x2) / (den*den)
+  dsup_dS = 2.d0 * S * x*x2 / (den*den)
 
 end subroutine mach1_uout_supplement
 

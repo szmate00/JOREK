@@ -114,10 +114,10 @@ real*8  :: m1_dr
 !! m1_D = R^2*u_b/psi_b (exact -vE.n/(Bn*|B|), Vpar units); m1_bfl = min(1,|bn|/s0)
 !! with s0 = min_sheath_angle in radians (the c_angle scale) floors the incidence;
 !! m1_S = 2*cs/Btot is the SOLPS bound; m1_sup is the applied supplement and
-!! m1_act/m1_clw select its branch. u0_bb_r reconstructs the second tangential
+!! m1_dsdx/m1_dsds are its exact derivatives wrt the demand and the bound. u0_bb_r reconstructs the second tangential
 !! derivative of u from BOTH endpoints' value/slope DOFs (same stencil as ps0_bb)
 !! for the bicubic slope-row residual.
-real*8  :: m1_D, m1_S, m1_bfl, m1_smin, m1_Dfl, m1_sup, m1_act, m1_clw
+real*8  :: m1_D, m1_S, m1_bfl, m1_smin, m1_Dfl, m1_sup, m1_dsdx, m1_dsds
 real*8  :: m1_dDdb, m1_dSdb, m1_dslope, m1_ucol, m1_clamp, m1_raw, u0_bb_r
 real*8  :: fd_rho_min(FD_NT), fd_T_min(FD_NT), fd_pe_R(FD_NT), fd_pe_Z(FD_NT)
 real*8  :: fd_loc(2,FD_NT)
@@ -815,13 +815,13 @@ do i=1, n_local_elms !=== do elements
           endif
           m1_D   = m1_Dfl
           m1_S   = 2.d0 * cs0 / Btot
-          call mach1_uout_supplement(direction*m1_Dfl, m1_S, m1_sup, m1_act, m1_clw)
+          call mach1_uout_supplement(direction*m1_Dfl, m1_S, m1_sup, m1_dsdx, m1_dsds)
 
           Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0     + m1_dr * direction * m1_sup
           Mach1BC_v   = - 1.0
           Mach1BC_T   =           + direction / Btot * factor  * cs0_T                  &
-                                  + m1_dr * m1_clw * direction * 2.d0 * cs0_T / Btot
-          Mach1BC_u   =             m1_dr * m1_act * m1_ucol
+                                  + m1_dr * m1_dsds * direction * 2.d0 * cs0_T / Btot
+          Mach1BC_u   =             m1_dr * m1_dsdx * m1_ucol
 
           ! --- Report the APPLIED supplement and the sonic term. Their ratio is
           ! --- bounded by 2/factor by construction - the acceptance check.
@@ -887,7 +887,7 @@ do i=1, n_local_elms !=== do elements
                           - BigR**2*U0_b*ps0_bb/ps0_b ) / ps0_b
             endif
             m1_dSdb = 2.d0 * cs0_T * (Ti0_b+Te0_b) / Btot
-            m1_raw  = m1_act * m1_dDdb + m1_clw * direction * m1_dSdb
+            m1_raw  = m1_dsdx * m1_dDdb + m1_dsds * direction * m1_dSdb
             ! --- The safety clamp is a branch like any other, so differentiate the
             ! --- branch that is actually taken: on the clamp the imposed slope is
             ! --- +-2*m1_S = +-4*cs/Btot, whose temperature derivative is +-4*cs_T/Btot
@@ -905,18 +905,18 @@ do i=1, n_local_elms !=== do elements
               dMach1BC_Ti = dMach1BC_Ti + m1_dr * m1_clamp * 4.d0 * cs0_T / Btot
               dMach1BC_Te = dMach1BC_Te + m1_dr * m1_clamp * 4.d0 * cs0_T / Btot
             else
-              dMach1BC_T  = dMach1BC_T  + m1_dr * m1_clw * direction * 2.d0 * cs0_TT * T0_b / Btot
-              dMach1BC_Ti = dMach1BC_Ti + m1_dr * m1_clw * direction * 2.d0 * cs0_TT * T0_b / Btot
-              dMach1BC_Te = dMach1BC_Te + m1_dr * m1_clw * direction * 2.d0 * cs0_TT * T0_b / Btot
-              dMach1BC_Tb = dMach1BC_Tb + m1_dr * m1_clw * direction * 2.d0 * cs0_T * element_size_0 / Btot
+              dMach1BC_T  = dMach1BC_T  + m1_dr * m1_dsds * direction * 2.d0 * cs0_TT * T0_b / Btot
+              dMach1BC_Ti = dMach1BC_Ti + m1_dr * m1_dsds * direction * 2.d0 * cs0_TT * T0_b / Btot
+              dMach1BC_Te = dMach1BC_Te + m1_dr * m1_dsds * direction * 2.d0 * cs0_TT * T0_b / Btot
+              dMach1BC_Tb = dMach1BC_Tb + m1_dr * m1_dsds * direction * 2.d0 * cs0_T * element_size_0 / Btot
             endif
           endif
 
           if (n_order .ge. 5) then
             ! --- Same convention as the value row: floored, gated off outside the
             ! --- active branch where the supplement has no u dependence.
-            dMach1BC     = dMach1BC + m1_dr * m1_act * m1_bfl * BigR**2 * U0_bb/ps0_b
-            dMach1BC_ubb = + m1_dr * m1_act * m1_bfl * BigR**2 * element_size_3/ps0_b ! n_order>=5 not production; unchanged
+            dMach1BC     = dMach1BC + m1_dr * m1_dsdx * m1_bfl * BigR**2 * U0_bb/ps0_b
+            dMach1BC_ubb = + m1_dr * m1_dsdx * m1_bfl * BigR**2 * element_size_3/ps0_b ! n_order>=5 not production; unchanged
             d2Mach1BC    = - Vpar0_bb + direction / Btot * factor   * cs0_TT * (Ti0_b+Te0_b)**2   &
                                       + direction / Btot * factor   * cs0_T  * (Ti0_bb+Te0_bb)   !&
                                       !+ direction / Btot * Hfact_b  * cs0_T  * T0_b *2.0 !&
