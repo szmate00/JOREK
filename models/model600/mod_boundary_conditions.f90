@@ -118,7 +118,7 @@ real*8  :: m1_dr
 !! derivative of u from BOTH endpoints' value/slope DOFs (same stencil as ps0_bb)
 !! for the bicubic slope-row residual.
 real*8  :: m1_D, m1_S, m1_bfl, m1_smin, m1_Dfl, m1_sup, m1_act, m1_clw
-real*8  :: m1_dDdb, m1_dSdb, m1_dslope, u0_bb_r
+real*8  :: m1_dDdb, m1_dSdb, m1_dslope, m1_dfdb, m1_clamp, m1_raw, u0_bb_r
 real*8  :: fd_rho_min(FD_NT), fd_T_min(FD_NT), fd_pe_R(FD_NT), fd_pe_Z(FD_NT)
 real*8  :: fd_loc(2,FD_NT)
 real*8  :: fd_es, fd_ep, fd_dl, fd_h, fd_res, fd_vn, fd_pe, fd_sq, fd_sgn
@@ -852,17 +852,44 @@ do i=1, n_local_elms !=== do elements
           ! --- representable in the Hermite slope DOF anyway. Derived from the clip,
           ! --- not a new threshold; with the floor active it is rarely reached.
           m1_dslope = 0.d0
+          m1_clamp  = 0.d0
           if ( n_order .eq. 3 .and. m1_dr .ne. 0.d0 ) then
+            ! --- d/db of the FLOORED cancellation is f*D' + f'*D, not f*D' alone.
+            ! --- The floor f = min(1,|bn|/s0) is frozen in TIME (psi is Dirichlet on
+            ! --- the wall) but it is not constant along the boundary: bn varies, and
+            ! --- its tangential derivative bn_b is already formed above. On the
+            ! --- unfloored branch f = 1 identically, so f' = 0 there and the term is
+            ! --- present only where the floor is actually doing something.
+            m1_dfdb = 0.d0
+            if ( m1_smin .gt. 0.d0 .and. abs(bn) .lt. m1_smin ) &
+              m1_dfdb = sign(1.d0,bn) * bn_b / m1_smin
             m1_dDdb = ( 2.d0*BigR*R_b*U0_b + BigR**2*u0_bb_r                           &
                         - BigR**2*U0_b*ps0_bb/ps0_b ) / ps0_b
             m1_dSdb = 2.d0 * cs0_T * (Ti0_b+Te0_b) / Btot
-            m1_dslope = m1_act * m1_bfl * m1_dDdb + m1_clw * direction * m1_dSdb
-            m1_dslope = max( -2.d0*m1_S, min( 2.d0*m1_S, m1_dslope ) )
+            m1_raw  = m1_act * ( m1_bfl*m1_dDdb + m1_dfdb*m1_D )                       &
+                    + m1_clw * direction * m1_dSdb
+            ! --- The safety clamp is a branch like any other, so differentiate the
+            ! --- branch that is actually taken: on the clamp the imposed slope is
+            ! --- +-2*m1_S = +-4*cs/Btot, whose temperature derivative is +-4*cs_T/Btot
+            ! --- and which does not depend on T_b at all. Adding the unclamped clip
+            ! --- columns there would describe a term the residual is not using.
+            if ( m1_raw .gt. 2.d0*m1_S ) then
+              m1_clamp = +1.d0
+            elseif ( m1_raw .lt. -2.d0*m1_S ) then
+              m1_clamp = -1.d0
+            endif
+            m1_dslope = max( -2.d0*m1_S, min( 2.d0*m1_S, m1_raw ) )
             dMach1BC    = dMach1BC + m1_dr * m1_dslope
-            dMach1BC_T  = dMach1BC_T  + m1_dr * m1_clw * direction * 2.d0 * cs0_TT * T0_b / Btot
-            dMach1BC_Ti = dMach1BC_Ti + m1_dr * m1_clw * direction * 2.d0 * cs0_TT * T0_b / Btot
-            dMach1BC_Te = dMach1BC_Te + m1_dr * m1_clw * direction * 2.d0 * cs0_TT * T0_b / Btot
-            dMach1BC_Tb = dMach1BC_Tb + m1_dr * m1_clw * direction * 2.d0 * cs0_T * element_size_0 / Btot
+            if ( m1_clamp .ne. 0.d0 ) then
+              dMach1BC_T  = dMach1BC_T  + m1_dr * m1_clamp * 4.d0 * cs0_T / Btot
+              dMach1BC_Ti = dMach1BC_Ti + m1_dr * m1_clamp * 4.d0 * cs0_T / Btot
+              dMach1BC_Te = dMach1BC_Te + m1_dr * m1_clamp * 4.d0 * cs0_T / Btot
+            else
+              dMach1BC_T  = dMach1BC_T  + m1_dr * m1_clw * direction * 2.d0 * cs0_TT * T0_b / Btot
+              dMach1BC_Ti = dMach1BC_Ti + m1_dr * m1_clw * direction * 2.d0 * cs0_TT * T0_b / Btot
+              dMach1BC_Te = dMach1BC_Te + m1_dr * m1_clw * direction * 2.d0 * cs0_TT * T0_b / Btot
+              dMach1BC_Tb = dMach1BC_Tb + m1_dr * m1_clw * direction * 2.d0 * cs0_T * element_size_0 / Btot
+            endif
           endif
 
           if (n_order .ge. 5) then
