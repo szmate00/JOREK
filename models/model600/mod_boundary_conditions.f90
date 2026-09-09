@@ -39,7 +39,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                                   &
        sheath_V_wall, floating_u_diag, D_perp, mach1_omit_drift, floating_u_mach_flux, min_sheath_angle, mach1_drop_grazing
-use mod_floating_u, only: floating_u_norm, mach1_uout_supplement
+use mod_floating_u, only: floating_u_norm
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -110,7 +110,9 @@ real*8  :: fd_vin_max(FD_NT), fd_vout_max(FD_NT)
 real*8  :: fd_m1cs_max(FD_NT), fd_m1dr_max(FD_NT)
 real*8  :: m1_dr
 !> One-sided, floored, clipped drift-compatible Bohm supplement (SOLPS BCMOM=13,
-!! non-marginal branch, without extrapolation - see mach1_uout_supplement).
+!! non-marginal branch, without extrapolation). The incidence floor and the SOLPS clip
+!! have been removed from this path; mach1_drop_grazing decides instead whether the row is
+!! imposed at a grazing node at all.
 !! m1_D = R^2*u_b/psi_b (exact -vE.n/(Bn*|B|), Vpar units); m1_bfl = min(1,|bn|/s0)
 !! with s0 = min_sheath_angle in radians (the c_angle scale) floors the incidence;
 !! m1_S = 2*cs/Btot is the SOLPS bound; m1_sup is the applied supplement and
@@ -805,45 +807,68 @@ do i=1, n_local_elms !=== do elements
           ! --- cancelled expression directly removes the singularity, and removes bn_b
           ! --- from this path - which also removes a sign defect, since the per-vertex
           ! --- flips applied to bn_1/bn_2 below are NOT applied to bn_b.
-          ! --- SUPERVISOR VARIANT (mach1_drop_grazing), a STRICTLY SINGLE-VARIABLE switch.
-          ! --- The incidence floor, the SOLPS clip and the vpar_smoothing weight are all
-          ! --- computed and applied EXACTLY as with the flag off. The one and only
-          ! --- difference is that where |b.n| < sin(min_sheath_angle) the row is not
-          ! --- assembled at all (m1_skip, at the assembly below), so an A/B against this
-          ! --- flag isolates the grazing drop and nothing else.
+          ! --- DRIFT-COMPATIBLE MACH CONDITION: the EXACT correction, no floor, no clip.
           ! ---
-          ! --- The floor is inactive above the threshold by construction (m1_bfl = 1
-          ! --- there), so with the flag on it only ever applied at nodes that are now
-          ! --- skipped: dropping the row makes the floor moot rather than competing with
-          ! --- it. The clip can still bind above the threshold, and deliberately still
-          ! --- does, so that it is not a second changed variable.
+          ! ---     Vpar = direction*cs*factor/Btot + max(direction*D, 0),
+          ! ---     D    = R^2*u_b/psi_b  =  -vE.n/(Bn*|B|)
+          ! ---
+          ! --- One-sided (SOLPS non-marginal branch): outward drift leaves the parallel
+          ! --- flow at plain sonic, only inward drift is compensated, and the flow is
+          ! --- never subsonic or reversed.
+          ! ---
+          ! --- The incidence floor and the SOLPS 2*cs clip have been REMOVED from this
+          ! --- path. They existed only to keep the 1/psi_b inversion finite as the field
+          ! --- becomes tangent to the wall. mach1_drop_grazing tests the alternative
+          ! --- hypothesis - that the condition should simply NOT BE IMPOSED where it does
+          ! --- not apply - and the two are compared directly:
+          ! ---
+          ! ---   mach1_drop_grazing = .false.  row imposed at EVERY wall node (A)
+          ! ---   mach1_drop_grazing = .true.   row imposed only where
+          ! ---                                 |b.n| >= sin(min_sheath_angle);
+          ! ---                                 below that, NOTHING is imposed (B)
+          ! ---
+          ! --- The flag is therefore the single variable between A and B: the residual,
+          ! --- the Jacobian and every coefficient are formed identically in both, and
+          ! --- only the decision to assemble differs.
           ! ---
           ! --- Skipping is meaningful, not a fallback to Dirichlet: apply_cs is true at
           ! --- these nodes so the Dirichlet Vpar row is skipped too, leaving the trace to
           ! --- the bulk momentum equation, whose parallel viscosity (visco_par,
-          ! --- integrated by parts at mod_elt_matrix_fft.f90:1789) supplies the natural
-          ! --- condition grad(Vpar).n = 0. b_n is frozen in time - psi is Dirichlet on
-          ! --- the wall - so the threshold is a STATIC spatial map and no node can
-          ! --- flicker across it between solves.
+          ! --- integrated by parts at mod_elt_matrix_fft.f90:1789, plus visco_par_num)
+          ! --- supplies the natural condition grad(Vpar).n = 0.
+          ! ---
+          ! --- b_n is frozen in time - psi is Dirichlet on the wall - so the threshold is
+          ! --- a STATIC spatial map: unlike every branch used so far, no node can flicker
+          ! --- across it between solves.
           m1_skip = .false.
           if ( mach1_drop_grazing .and. m1_smin .gt. 0.d0 .and. abs(bn) .lt. m1_smin ) &
             m1_skip = .true.
 
-          if ( m1_smin .gt. 0.d0 .and. abs(bn) .lt. m1_smin ) then
-            m1_bfl  = abs(bn) / m1_smin
-            m1_Dfl  = sign(1.d0,ps0_b) * BigR * U0_b          / (Btot*dl*m1_smin)
-            m1_ucol = sign(1.d0,ps0_b) * BigR * element_size_0 / (Btot*dl*m1_smin)
-          else
-            m1_bfl  = 1.d0
-            m1_Dfl  = BigR**2 * U0_b          / ps0_b
-            m1_ucol = BigR**2 * element_size_0 / ps0_b
+          m1_bfl  = 1.d0
+          m1_Dfl  = BigR**2 * U0_b           / ps0_b
+          m1_ucol = BigR**2 * element_size_0 / ps0_b
+          m1_S    = 2.d0 * cs0 / Btot        ! diagnostic reference scale only
+          ! --- A grazing node has psi_b arbitrarily small, so D can overflow. Where the
+          ! --- row is skipped nothing is assembled, but the value still reaches the
+          ! --- diagnostic and must stay finite.
+          if ( m1_skip ) then
+            m1_Dfl  = 0.d0
+            m1_ucol = 0.d0
           endif
-          m1_D   = m1_Dfl
-          m1_S   = 2.d0 * cs0 / Btot
-          call mach1_uout_supplement(direction*m1_Dfl, m1_S, m1_sup, m1_dsdx, m1_dsds)
+
+          ! --- One-sided, unclipped; exact derivative of max(.,0).
+          m1_sup  = max( direction*m1_Dfl, 0.d0 )
+          m1_dsdx = 0.d0
+          if ( direction*m1_Dfl .gt. 0.d0 ) m1_dsdx = 1.d0
+          m1_dsds = 0.d0
+          m1_D = m1_Dfl
 
           Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0     + m1_dr * direction * m1_sup
           Mach1BC_v   = - 1.0
+          ! --- m1_dsds is identically zero without the clip (the supplement no longer
+          ! --- depends on cs), so this second line contributes nothing. Retained so the
+          ! --- structure still matches the slope row and a bound can be reinstated in
+          ! --- one place if the A/B calls for it.
           Mach1BC_T   =           + direction / Btot * factor  * cs0_T                  &
                                   + m1_dr * m1_dsds * direction * 2.d0 * cs0_T / Btot
           Mach1BC_u   =             m1_dr * m1_dsdx * m1_ucol
