@@ -56,6 +56,16 @@ module phys_module
   !! a convergence aid. JOREK takes ONE linear solve per step, so X_old is the previous
   !! TIMESTEP and the term damps the physical transient as well. Steady state still
   !! unaffected; transients are slowed.
+  !> SUPERVISOR VARIANT of the drift-compatible Mach condition. Instead of taming the
+  !! 1/b_n inversion with an incidence floor and the SOLPS 2*cs clip, simply DO NOT
+  !! IMPOSE the condition where it is not applicable: apply the EXACT ExB correction
+  !! wherever |b.n| >= sin(min_sheath_angle), and skip the row entirely below that.
+  !! Skipping leaves the Vpar trace to the bulk momentum equation, whose parallel
+  !! viscosity (visco_par, integrated by parts in mod_elt_matrix_fft) then supplies
+  !! the natural condition grad(Vpar).n = 0 - a smooth, well-posed Neumann condition
+  !! rather than a prescribed value. b.n is frozen in time (psi is Dirichlet on the
+  !! wall), so the threshold is a STATIC spatial map: no node can flicker across it.
+  logical :: mach1_drop_grazing   !< skip the Mach row where the field grazes, instead of floor+clip
   real*8  :: stab_coeff_sheath_te !< zero-sum stabiliser on the electron sheath energy BC
   real*8  :: stab_coeff_sheath_ti !< zero-sum stabiliser on the ion sheath energy BC
   real*8  :: stab_coeff_sheath_ni !< zero-sum stabiliser on the sheath particle BC

@@ -215,6 +215,14 @@ module mod_expression
     call add(exprs_all, 'vpar_norm   ', 'Perpendicular velocity to the boundary (vpar contrib) ', 'boundary    ')
     call add(exprs_all, 'vu_norm     ', 'Perpendicular velocity to the boundary (u contrib)    ', 'boundary    ')
     call add(exprs_all, 'vtot_norm   ', 'Total perpendicular velocity to the JOREKs boundary   ', 'boundary    ')
+    call add(exprs_all, 'vparB_norm  ', 'Normal velocity from Vpar*B; positive is outward       ', 'boundary    ')
+    call add(exprs_all, 'vExB_norm   ', 'Normal ExB velocity; positive is outward               ', 'boundary    ')
+    call add(exprs_all, 'vflow_norm  ', 'Total normal fluid velocity; positive is outward       ', 'boundary    ')
+    call add(exprs_all, 'vpar_phys   ', 'Physical parallel speed Vpar*|B|; positive is outward  ', 'boundary    ')
+    call add(exprs_all, 'vsound      ', 'Sound speed cs at the boundary                         ', 'boundary    ')
+    call add(exprs_all, 'mach_par    ', 'Parallel Mach number Vpar*|B|/cs; positive is outward   ', 'boundary    ')
+    call add(exprs_all, 'bn_unit     ', 'Field incidence b.n = B.n/|B| (signed)                 ', 'boundary    ')
+    call add(exprs_all, 'drift_demand', 'ExB demand |vE.n|/(cs*|b.n|); >1 means unachievable    ', 'boundary    ')
     call add(exprs_all, 'heatF_sheath', 'Sheath theory heatflux (gamma_sh nT vpar dot n)       ', 'boundary    ')
     call add(exprs_all, 'heatF_par_cd', 'Conductive parallel heat flux (normal to the boundary)', 'boundary    ')
     call add(exprs_all, 'heatF_prp_cd', 'Conductive perpend  heat flux (normal to the boundary)', 'boundary    ')
@@ -231,6 +239,8 @@ module mod_expression
     call add(exprs_all, 'partF_prp_cd', 'Conductive perpend  particle flux (normal to the bnd) ', 'boundary    ')
     call add(exprs_all, 'partF_par_cv', 'Convective parallel particle flux (normal to the bnd) ', 'boundary    ')
     call add(exprs_all, 'partF_prp_cv', 'Convective perpend  particle flux (normal to the bnd) ', 'boundary    ')
+    call add(exprs_all, 'partF_vpar  ', 'Convective Vpar particle flux; positive is outward     ', 'boundary    ')
+    call add(exprs_all, 'partF_ExB   ', 'Convective ExB particle flux; positive is outward      ', 'boundary    ')
     call add(exprs_all, 'partF_total ', 'Total particle flux (normal to the boundary)          ', 'boundary    ')
     call add(exprs_all, 'npartF_total', 'Total neutral particle flux (normal to the boundary)  ', 'boundary    ')
     call add(exprs_all, 'ExB_norm    ', 'EM energy flux, Poynting vector (normal to boundary)  ', 'boundary    ')
@@ -2050,6 +2060,45 @@ module mod_expression
               case ( 'vtot_norm'   )
                 res = (VR*nmlR + VZ*nmlZ) / fact_time
 
+              ! --- A/B DIAGNOSTICS FOR THE DRIFT-COMPATIBLE MACH BOUNDARY CONDITION.
+              ! --- In reduced MHD v = R grad(u) x e_phi + Vpar*B, so vparB_norm and
+              ! --- vExB_norm sum identically to vflow_norm. Plot vpar_phys, NOT
+              ! --- vparB_norm, when judging the parallel flow: the latter carries a
+              ! --- factor b.n and therefore hides a large Vpar wherever the field
+              ! --- grazes the wall - which is exactly where the condition is hardest.
+              case ( 'vparB_norm' )
+                res = vpar0 * Bnorm / fact_time
+
+              case ( 'vExB_norm' )
+                res = (-R*u0_Z*nmlR + R*u0_R*nmlZ) / fact_time
+
+              case ( 'vflow_norm' )
+                res = (-R*u0_Z*nmlR + R*u0_R*nmlZ + vpar0*Bnorm) / fact_time
+
+              ! --- Vpar is the COEFFICIENT of B, so the physical parallel speed is
+              ! --- Vpar*|B|. This is the quantity the Mach row constrains and the
+              ! --- one the volume terms differentiate.
+              case ( 'vpar_phys' )
+                res = vpar0 * sqrt(BB2) / fact_time
+
+              case ( 'vsound' )
+                res = sqrt(gamma*(Ti0+Te0)) / fact_time
+
+              case ( 'mach_par' )
+                res = vpar0 * BB2 / max(sqrt(BB2)*sqrt(gamma*(Ti0+Te0)), tiny(1.d0))
+
+              case ( 'bn_unit' )
+                res = Bnorm / max(sqrt(BB2), tiny(1.d0))
+
+              ! --- The single number that decides whether the drift-compatible Bohm
+              ! --- condition is achievable at this point: the ExB normal flow measured
+              ! --- against the sonic normal flow. Values >> 1 mean the condition asks
+              ! --- for a parallel speed the plasma cannot supply.
+              case ( 'drift_demand' )
+                res = abs(-R*u0_Z*nmlR + R*u0_R*nmlZ)                                  &
+                      / max( sqrt(gamma*(Ti0+Te0)) * abs(Bnorm) / max(sqrt(BB2),tiny(1.d0)), &
+                             tiny(1.d0) )
+
               case ( 'heatF_sheath' )
                 res = gamma_stangeby*r0*Te0*vpar0*Bnorm*fact_flux
 
@@ -2097,6 +2146,12 @@ module mod_expression
 
               case ( 'partF_prp_cv' )
                 res = (partF_cnv_tot_norm - partF_cnv_par_norm) * fact_ne / fact_time
+
+              case ( 'partF_vpar' )
+                res = r0 * vpar0 * Bnorm * fact_ne / fact_time
+
+              case ( 'partF_ExB' )
+                res = r0 * (-R*u0_Z*nmlR + R*u0_R*nmlZ) * fact_ne / fact_time
 
               case ( 'partF_total'  )
                 res = partF_cnv_tot_norm * fact_ne / fact_time

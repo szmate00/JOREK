@@ -38,7 +38,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        mach_one_bnd_integral, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,                            &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                                   &
-       sheath_V_wall, floating_u_diag, D_perp, mach1_omit_drift, floating_u_mach_flux, min_sheath_angle
+       sheath_V_wall, floating_u_diag, D_perp, mach1_omit_drift, floating_u_mach_flux, min_sheath_angle, mach1_drop_grazing
 use mod_floating_u, only: floating_u_norm, mach1_uout_supplement
 use tr_module
 use mpi_mod
@@ -119,6 +119,7 @@ real*8  :: m1_dr
 !! for the bicubic slope-row residual.
 real*8  :: m1_D, m1_S, m1_bfl, m1_smin, m1_Dfl, m1_sup, m1_dsdx, m1_dsds
 real*8  :: m1_dDdb, m1_dSdb, m1_dslope, m1_ucol, m1_clamp, m1_raw, u0_bb_r
+logical :: m1_skip
 real*8  :: fd_rho_min(FD_NT), fd_T_min(FD_NT), fd_pe_R(FD_NT), fd_pe_Z(FD_NT)
 real*8  :: fd_loc(2,FD_NT)
 real*8  :: fd_es, fd_ep, fd_dl, fd_h, fd_res, fd_vn, fd_pe, fd_sq, fd_sgn
@@ -804,7 +805,26 @@ do i=1, n_local_elms !=== do elements
           ! --- cancelled expression directly removes the singularity, and removes bn_b
           ! --- from this path - which also removes a sign defect, since the per-vertex
           ! --- flips applied to bn_1/bn_2 below are NOT applied to bn_b.
-          if ( m1_smin .gt. 0.d0 .and. abs(bn) .lt. m1_smin ) then
+          ! --- SUPERVISOR VARIANT (mach1_drop_grazing). Rather than taming the 1/b_n
+          ! --- inversion with an incidence floor and the SOLPS clip, do not impose the
+          ! --- condition where it does not apply: use the EXACT correction above the
+          ! --- incidence threshold and skip the row entirely below it. Skipping leaves
+          ! --- the Vpar trace to the bulk momentum equation, whose parallel viscosity
+          ! --- (visco_par, integrated by parts in mod_elt_matrix_fft) supplies the
+          ! --- natural condition grad(Vpar).n = 0. b_n is frozen in time - psi is
+          ! --- Dirichlet on the wall - so this threshold is a STATIC spatial map and no
+          ! --- node can flicker across it between solves.
+          m1_skip = .false.
+          if ( mach1_drop_grazing ) then
+            m1_bfl  = 1.d0
+            m1_Dfl  = BigR**2 * U0_b          / ps0_b
+            m1_ucol = BigR**2 * element_size_0 / ps0_b
+            if ( m1_smin .gt. 0.d0 .and. abs(bn) .lt. m1_smin ) then
+              m1_skip = .true.
+              m1_Dfl  = 0.d0
+              m1_ucol = 0.d0
+            endif
+          elseif ( m1_smin .gt. 0.d0 .and. abs(bn) .lt. m1_smin ) then
             m1_bfl  = abs(bn) / m1_smin
             m1_Dfl  = sign(1.d0,ps0_b) * BigR * U0_b          / (Btot*dl*m1_smin)
             m1_ucol = sign(1.d0,ps0_b) * BigR * element_size_0 / (Btot*dl*m1_smin)
@@ -815,7 +835,16 @@ do i=1, n_local_elms !=== do elements
           endif
           m1_D   = m1_Dfl
           m1_S   = 2.d0 * cs0 / Btot
-          call mach1_uout_supplement(direction*m1_Dfl, m1_S, m1_sup, m1_dsdx, m1_dsds)
+          if ( mach1_drop_grazing ) then
+            ! --- No clip: the exact one-sided correction, since above the threshold the
+            ! --- inversion is bounded by construction (|b_n| >= sin(min_sheath_angle)).
+            m1_sup  = max( direction*m1_Dfl, 0.d0 )
+            m1_dsdx = 0.d0
+            if ( direction*m1_Dfl .gt. 0.d0 ) m1_dsdx = 1.d0
+            m1_dsds = 0.d0
+          else
+            call mach1_uout_supplement(direction*m1_Dfl, m1_S, m1_sup, m1_dsdx, m1_dsds)
+          endif
 
           Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0     + m1_dr * direction * m1_sup
           Mach1BC_v   = - 1.0
@@ -931,7 +960,13 @@ do i=1, n_local_elms !=== do elements
             d2Mach1BC_Tbb=            + direction / Btot * factor   * cs0_T   * element_size_3 
           endif
 
-          ! --- Apply Mach1
+          ! --- Apply Mach1. Under mach1_drop_grazing a node whose field grazes the
+          ! --- wall gets NO row at all - neither the value nor the slope - so its Vpar
+          ! --- trace is left to the bulk momentum equation and the natural condition
+          ! --- grad(Vpar).n = 0 that its parallel viscosity supplies. Note the
+          ! --- Dirichlet Vpar row is already skipped for this node (apply_cs is true),
+          ! --- so "skip" genuinely means "impose nothing", not "fall back to Dirichlet".
+          if ( .not. m1_skip ) then
           ku = var_u
           kv = var_Vpar
           kT  = var_T
@@ -1091,6 +1126,7 @@ do i=1, n_local_elms !=== do elements
                      a_mat%i_tor_min, a_mat%i_tor_max) 
             endif
           endif
+          endif ! .not. m1_skip
 
           ! --- Fix derivatives in one direction
           k = var_Vpar
