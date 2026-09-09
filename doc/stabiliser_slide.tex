@@ -1,0 +1,61 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[margin=22mm,top=18mm]{geometry}
+\usepackage{amsmath,bm,microtype}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\setlist[itemize]{itemsep=4pt,topsep=4pt,leftmargin=1.4em}
+\newcommand{\code}[1]{\texttt{\small #1}}
+\pagestyle{empty}
+\begin{document}
+
+{\large\bfseries The zero-sum sheath stabiliser}\\[2pt]
+{\small ported from SOLPS-ITER \code{b2stbc\_stab\_coeff\_sheath\_te/ti/ni}}
+
+\vspace{6pt}\hrule\vspace{8pt}
+
+\textbf{The problem.} With the floating potential $\Phi=3T_e$, the wall $E\times B$ drift
+makes the boundary $n_e$ and $T_e$ overshoot to negative values in 2--3 cells in a
+\emph{single} time step. Seven different formulations of the drift-corrected parallel-flow
+condition all failed this way.
+
+\vspace{6pt}
+\textbf{The fix.} Add to the sheath boundary source of $n_e$, $T_i$, $T_e$:
+\[
+S^{\rm stab} \;=\; \alpha\;\Pi\;\bigl(X^{\rm old}-X^{\rm new}\bigr),
+\qquad
+\Pi=\text{the sheath flux factor } \rho\,c_s|b_n|\;\text{already in the term}
+\]
+In practice: \emph{use $(\gamma_{\rm sheath}+\alpha)$ in the Jacobian, $\gamma_{\rm sheath}$ in
+the residual.}
+
+\vspace{6pt}
+\textbf{Why it is safe:}
+\begin{itemize}
+  \item \textcolor{blue!55!black}{\textbf{Zero-sum}} --- vanishes identically when
+        $X^{\rm new}=X^{\rm old}$, so the \textbf{steady state is unchanged}. It damps only the
+        \emph{approach} to equilibrium, not the answer.
+  \item Pure implicit diagonal: makes the boundary row stiffer against a per-step jump by a
+        factor $1+\alpha/(\gamma_{\rm sheath}-1)$.
+  \item $\alpha$ is \textbf{dimensionless} --- a multiple of the sheath transmission
+        coefficient, not a physical scale. SOLPS recommends $\alpha=1\!-\!100$; default $0$
+        reproduces previous results bit-for-bit.
+  \item It damps the \textbf{transport} rows ($n_e,T_i,T_e$), not the momentum condition ---
+        SOLPS ships no such term for \code{BCMOM}. This matches the observed failure, where
+        $n_e$ and $T_e$ lose positivity together in the same cells.
+\end{itemize}
+
+\vspace{6pt}
+\textbf{Result.}
+\begin{itemize}
+  \item Drift-enabled run: previously died at $\le 649$ steps $\;\rightarrow\;$
+        \textbf{now past 1100 and converging.}
+  \item All trends correct: min.\ wall density flat, $|v_{E,n}|$ falling, and the decrements of
+        min.\ wall $T_e$ \emph{shrinking} --- asymptotic approach, not collapse.
+\end{itemize}
+
+\vspace{6pt}
+\textbf{Caveat.} SOLPS iterates within a time step, so there the term is purely a convergence
+aid. JOREK takes one solve per step, so it also slows genuine transients. The stationary state
+is still unaffected.
+
+\end{document}
