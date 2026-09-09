@@ -1,0 +1,147 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=17mm,top=13mm,bottom=11mm]{geometry}
+\usepackage{amsmath,bm,microtype,xcolor,booktabs}
+\usepackage[most]{tcolorbox}
+\usepackage{listings}
+\usepackage{enumitem}
+\setlist[itemize]{itemsep=2pt,topsep=2pt,leftmargin=1.3em}
+\definecolor{hl}{RGB}{0,80,150}
+\definecolor{cbg}{RGB}{246,246,240}
+\lstset{basicstyle=\ttfamily\scriptsize,backgroundcolor=\color{cbg},frame=single,
+        rulecolor=\color{black!25},breaklines=true,columns=fullflexible,
+        xleftmargin=2pt,xrightmargin=2pt,framesep=4pt,aboveskip=4pt,belowskip=4pt}
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\Told}{T^{\rm old}}\newcommand{\Tnew}{T^{\rm new}}
+\pagestyle{empty}
+\begin{document}
+
+{\large\bfseries The zero-sum sheath stabiliser in JOREK}\\[1pt]
+{\footnotesize where it lives, what it looks like, and what you set ---
+after SOLPS-ITER \code{b2stbc\_stab\_coeff\_sheath\_te/ti/ni}}
+\vspace{3pt}\hrule\vspace{7pt}
+
+\textbf{1. The input parameters.} Three reals in namelist \code{in1}, all default \textbf{0},
+which reproduces the previous code bit-for-bit:
+\begin{lstlisting}
+stab_coeff_sheath_te = 100.d0   ! electron energy sheath row
+stab_coeff_sheath_ti = 100.d0   ! ion  energy sheath row
+stab_coeff_sheath_ni = 100.d0   ! density     sheath row
+\end{lstlisting}
+\vspace{-3pt}
+{\small
+\begin{tabular}{@{}ll@{}}
+declared & \code{models/phys\_module.f90}\\
+defaults & \code{models/preset\_parameters.f90:81--83}\\
+namelist & \code{models/model600/initialise\_parameters.f90:67--68}\\
+broadcast & \code{communication/broadcast\_phys.f90} (packed/unpacked in matching order)\\
+\end{tabular}}
+
+\vspace{7pt}
+\textbf{2. The maths.} Let $\Pi$ be the sheath \emph{collection flux} --- the geometric factor
+already multiplying every term in that boundary row:
+\[
+\Pi \;=\;\underbrace{(\bm B\!\cdot\!\bm n)\,V_\parallel R\,\mathrm{d}l}_{\text{parallel}}
+\;+\;\underbrace{v_{E,n}^{\rm clip}\,R\,\mathrm{d}l}_{E\times B}
+\;+\;\underbrace{c_s R\,\mathrm{d}l\,c_\alpha}_{\text{grazing floor}}
+\]
+The \emph{physical} sheath energy source and the \emph{added} stabiliser are
+\[
+S_{T_i}= -(\gamma_{\rm sh,i}\!-\!1)\,\rho\,T_i\,\Pi ,
+\qquad\qquad
+\boxed{\,S^{\rm stab}_{T_i}= +\,\alpha_i\,\rho\,\Pi\,\bigl(\Told_i-\Tnew_i\bigr)\,}
+\]
+JOREK linearises about the old state, so with $b$ the residual and $\mathsf A$ the matrix:
+\[
+S^{\rm stab}\big|_{\Tnew=\Told}=0
+\;\Rightarrow\;\textbf{no residual contribution},
+\qquad
+\frac{\partial S^{\rm stab}}{\partial \Tnew}=-\alpha_i\rho\Pi
+\;\Rightarrow\;
+\mathsf A_{T_iT_i}\mathrel{+}=\theta\,\alpha_i\,\rho\,\Pi\,\hat T_i
+\]
+so the assembled column becomes $(\gamma_{\rm sh,i}-1+\alpha_i)\rho\hat T_i\Pi$ while the residual
+keeps $(\gamma_{\rm sh,i}-1)$. \textcolor{hl}{\textbf{That asymmetry is the entire
+implementation.}} The converged state is where $b=0$, and $\mathsf A$ does not enter that
+condition --- so $\alpha$ cannot move the answer.
+
+\vspace{7pt}
+\textbf{3. The code.} One file: \code{models/model600/mod\_boundary\_matrix\_open.f90}.
+
+\vspace{2pt}
+{\small\textit{The residual --- untouched, keeps the physical $\gamma$:}}
+\begin{lstlisting}
+rhs_ij(var_Ti) = - v * (gamma_sheath_i-1.d0) * r0 * Ti0 * vpar0 * ps0_s * normal_sign3 * tstep &
+                 - v * (gamma_sheath_i-1.d0) * r0 * Ti0 * fu_ven_sh * BigR * dl        * tstep &
+                 - v * (gamma_sheath_i-1.d0) * r0 * Ti0 * cs0    * BigR * dl * c_angle * tstep &
+\end{lstlisting}
+{\small\textit{The Jacobian --- the added term (line 651). The bracket is $\Pi$: the same three
+factors as above.}}
+\begin{lstlisting}
+amat(var_Ti,var_Ti) = amat(var_Ti,var_Ti)                                    &
+                    + v * stab_coeff_sheath_ti * r0 * Ti                     &
+                      * ( vpar0 * ps0_s * normal_sign3                       &  ! parallel
+                        + fu_ven_sh * BigR * dl                              &  ! clipped ExB
+                        + cs0 * BigR * dl * c_angle )                        &  ! grazing floor
+                      * theta * tstep
+\end{lstlisting}
+\vspace{-2pt}
+{\small \code{v} = test function, \code{Ti} = \emph{trial} function, \code{r0}/\code{vpar0}/%
+\code{cs0} = lagged old-state values, \code{theta*tstep} = the standard implicitness weighting
+used by every neighbouring entry.}
+
+\vspace{5pt}
+\textbf{4. All four insertion points} --- Jacobian diagonal only, nothing off-diagonal, no other
+equation:
+\begin{center}\small
+\begin{tabular}{clll}
+\toprule
+line & matrix entry & parameter & row \\
+\midrule
+616 & \code{amat(var\_rho,var\_rho)} & \code{stab\_coeff\_sheath\_ni} & density \\
+651 & \code{amat(var\_Ti,var\_Ti)}   & \code{stab\_coeff\_sheath\_ti} & ion energy \\
+673 & \code{amat(var\_Te,var\_Te)}   & \code{stab\_coeff\_sheath\_te} & electron energy \\
+706 & \code{amat(var\_T,var\_T)}     & \code{stab\_coeff\_sheath\_ti} & single-$T$ build \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{3pt}
+\textcolor{red!60!black}{\textbf{Careful:}} had we scaled \emph{both} residual and Jacobian we
+would simply have raised $\gamma_{\rm sheath}$ --- a different sheath and a different steady state.
+Only the Jacobian is touched.
+
+\vspace{6pt}
+\textbf{5. What it does, in numbers.} Same equation
+$\bigl(\Tnew-\Told\bigr)/\Delta t=Q-kT+\alpha k(\Told-\Tnew)$ with $Q=5$, $k=2$,
+$\Delta t=0.5$, start $T=9$, so $T^{*}=Q/k=2.5$:
+\begin{center}\small
+\begin{tabular}{lccccccc c}
+\toprule
+& start & 1 & 2 & 3 & 4 & 5 & 6 & after 4000 steps\\
+\midrule
+$\alpha=0$   & 9.000 & 5.750 & 4.125 & 3.313 & 2.906 & 2.703 & 2.602 & \textbf{2.5000000000}\\
+$\alpha=100$ & 9.000 & 8.936 & 8.873 & 8.811 & 8.749 & 8.688 & 8.627 & \textbf{2.5000000000}\\
+\bottomrule
+\end{tabular}
+\end{center}
+\vspace{-3pt}
+Identical destination to ten digits; $\alpha$ only takes smaller bites, so no single step can
+overshoot.
+
+\vspace{5pt}
+\textbf{6. Verification.} \code{test\_sheath\_stabiliser} in
+\code{tests/floating\_transport/test\_boundary.f90} assembles at $\alpha=0,10,20$ and asserts:
+residual \textbf{bit-identical}; Jacobian \textbf{exactly linear} in $\alpha$; \textbf{nothing}
+outside the $T_i$/$T_e$/$\rho$ diagonal blocks changes.
+
+\vspace{5pt}
+\textbf{7. Result.} Drift-enabled run: previously terminated at $\le649$ steps
+$\;\rightarrow\;$ \textbf{past 1100 and converging}.
+
+\vspace{3pt}
+{\footnotesize\textcolor{black!55}{Note: SOLPS iterates within a time step, so there the term
+vanishes before the step is accepted and is purely a convergence aid. JOREK takes one solve per
+step, so $\Told$ is the previous \emph{time step} and genuine transients are slowed as well. The
+stationary state is unaffected either way.}}
+
+\end{document}
