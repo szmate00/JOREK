@@ -1,61 +1,102 @@
-\documentclass[12pt,a4paper]{article}
-\usepackage[margin=22mm,top=18mm]{geometry}
-\usepackage{amsmath,bm,microtype}
-\usepackage{xcolor}
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=18mm,top=15mm,bottom=12mm]{geometry}
+\usepackage{amsmath,bm,microtype,xcolor}
+\usepackage[most]{tcolorbox}
 \usepackage{enumitem}
-\setlist[itemize]{itemsep=4pt,topsep=4pt,leftmargin=1.4em}
+\setlist[enumerate]{itemsep=3pt,topsep=3pt,leftmargin=1.6em}
+\setlist[itemize]{itemsep=2pt,topsep=2pt,leftmargin=1.3em}
 \newcommand{\code}[1]{\texttt{\small #1}}
+\definecolor{hl}{RGB}{0,80,150}
 \pagestyle{empty}
 \begin{document}
 
-{\large\bfseries The zero-sum sheath stabiliser}\\[2pt]
-{\small ported from SOLPS-ITER \code{b2stbc\_stab\_coeff\_sheath\_te/ti/ni}}
+{\large\bfseries The zero-sum sheath stabiliser --- what it actually does}\\[1pt]
+{\footnotesize ported from SOLPS-ITER \code{b2stbc\_stab\_coeff\_sheath\_te/ti/ni}}
+\vspace{4pt}\hrule\vspace{7pt}
 
-\vspace{6pt}\hrule\vspace{8pt}
+\textbf{1. The problem.} With $\Phi=3T_e$ at the wall, the boundary $n_e$ and $T_e$ overshoot to
+\emph{negative} in a single time step, in 2--3 cells. The step is too big for that row.
 
-\textbf{The problem.} With the floating potential $\Phi=3T_e$, the wall $E\times B$ drift
-makes the boundary $n_e$ and $T_e$ overshoot to negative values in 2--3 cells in a
-\emph{single} time step. Seven different formulations of the drift-corrected parallel-flow
-condition all failed this way.
+\vspace{5pt}
+\textbf{2. Key fact about implicit solving.} An implicit step has two separate ingredients:
+\begin{center}
+\begin{tabular}{ll}
+\textbf{residual} $b$ & ``how wrong am I?'' \;$\rightarrow$\; decides \textbf{WHERE} the answer is ($b=0$)\\
+\textbf{Jacobian} $A$ & ``how do I move?'' \;$\rightarrow$\; decides \textbf{HOW FAST} I get there\\
+\end{tabular}
+\end{center}
+The converged state is where $b=0$. \textcolor{hl}{\textbf{$A$ does not appear in that condition.}}
+So we may stiffen $A$ as much as we like --- it cannot move the answer.
 
-\vspace{6pt}
-\textbf{The fix.} Add to the sheath boundary source of $n_e$, $T_i$, $T_e$:
+\vspace{5pt}
+\textbf{3. The trick.} Add to the boundary source a term that is \emph{zero when nothing is
+changing}:
 \[
-S^{\rm stab} \;=\; \alpha\;\Pi\;\bigl(X^{\rm old}-X^{\rm new}\bigr),
-\qquad
-\Pi=\text{the sheath flux factor } \rho\,c_s|b_n|\;\text{already in the term}
+S^{\rm stab}=\alpha\,\Pi\,\bigl(T^{\rm old}-T^{\rm new}\bigr),
+\qquad \Pi=\text{the sheath flux factor already in the term}
 \]
-In practice: \emph{use $(\gamma_{\rm sheath}+\alpha)$ in the Jacobian, $\gamma_{\rm sheath}$ in
-the residual.}
+At steady state $T^{\rm new}=T^{\rm old}$, so $S^{\rm stab}\equiv 0$: it contributes
+\emph{nothing} to $b$. But its derivative $\partial S^{\rm stab}/\partial T^{\rm new}=-\alpha\Pi$
+is \emph{not} zero, so it adds to $A$.
 
-\vspace{6pt}
-\textbf{Why it is safe:}
+\begin{tcolorbox}[colback=blue!3,colframe=hl!60,boxrule=0.6pt,left=6pt,right=6pt,top=4pt,bottom=4pt]
+\textbf{4. Worked example (all of it, in three lines).} Take a scalar boundary equation with a
+source $Q$ and a sink rate $k$, solved implicitly:
+\[
+\frac{T^{\rm new}-T^{\rm old}}{\Delta t}=Q-k\,T^{\rm new}
+\qquad\Longrightarrow\qquad
+\Delta T=\frac{\overbrace{Q\Delta t-k\Delta t\,T^{\rm old}}^{\textstyle \text{numerator}}}{1+k\Delta t}
+\]
+Now add $S^{\rm stab}=\alpha k\,(T^{\rm old}-T^{\rm new})$:
+\[
+\Delta T=\frac{\;Q\Delta t-k\Delta t\,T^{\rm old}\;}{1+k\Delta t+\boldsymbol{\alpha k\Delta t}}
+\]
+\textbf{The numerator is identical. Only the denominator grew.}
 \begin{itemize}
-  \item \textcolor{blue!55!black}{\textbf{Zero-sum}} --- vanishes identically when
-        $X^{\rm new}=X^{\rm old}$, so the \textbf{steady state is unchanged}. It damps only the
-        \emph{approach} to equilibrium, not the answer.
-  \item Pure implicit diagonal: makes the boundary row stiffer against a per-step jump by a
-        factor $1+\alpha/(\gamma_{\rm sheath}-1)$.
-  \item $\alpha$ is \textbf{dimensionless} --- a multiple of the sheath transmission
-        coefficient, not a physical scale. SOLPS recommends $\alpha=1\!-\!100$; default $0$
-        reproduces previous results bit-for-bit.
-  \item It damps the \textbf{transport} rows ($n_e,T_i,T_e$), not the momentum condition ---
-        SOLPS ships no such term for \code{BCMOM}. This matches the observed failure, where
-        $n_e$ and $T_e$ lose positivity together in the same cells.
+  \item Steady state: set $\Delta T=0$ $\Rightarrow$ $T^{*}=Q/k$ \; --- \;
+        \textcolor{hl}{\textbf{the same with or without $\alpha$}}.
+  \item Step size: reduced by $\dfrac{1+k\Delta t}{1+k\Delta t+\alpha k\Delta t}$ ---
+        \textcolor{hl}{\textbf{the overshoot is damped}}.
 \end{itemize}
+\end{tcolorbox}
 
-\vspace{6pt}
-\textbf{Result.}
-\begin{itemize}
-  \item Drift-enabled run: previously died at $\le 649$ steps $\;\rightarrow\;$
-        \textbf{now past 1100 and converging.}
-  \item All trends correct: min.\ wall density flat, $|v_{E,n}|$ falling, and the decrements of
-        min.\ wall $T_e$ \emph{shrinking} --- asymptotic approach, not collapse.
-\end{itemize}
+\vspace{4pt}
+\textbf{5. In the code it is one line.} Since the physical Jacobian entry carries
+$(\gamma_{\rm sheath}-1)$, adding $\alpha\Pi$ to it is the same as writing
+\[
+(\gamma_{\rm sheath}-1+\alpha)\ \ \text{in the \textbf{Jacobian}},
+\qquad
+(\gamma_{\rm sheath}-1)\ \ \text{in the \textbf{residual}}.
+\]
+Applied to the $n_e$, $T_i$, $T_e$ boundary rows; nothing off-diagonal, no other equation.
 
-\vspace{6pt}
-\textbf{Caveat.} SOLPS iterates within a time step, so there the term is purely a convergence
-aid. JOREK takes one solve per step, so it also slows genuine transients. The stationary state
-is still unaffected.
+\vspace{2pt}
+\textcolor{red!60!black}{\textbf{Careful:}} scaling \emph{both} residual and Jacobian would simply
+change $\gamma_{\rm sheath}$ --- a different physics problem, a different answer. The whole point
+is that \textbf{only the Jacobian} is touched.
+
+\vspace{5pt}
+\textbf{6. Analogy.} It is a \textbf{damper}, not a spring. In a mass--spring system the
+equilibrium is set by the spring; adding a dashpot changes only how it settles, never where.
+Here $\alpha$ is the dashpot on the boundary temperature.
+
+\vspace{5pt}
+\textbf{7. Why $\alpha$ is not a fudge factor.}
+$\alpha$ is dimensionless --- a multiple of the sheath transmission coefficient already present.
+SOLPS ships it, recommends $\alpha=1$--$100$, and defaults to $0$; $\alpha=0$ reproduces our
+previous results bit-for-bit. It damps the \textbf{transport} rows, not the momentum condition
+(SOLPS ships none for that) --- matching our failure, where $n_e$ and $T_e$ go negative
+\emph{together} in the same cells.
+
+\vspace{5pt}
+\textbf{8. Result.} Drift-enabled run: previously died at $\le649$ steps
+$\;\rightarrow\;$ \textbf{now past 1100 and converging} (min.\ density flat, $|v_{E,n}|$ falling,
+successive drops in min.\ wall $T_e$ shrinking).
+
+\vspace{4pt}
+{\footnotesize\textcolor{black!60}{Caveat: SOLPS iterates inside a time step, so there the term
+vanishes before the step is accepted and is purely a convergence aid. JOREK takes one solve per
+step, so $T^{\rm old}$ is the previous \emph{time step} and genuine transients are slowed too.
+The stationary state is unaffected either way.}}
 
 \end{document}
