@@ -227,6 +227,9 @@ module mod_expression
     call add(exprs_all, 'dTe_dl      ', 'Wall-tangential dTe/dl (eV/m); drives vExB_norm       ', 'boundary    ')
     call add(exprs_all, 'dPhi_dl     ', 'Wall-tangential dPhi/dl (V/m); vE.n = R*du/dl         ', 'boundary    ')
     call add(exprs_all, 'vExB_pred   ', 'vE.n implied by Lambda*dTe/dl; check vs vExB_norm     ', 'boundary    ')
+    call add(exprs_all, 'gradTe_mag  ', '|grad Te| (eV/m); frame-independent, no wall normal   ', 'boundary    ')
+    call add(exprs_all, 'gradTe_n    ', 'Wall-normal dTe/dn (eV/m); pairs with dTe_dl          ', 'boundary    ')
+    call add(exprs_all, 'nml_angle   ', 'Wall outward-normal angle atan2(nZ,nR) in degrees     ', 'boundary    ')
     call add(exprs_all, 'bnd_type    ', 'JOREK boundary-type label of the nearest node          ', 'boundary    ')
     call add(exprs_all, 'bnd_dl      ', 'Poloidal length represented by this boundary point (m) ', 'boundary    ')
     call add(exprs_all, 'drift_demand', 'ExB demand |vE.n|/(cs*|b.n|); >1 means unachievable    ', 'boundary    ')
@@ -2133,6 +2136,21 @@ module mod_expression
 
               case ( 'vExB_pred' )
                 res = R * sheath_Lambda * fact_T * ( Te0_R*nmlZ - Te0_Z*nmlR ) / F0
+
+              ! --- DOES THE SAWTOOTH COME FROM Te OR FROM THE WALL NORMAL?
+              ! --- dTe_dl and vExB_norm both contract a gradient with the wall
+              ! --- tangent t=(n_Z,-n_R), so a piecewise-constant normal makes BOTH
+              ! --- ring identically even when the field is smooth. gradTe_mag is
+              ! --- independent of the frame: if it is smooth while dTe_dl and
+              ! --- gradTe_n ring, the noise is in the boundary normal, not in Te.
+              case ( 'gradTe_mag' )
+                res = sqrt( Te0_R*Te0_R + Te0_Z*Te0_Z ) * fact_T
+
+              case ( 'gradTe_n' )
+                res = ( Te0_R*nmlR + Te0_Z*nmlZ ) * fact_T
+
+              case ( 'nml_angle' )
+                res = atan2( nmlZ, nmlR ) * 180.d0 / PI
 
               case ( 'bnd_type' )
                 res = dble(pol_pos%bnd_type)
