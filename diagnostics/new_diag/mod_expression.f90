@@ -222,6 +222,11 @@ module mod_expression
     call add(exprs_all, 'vsound      ', 'Sound speed cs at the boundary                         ', 'boundary    ')
     call add(exprs_all, 'mach_par    ', 'Parallel Mach nr v_par/cs, +ve to wall; Bohm |M|>=1   ', 'boundary    ')
     call add(exprs_all, 'bn_unit     ', 'Field incidence b.n = B.n/|B| (signed)                 ', 'boundary    ')
+    call add(exprs_all, 'drift_corr  ', 'Parallel-speed demand from drift, -vE.n/|b.n| (m/s)   ', 'boundary    ')
+    call add(exprs_all, 'mach_resid  ', 'vpar_phys-vsound-drift_corr; 0 where Mach row holds   ', 'boundary    ')
+    call add(exprs_all, 'dTe_dl      ', 'Wall-tangential dTe/dl (eV/m); drives vExB_norm       ', 'boundary    ')
+    call add(exprs_all, 'dPhi_dl     ', 'Wall-tangential dPhi/dl (V/m); vE.n = R*du/dl         ', 'boundary    ')
+    call add(exprs_all, 'vExB_pred   ', 'vE.n implied by Lambda*dTe/dl; check vs vExB_norm     ', 'boundary    ')
     call add(exprs_all, 'bnd_type    ', 'JOREK boundary-type label of the nearest node          ', 'boundary    ')
     call add(exprs_all, 'bnd_dl      ', 'Poloidal length represented by this boundary point (m) ', 'boundary    ')
     call add(exprs_all, 'drift_demand', 'ExB demand |vE.n|/(cs*|b.n|); >1 means unachievable    ', 'boundary    ')
@@ -2098,6 +2103,36 @@ module mod_expression
 
               case ( 'bn_unit' )
                 res = Bnorm / max(sqrt(BB2), tiny(1.d0))
+
+              ! --- DECOMPOSITION OF THE MACH ROW.
+              ! --- With v.n = vpar_phys*|b.n| + vE.n and the sound target
+              ! --- v.n = cs*|b.n|, the row is exactly
+              ! ---     vpar_phys = vsound + drift_corr,   drift_corr = -vE.n/|b.n|
+              ! --- so drift_corr is the additive parallel-speed demand the drift
+              ! --- imposes, and mach_resid is zero wherever the row is enforced.
+              case ( 'drift_corr' )
+                res = -(-R*u0_Z*nmlR + R*u0_R*nmlZ) / fact_time                        &
+                    / max( abs(Bnorm) / max(sqrt(BB2), tiny(1.d0)), tiny(1.d0) )
+
+              case ( 'mach_resid' )
+                res = vpar0 * sqrt(BB2) * sign(1.d0, Bnorm) / fact_time                &
+                    - sqrt(gamma*(Ti0+Te0)) / fact_time                                &
+                    + (-R*u0_Z*nmlR + R*u0_R*nmlZ) / fact_time                         &
+                    / max( abs(Bnorm) / max(sqrt(BB2), tiny(1.d0)), tiny(1.d0) )
+
+              ! --- The wall-tangential direction t = (n_Z,-n_R) is the one for which
+              ! --- vE.n = R * du/dl exactly, so these gradients are the drive for
+              ! --- vExB_norm rather than an independent quantity. Under the floating
+              ! --- condition Phi = Lambda*Te the ExB normal flow is FULLY determined
+              ! --- by the wall Te profile; vExB_pred vs vExB_norm tests that.
+              case ( 'dTe_dl' )
+                res = ( Te0_R*nmlZ - Te0_Z*nmlR ) * fact_T
+
+              case ( 'dPhi_dl' )
+                res = ( u0_R*nmlZ - u0_Z*nmlR ) * F0 / fact_time
+
+              case ( 'vExB_pred' )
+                res = R * sheath_Lambda * fact_T * ( Te0_R*nmlZ - Te0_Z*nmlR ) / F0
 
               case ( 'bnd_type' )
                 res = dble(pol_pos%bnd_type)
