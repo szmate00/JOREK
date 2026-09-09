@@ -227,6 +227,8 @@ module mod_expression
     call add(exprs_all, 'dTe_dl      ', 'Wall-tangential dTe/dl (eV/m); drives vExB_norm       ', 'boundary    ')
     call add(exprs_all, 'dPhi_dl     ', 'Wall-tangential dPhi/dl (V/m); vE.n = R*du/dl         ', 'boundary    ')
     call add(exprs_all, 'vExB_pred   ', 'vE.n implied by Lambda*dTe/dl; check vs vExB_norm     ', 'boundary    ')
+    call add(exprs_all, 'vExB_tan    ', 'ExB flow ALONG the wall, -R*du/dn; +ve along +length  ', 'boundary    ')
+    call add(exprs_all, 'vpar_tan    ', 'Parallel flow along the wall; +ve along +length       ', 'boundary    ')
     call add(exprs_all, 'gradTe_mag  ', '|grad Te| (eV/m); frame-independent, no wall normal   ', 'boundary    ')
     call add(exprs_all, 'gradTe_n    ', 'Wall-normal dTe/dn (eV/m); pairs with dTe_dl          ', 'boundary    ')
     call add(exprs_all, 'nml_angle   ', 'Wall outward-normal angle atan2(nZ,nR) in degrees     ', 'boundary    ')
@@ -2143,6 +2145,20 @@ module mod_expression
               ! --- ring identically even when the field is smooth. gradTe_mag is
               ! --- independent of the frame: if it is smooth while dTe_dl and
               ! --- gradTe_n ring, the noise is in the boundary normal, not in Te.
+              ! --- POLOIDAL FLOW ALONG THE WALL, the channel that moves plasma from
+              ! --- one target to the other. vExB_norm (through the wall) and this are
+              ! --- the two independent drift components: with t=(n_Z,-n_R),
+              ! ---     vE.n = +R du/dl   (tangential derivative)
+              ! ---     vE.t = -R du/dn   (normal derivative)
+              ! --- so they are driven by different derivatives of Phi and neither
+              ! --- bounds the other. Positive vExB_tan is along +t, i.e. the same
+              ! --- direction in which `length` increases.
+              case ( 'vExB_tan' )
+                res = -R * ( u0_R*nmlR + u0_Z*nmlZ ) / fact_time
+
+              case ( 'vpar_tan' )
+                res = vpar0 * ( BR*nmlZ - BZ*nmlR ) / fact_time
+
               case ( 'gradTe_mag' )
                 res = sqrt( Te0_R*Te0_R + Te0_Z*Te0_Z ) * fact_T
 
