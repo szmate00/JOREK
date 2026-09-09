@@ -1,102 +1,127 @@
 \documentclass[11pt,a4paper]{article}
-\usepackage[margin=18mm,top=15mm,bottom=12mm]{geometry}
-\usepackage{amsmath,bm,microtype,xcolor}
+\usepackage[margin=17mm,top=13mm,bottom=11mm]{geometry}
+\usepackage{amsmath,bm,microtype,xcolor,booktabs}
 \usepackage[most]{tcolorbox}
 \usepackage{enumitem}
-\setlist[enumerate]{itemsep=3pt,topsep=3pt,leftmargin=1.6em}
 \setlist[itemize]{itemsep=2pt,topsep=2pt,leftmargin=1.3em}
 \newcommand{\code}[1]{\texttt{\small #1}}
 \definecolor{hl}{RGB}{0,80,150}
+\newcommand{\Told}{T^{\rm old}}
+\newcommand{\Tnew}{T^{\rm new}}
 \pagestyle{empty}
 \begin{document}
 
-{\large\bfseries The zero-sum sheath stabiliser --- what it actually does}\\[1pt]
-{\footnotesize ported from SOLPS-ITER \code{b2stbc\_stab\_coeff\_sheath\_te/ti/ni}}
-\vspace{4pt}\hrule\vspace{7pt}
+{\large\bfseries The zero-sum sheath stabiliser, spelled out}\\[1pt]
+{\footnotesize from SOLPS-ITER \code{b2stbc\_stab\_coeff\_sheath\_te/ti/ni}}
+\vspace{3pt}\hrule\vspace{6pt}
 
-\textbf{1. The problem.} With $\Phi=3T_e$ at the wall, the boundary $n_e$ and $T_e$ overshoot to
-\emph{negative} in a single time step, in 2--3 cells. The step is too big for that row.
-
-\vspace{5pt}
-\textbf{2. Key fact about implicit solving.} An implicit step has two separate ingredients:
-\begin{center}
-\begin{tabular}{ll}
-\textbf{residual} $b$ & ``how wrong am I?'' \;$\rightarrow$\; decides \textbf{WHERE} the answer is ($b=0$)\\
-\textbf{Jacobian} $A$ & ``how do I move?'' \;$\rightarrow$\; decides \textbf{HOW FAST} I get there\\
-\end{tabular}
-\end{center}
-The converged state is where $b=0$. \textcolor{hl}{\textbf{$A$ does not appear in that condition.}}
-So we may stiffen $A$ as much as we like --- it cannot move the answer.
-
-\vspace{5pt}
-\textbf{3. The trick.} Add to the boundary source a term that is \emph{zero when nothing is
-changing}:
+\textbf{Step 1 --- the equation.} The wall temperature is heated at rate $Q$ and drained by the
+sheath at rate $k\,T$:
 \[
-S^{\rm stab}=\alpha\,\Pi\,\bigl(T^{\rm old}-T^{\rm new}\bigr),
-\qquad \Pi=\text{the sheath flux factor already in the term}
+\frac{\mathrm{d}T}{\mathrm{d}t}=Q-kT
+\qquad\Longrightarrow\qquad
+\text{equilibrium when nothing changes:}\quad 0=Q-kT^{*}\quad\Rightarrow\quad \boxed{T^{*}=Q/k}
 \]
-At steady state $T^{\rm new}=T^{\rm old}$, so $S^{\rm stab}\equiv 0$: it contributes
-\emph{nothing} to $b$. But its derivative $\partial S^{\rm stab}/\partial T^{\rm new}=-\alpha\Pi$
-is \emph{not} zero, so it adds to $A$.
+
+\textbf{Step 2 --- one implicit time step.} $\Told$ = the value we have; $\Tnew$ = the value we
+solve for. ``Implicit'' means the sink uses $\Tnew$:
+\[
+\frac{\Tnew-\Told}{\Delta t}=Q-k\,\Tnew
+\qquad\Longrightarrow\qquad
+\Tnew=\frac{\Told+Q\Delta t}{1+k\Delta t}
+\]
+
+\textbf{Step 3 --- add the stabiliser.} We add one extra term to the source:
+\[
+S^{\rm stab}=\alpha k\bigl(\Told-\Tnew\bigr)
+\]
+\textcolor{hl}{\textbf{Read it carefully: it is the difference between the old and the new value.}}
+While $T$ is still changing it is non-zero and resists the change. Once $T$ settles,
+$\Tnew=\Told$ and the term is \textbf{exactly zero} --- it switches itself off.
+
+\vspace{3pt}
+Putting it in and collecting $\Tnew$ on the left:
+\[
+\frac{\Tnew-\Told}{\Delta t}=Q-k\Tnew+\alpha k(\Told-\Tnew)
+\qquad\Longrightarrow\qquad
+\Tnew=\frac{\Told\,(1+\alpha k\Delta t)+Q\Delta t}{1+k\Delta t+\alpha k\Delta t}
+\]
 
 \begin{tcolorbox}[colback=blue!3,colframe=hl!60,boxrule=0.6pt,left=6pt,right=6pt,top=4pt,bottom=4pt]
-\textbf{4. Worked example (all of it, in three lines).} Take a scalar boundary equation with a
-source $Q$ and a sink rate $k$, solved implicitly:
+\textbf{Step 4 --- does it move the answer? Set $\Tnew=\Told=T^{*}$ and see.}
 \[
-\frac{T^{\rm new}-T^{\rm old}}{\Delta t}=Q-k\,T^{\rm new}
+T^{*}(1+k\Delta t+\alpha k\Delta t)=T^{*}(1+\alpha k\Delta t)+Q\Delta t
+\]
+\[
+T^{*}+k\Delta t\,T^{*}+\underbrace{\alpha k\Delta t\,T^{*}}_{\text{cancels}}
+= T^{*}+\underbrace{\alpha k\Delta t\,T^{*}}_{\text{cancels}}+Q\Delta t
 \qquad\Longrightarrow\qquad
-\Delta T=\frac{\overbrace{Q\Delta t-k\Delta t\,T^{\rm old}}^{\textstyle \text{numerator}}}{1+k\Delta t}
+k\Delta t\,T^{*}=Q\Delta t
 \]
-Now add $S^{\rm stab}=\alpha k\,(T^{\rm old}-T^{\rm new})$:
 \[
-\Delta T=\frac{\;Q\Delta t-k\Delta t\,T^{\rm old}\;}{1+k\Delta t+\boldsymbol{\alpha k\Delta t}}
+\boxed{\,T^{*}=Q/k\,}\qquad\textcolor{hl}{\textbf{every $\alpha$ term cancelled --- the answer is
+unchanged.}}
 \]
-\textbf{The numerator is identical. Only the denominator grew.}
-\begin{itemize}
-  \item Steady state: set $\Delta T=0$ $\Rightarrow$ $T^{*}=Q/k$ \; --- \;
-        \textcolor{hl}{\textbf{the same with or without $\alpha$}}.
-  \item Step size: reduced by $\dfrac{1+k\Delta t}{1+k\Delta t+\alpha k\Delta t}$ ---
-        \textcolor{hl}{\textbf{the overshoot is damped}}.
-\end{itemize}
 \end{tcolorbox}
 
-\vspace{4pt}
-\textbf{5. In the code it is one line.} Since the physical Jacobian entry carries
-$(\gamma_{\rm sheath}-1)$, adding $\alpha\Pi$ to it is the same as writing
-\[
-(\gamma_{\rm sheath}-1+\alpha)\ \ \text{in the \textbf{Jacobian}},
-\qquad
-(\gamma_{\rm sheath}-1)\ \ \text{in the \textbf{residual}}.
-\]
-Applied to the $n_e$, $T_i$, $T_e$ boundary rows; nothing off-diagonal, no other equation.
+\textbf{Step 5 --- so what \emph{does} it change? The step size.} Same equation, real numbers
+($Q=5$, $k=2$, $\Delta t=0.5$, start at $T=9$, so $T^{*}=2.5$):
+
+\begin{center}\small
+\begin{tabular}{lccccccc c}
+\toprule
+& start & \multicolumn{6}{c}{after step $\ldots$} & after 4000 \\
+\cmidrule(lr){3-8}
+& & 1 & 2 & 3 & 4 & 5 & 6 & \\
+\midrule
+$\alpha=0$   & 9.000 & 5.750 & 4.125 & 3.313 & 2.906 & 2.703 & 2.602 & \textbf{2.5000000000}\\
+$\alpha=100$ & 9.000 & 8.936 & 8.873 & 8.811 & 8.749 & 8.688 & 8.627 & \textbf{2.5000000000}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{-2pt}
+\begin{itemize}
+  \item Both columns end at \textbf{exactly the same} $T^{*}=2.5$.
+  \item $\alpha=100$ simply takes \emph{smaller bites}: no single step can overshoot.
+  \item That is the entire mechanism. \textbf{Same destination, smaller steps.}
+\end{itemize}
+
+\textbf{Step 6 --- why this is not just ``adding damping to make it stable''.} In an implicit
+solve there are two separate objects:
+\begin{center}\small
+\begin{tabular}{ll}
+\textbf{residual} & ``how far am I from balance?'' --- the answer is where this is \textbf{zero}\\
+\textbf{Jacobian} & ``how big a step do I take?'' --- \textbf{does not appear} in that condition\\
+\end{tabular}
+\end{center}
+$S^{\rm stab}$ is zero at balance, so it adds \textbf{nothing} to the residual; its slope
+$-\alpha k$ is not zero, so it adds to the Jacobian. It changes only the second column.
+In the code this is literally: \;$(\gamma_{\rm sheath}-1+\alpha)$ in the \textbf{Jacobian},
+$(\gamma_{\rm sheath}-1)$ in the \textbf{residual}.
 
 \vspace{2pt}
-\textcolor{red!60!black}{\textbf{Careful:}} scaling \emph{both} residual and Jacobian would simply
-change $\gamma_{\rm sheath}$ --- a different physics problem, a different answer. The whole point
-is that \textbf{only the Jacobian} is touched.
+\textcolor{red!60!black}{\textbf{Careful:}} if we had changed \emph{both}, we would simply have
+increased $\gamma_{\rm sheath}$ --- a different sheath, a different answer. Only the Jacobian is
+touched.
 
 \vspace{5pt}
-\textbf{6. Analogy.} It is a \textbf{damper}, not a spring. In a mass--spring system the
-equilibrium is set by the spring; adding a dashpot changes only how it settles, never where.
-Here $\alpha$ is the dashpot on the boundary temperature.
-
-\vspace{5pt}
-\textbf{7. Why $\alpha$ is not a fudge factor.}
-$\alpha$ is dimensionless --- a multiple of the sheath transmission coefficient already present.
-SOLPS ships it, recommends $\alpha=1$--$100$, and defaults to $0$; $\alpha=0$ reproduces our
-previous results bit-for-bit. It damps the \textbf{transport} rows, not the momentum condition
-(SOLPS ships none for that) --- matching our failure, where $n_e$ and $T_e$ go negative
-\emph{together} in the same cells.
-
-\vspace{5pt}
-\textbf{8. Result.} Drift-enabled run: previously died at $\le649$ steps
-$\;\rightarrow\;$ \textbf{now past 1100 and converging} (min.\ density flat, $|v_{E,n}|$ falling,
-successive drops in min.\ wall $T_e$ shrinking).
+\textbf{Step 7 --- and $\alpha$ is not a free fudge factor.} It is dimensionless, a multiple of the
+sheath transmission coefficient already in the term. SOLPS ships it, recommends $1$--$100$,
+defaults to $0$; $\alpha=0$ reproduces our earlier results bit-for-bit. It damps the
+\textbf{transport} rows ($n_e,T_i,T_e$) --- SOLPS ships none for the momentum condition --- which
+matches our failure, where $n_e$ and $T_e$ went negative \emph{together} in the same 2--3 cells.
 
 \vspace{4pt}
-{\footnotesize\textcolor{black!60}{Caveat: SOLPS iterates inside a time step, so there the term
-vanishes before the step is accepted and is purely a convergence aid. JOREK takes one solve per
-step, so $T^{\rm old}$ is the previous \emph{time step} and genuine transients are slowed too.
-The stationary state is unaffected either way.}}
+\textbf{Result:} drift-enabled run previously died at $\le649$ steps
+$\;\rightarrow\;$ \textbf{now past 1100 and converging.}
+
+\vspace{3pt}
+{\footnotesize\textcolor{black!55}{Two honest notes. (i) The scalar example above demonstrates the
+\emph{property} --- same fixed point, smaller steps --- not the instability itself, which comes
+from the coupling between equations. (ii) SOLPS iterates inside a time step, so there the term
+vanishes before the step is accepted and is purely a convergence aid; JOREK takes one solve per
+step, so $\Told$ is the previous \emph{time step} and real transients are slowed too. The
+stationary state is unaffected either way.}}
 
 \end{document}
