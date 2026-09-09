@@ -218,9 +218,9 @@ module mod_expression
     call add(exprs_all, 'vparB_norm  ', 'Normal velocity from Vpar*B; positive is outward       ', 'boundary    ')
     call add(exprs_all, 'vExB_norm   ', 'Normal ExB velocity; positive is outward               ', 'boundary    ')
     call add(exprs_all, 'vflow_norm  ', 'Total normal fluid velocity; positive is outward       ', 'boundary    ')
-    call add(exprs_all, 'vpar_phys   ', 'Physical parallel speed Vpar*|B|; positive is outward  ', 'boundary    ')
+    call add(exprs_all, 'vpar_phys   ', 'Parallel speed Vpar*|B|, signed +ve towards the wall  ', 'boundary    ')
     call add(exprs_all, 'vsound      ', 'Sound speed cs at the boundary                         ', 'boundary    ')
-    call add(exprs_all, 'mach_par    ', 'Parallel Mach number Vpar*|B|/cs; positive is outward   ', 'boundary    ')
+    call add(exprs_all, 'mach_par    ', 'Parallel Mach nr v_par/cs, +ve to wall; Bohm |M|>=1   ', 'boundary    ')
     call add(exprs_all, 'bn_unit     ', 'Field incidence b.n = B.n/|B| (signed)                 ', 'boundary    ')
     call add(exprs_all, 'bnd_type    ', 'JOREK boundary-type label of the nearest node          ', 'boundary    ')
     call add(exprs_all, 'bnd_dl      ', 'Poloidal length represented by this boundary point (m) ', 'boundary    ')
@@ -2080,14 +2080,21 @@ module mod_expression
               ! --- Vpar is the COEFFICIENT of B, so the physical parallel speed is
               ! --- Vpar*|B|. This is the quantity the Mach row constrains and the
               ! --- one the volume terms differentiate.
+              ! --- The sign(1,Bnorm) factor re-signs the speed so that positive
+              ! --- always means TOWARDS the wall, independent of whether +B points
+              ! --- in or out at this point. Without it the sign flips between the
+              ! --- inner and outer target and profiles cannot be compared.
               case ( 'vpar_phys' )
-                res = vpar0 * sqrt(BB2) / fact_time
+                res = vpar0 * sqrt(BB2) * sign(1.d0, Bnorm) / fact_time
 
               case ( 'vsound' )
                 res = sqrt(gamma*(Ti0+Te0)) / fact_time
 
+              ! --- Same outward-positive convention as vpar_phys, so that the
+              ! --- Bohm condition to test against is simply mach_par >= 1.
               case ( 'mach_par' )
-                res = vpar0 * BB2 / max(sqrt(BB2)*sqrt(gamma*(Ti0+Te0)), tiny(1.d0))
+                res = vpar0 * sqrt(BB2) * sign(1.d0, Bnorm)                            &
+                    / max(sqrt(gamma*(Ti0+Te0)), tiny(1.d0))
 
               case ( 'bn_unit' )
                 res = Bnorm / max(sqrt(BB2), tiny(1.d0))
