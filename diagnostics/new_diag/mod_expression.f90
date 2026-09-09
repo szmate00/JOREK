@@ -112,7 +112,7 @@ module mod_expression
     call add(exprs_all, 'phi         ', 'Cylindrical Coordinate phi                            ')
     call add(exprs_all, 'theta       ', 'Poloidal Angle With Respect to Magnetic Axis          ')
     call add(exprs_all, 'theta_star  ', 'Poloidal Straight Field Line Angle (for flux surfaces)')
-    call add(exprs_all, 'length      ', 'Length Along Poloidal Line (for poloidal lines)       ')
+    call add(exprs_all, 'length      ', 'Arclength along a poloidal line or along the boundary ')
     call add(exprs_all, 'r_minor     ', 'Minor Radius From A = r_minor^2 pi (for flux surfaces)')
     call add(exprs_all, 'x           ', 'Cartesian Coordinate x                                ')
     call add(exprs_all, 'y           ', 'Cartesian Coordinate y                                ')
@@ -222,6 +222,8 @@ module mod_expression
     call add(exprs_all, 'vsound      ', 'Sound speed cs at the boundary                         ', 'boundary    ')
     call add(exprs_all, 'mach_par    ', 'Parallel Mach number Vpar*|B|/cs; positive is outward   ', 'boundary    ')
     call add(exprs_all, 'bn_unit     ', 'Field incidence b.n = B.n/|B| (signed)                 ', 'boundary    ')
+    call add(exprs_all, 'bnd_type    ', 'JOREK boundary-type label of the nearest node          ', 'boundary    ')
+    call add(exprs_all, 'bnd_dl      ', 'Poloidal length represented by this boundary point (m) ', 'boundary    ')
     call add(exprs_all, 'drift_demand', 'ExB demand |vE.n|/(cs*|b.n|); >1 means unachievable    ', 'boundary    ')
     call add(exprs_all, 'heatF_sheath', 'Sheath theory heatflux (gamma_sh nT vpar dot n)       ', 'boundary    ')
     call add(exprs_all, 'heatF_par_cd', 'Conductive parallel heat flux (normal to the boundary)', 'boundary    ')
@@ -2089,6 +2091,12 @@ module mod_expression
 
               case ( 'bn_unit' )
                 res = Bnorm / max(sqrt(BB2), tiny(1.d0))
+
+              case ( 'bnd_type' )
+                res = dble(pol_pos%bnd_type)
+
+              case ( 'bnd_dl' )
+                res = pol_pos%dl
 
               ! --- The single number that decides whether the drift-compatible Bohm
               ! --- condition is achievable at this point: the ExB normal flow measured
