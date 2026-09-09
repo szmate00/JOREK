@@ -85,7 +85,7 @@ module mod_fields
 contains
 !> Calculates the electric and magnetic fields at a specific position
 !> in the jorek element `i_elm` at `st`.
-subroutine calc_EBpsiU(fields, time, i_elm, st, phi, E, B, psi, U)
+subroutine calc_EBpsiU(fields, time, i_elm, st, phi, E, B, psi, U, v_ExB)
   use phys_module, only: F0, mode, central_mass, central_density
   use constants, only: mu_zero, atomic_mass_unit
   use mod_coordinate_transforms, only: transform_derivatives_st_to_RZ
@@ -100,6 +100,13 @@ subroutine calc_EBpsiU(fields, time, i_elm, st, phi, E, B, psi, U)
   real*8, intent(out) :: B(3) !< Magnetic field [T]
   real*8, intent(out) :: psi !< psi in JOREK units
   real*8, intent(out) :: u !< velocity stream function in m/s
+  !> ExB drift velocity in (R,Z,phi) components [m/s]. Optional and trailing, so
+  !> every existing positional caller is unaffected. For reduced MHD this is the
+  !> drift the FLUID advects with, v = R grad(u) x e_phi, NOT E x B/|B|^2: the
+  !> latter also carries the toroidal and inductive parts of E, which the
+  !> reduced-MHD flow field does not contain. Anything that has to balance a
+  !> fluid wall flux must use this one.
+  real*8, intent(out), optional :: v_ExB(3)
 
   ! Internal parameters
 #ifdef fullmhd
@@ -152,6 +159,10 @@ subroutine calc_EBpsiU(fields, time, i_elm, st, phi, E, B, psi, U)
 
   B=[(A3_Z-AZ_p)*R_inv, (AR_p-A3_R)*R_inv, AZ_R-AR_Z + Fprof*R_inv]
   E=[-AR_t, -AZ_t, -R_inv*A3_t]
+
+  if ( present(v_ExB) ) &
+    v_ExB = (/ E(2)*B(3)-E(3)*B(2), E(3)*B(1)-E(1)*B(3), E(1)*B(2)-E(2)*B(1) /) &
+          / max( dot_product(B,B), tiny(1.d0) )
 #else
 #if STELLARATOR_MODEL
   call fields%interp_PRZP_1(time, i_elm, i_var, 2, st(1), st(2), phi, P, P_s, P_t, P_phi, P_time, R, R_s, R_t, R_phi, Z, Z_s, Z_t, Z_phi)
@@ -194,6 +205,17 @@ subroutine calc_EBpsiU(fields, time, i_elm, st, phi, E, B, psi, U)
   ! See http://jorek.eu/wiki/doku.php?id=u_phi
   E     = [-F0*U_R, -F0*U_Z, -F0*U_phi*R_inv]/t_norm
   E(3)  = E(3) - R_inv*P_time(1) ! because this is not normalized with t_norm
+#endif
+
+#if STELLARATOR_MODEL
+  if ( present(v_ExB) ) &
+    v_ExB = (/ E(2)*B(3)-E(3)*B(2), E(3)*B(1)-E(1)*B(3), E(1)*B(2)-E(2)*B(1) /) &
+          / max( dot_product(B,B), tiny(1.d0) )
+#else
+  ! --- v = R grad(u) x e_phi, matching V_ExB_R/V_ExB_Z in the fluid diagnostics
+  ! --- and the volume advection. Purely poloidal, and free of the inductive
+  ! --- dpsi/dt term that E carries.
+  if ( present(v_ExB) ) v_ExB = (/ -R*U_Z, R*U_R, 0.d0 /) / t_norm
 #endif
 
 #endif

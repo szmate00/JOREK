@@ -18,4 +18,8 @@ cd "$build_dir"
   "$repo_dir/models/model600/mod_boundary_matrix_open.f90" \
   "$repo_dir/tests/floating_transport/test_boundary.f90" -o test_boundary
 ./test_boundary
+"$compiler" -ffree-line-length-none -fcheck=all -ffpe-trap=invalid,zero,overflow \
+  -fimplicit-none -Wall -Wextra \
+  "$repo_dir/tests/floating_transport/test_wall_flux_consistency.f90" -o test_wall_flux
+./test_wall_flux
 printf 'Test build retained in %s\n' "$build_dir"

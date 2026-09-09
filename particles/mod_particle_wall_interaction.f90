@@ -1691,6 +1691,7 @@ subroutine project_sputter_vars_on_edge(this, sim)
   integer :: q, i, i_patch, Z
   real*8 :: vector_normal(3), cos_alpha, mass_ion, c_s, Gamma_d
   real*8 :: T_i, T_e, n_e, yield, vpar
+  real*8 :: v_ExB(3), vE_n, v_par_n, v_n_tot
   real*8, dimension(3) :: E, B, B_hat
   real*8 :: m, psi, U
   real*8 :: c_angle !< min_sheath_angle but then in radians, same as in mod_boundary_matrix_open
@@ -1736,7 +1737,7 @@ subroutine project_sputter_vars_on_edge(this, sim)
     !$omp i_patch, central_mass, psi_axis, psi_limit, c_angle) &
 #endif
     !$omp private(i, n_e, T_e, vpar, E, B, psi, U, vector_normal, B_hat, cos_alpha, q, T_i, mass_ion, c_s, m, Gamma_d, &
-    !$omp         yield, Z) schedule(static)
+    !$omp         yield, Z, v_ExB, vE_n, v_par_n, v_n_tot) schedule(static)
     do i = 1, size(this%fluid_yield_integral%patch(i_patch)%xyz, 2) !< over all nodes
       call sim%fields%calc_NeTevpar(sim%time, this%fluid_yield_integral%patch(i_patch)%i_elm_jorek_edge(i), this%fluid_yield_integral%patch(i_patch)%st(:,i), &
         real(this%fluid_yield_integral%patch(i_patch)%xyz(3,i), 8), n_e, T_e, vpar)
@@ -1744,7 +1745,7 @@ subroutine project_sputter_vars_on_edge(this, sim)
       call sim%fields%calc_EBpsiU(sim%time, this%fluid_yield_integral%patch(i_patch)%i_elm_jorek_edge(i), &
            this%fluid_yield_integral%patch(i_patch)%st(:,i), &
            real(this%fluid_yield_integral%patch(i_patch)%xyz(3,i), 8), &
-           E, B, psi, U)
+           E, B, psi, U, v_ExB)
       
       !> normal vector calculation
       vector_normal = wall_normal_vector(sim%fields%node_list, sim%fields%element_list, &
@@ -1767,7 +1768,18 @@ subroutine project_sputter_vars_on_edge(this, sim)
       Z = this%fluid_Z
       m = atomic_weights(Z) * ATOMIC_MASS_UNIT
       
-      Gamma_d = n_e * abs(vpar) * norm2(B) * cos_alpha + n_e * c_s * c_angle
+      ! --- The incident flux is the TOTAL outgoing normal flow, not the parallel
+      ! --- part alone. The fluid loses n_e*(v_par.n + v_ExB.n) through this face,
+      ! --- so recycling only n_e*|v_par.n| destroys particles wherever the drift
+      ! --- pushes into the wall and manufactures them wherever it pulls away. With
+      ! --- a floating wall the drift term is not a correction: at the inner strike
+      ! --- point it is several times the parallel term.
+      ! --- Signed, not abs(): a face the plasma flows away from receives no flux,
+      ! --- only the grazing-incidence floor.
+      v_par_n = vpar * dot_product(B, vector_normal)   ! [m/s], outward positive
+      vE_n    = dot_product(v_ExB, vector_normal)      ! [m/s], outward positive
+      v_n_tot = v_par_n + vE_n
+      Gamma_d = n_e * max(v_n_tot, 0.d0) + n_e * c_s * c_angle
 
       ! Assume an impact angle of 0!
       ! need the abs here because we cheat using negative numbers to indicate D, T
