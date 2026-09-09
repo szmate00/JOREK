@@ -805,26 +805,31 @@ do i=1, n_local_elms !=== do elements
           ! --- cancelled expression directly removes the singularity, and removes bn_b
           ! --- from this path - which also removes a sign defect, since the per-vertex
           ! --- flips applied to bn_1/bn_2 below are NOT applied to bn_b.
-          ! --- SUPERVISOR VARIANT (mach1_drop_grazing). Rather than taming the 1/b_n
-          ! --- inversion with an incidence floor and the SOLPS clip, do not impose the
-          ! --- condition where it does not apply: use the EXACT correction above the
-          ! --- incidence threshold and skip the row entirely below it. Skipping leaves
-          ! --- the Vpar trace to the bulk momentum equation, whose parallel viscosity
-          ! --- (visco_par, integrated by parts in mod_elt_matrix_fft) supplies the
-          ! --- natural condition grad(Vpar).n = 0. b_n is frozen in time - psi is
-          ! --- Dirichlet on the wall - so this threshold is a STATIC spatial map and no
-          ! --- node can flicker across it between solves.
+          ! --- SUPERVISOR VARIANT (mach1_drop_grazing), a STRICTLY SINGLE-VARIABLE switch.
+          ! --- The incidence floor, the SOLPS clip and the vpar_smoothing weight are all
+          ! --- computed and applied EXACTLY as with the flag off. The one and only
+          ! --- difference is that where |b.n| < sin(min_sheath_angle) the row is not
+          ! --- assembled at all (m1_skip, at the assembly below), so an A/B against this
+          ! --- flag isolates the grazing drop and nothing else.
+          ! ---
+          ! --- The floor is inactive above the threshold by construction (m1_bfl = 1
+          ! --- there), so with the flag on it only ever applied at nodes that are now
+          ! --- skipped: dropping the row makes the floor moot rather than competing with
+          ! --- it. The clip can still bind above the threshold, and deliberately still
+          ! --- does, so that it is not a second changed variable.
+          ! ---
+          ! --- Skipping is meaningful, not a fallback to Dirichlet: apply_cs is true at
+          ! --- these nodes so the Dirichlet Vpar row is skipped too, leaving the trace to
+          ! --- the bulk momentum equation, whose parallel viscosity (visco_par,
+          ! --- integrated by parts at mod_elt_matrix_fft.f90:1789) supplies the natural
+          ! --- condition grad(Vpar).n = 0. b_n is frozen in time - psi is Dirichlet on
+          ! --- the wall - so the threshold is a STATIC spatial map and no node can
+          ! --- flicker across it between solves.
           m1_skip = .false.
-          if ( mach1_drop_grazing ) then
-            m1_bfl  = 1.d0
-            m1_Dfl  = BigR**2 * U0_b          / ps0_b
-            m1_ucol = BigR**2 * element_size_0 / ps0_b
-            if ( m1_smin .gt. 0.d0 .and. abs(bn) .lt. m1_smin ) then
-              m1_skip = .true.
-              m1_Dfl  = 0.d0
-              m1_ucol = 0.d0
-            endif
-          elseif ( m1_smin .gt. 0.d0 .and. abs(bn) .lt. m1_smin ) then
+          if ( mach1_drop_grazing .and. m1_smin .gt. 0.d0 .and. abs(bn) .lt. m1_smin ) &
+            m1_skip = .true.
+
+          if ( m1_smin .gt. 0.d0 .and. abs(bn) .lt. m1_smin ) then
             m1_bfl  = abs(bn) / m1_smin
             m1_Dfl  = sign(1.d0,ps0_b) * BigR * U0_b          / (Btot*dl*m1_smin)
             m1_ucol = sign(1.d0,ps0_b) * BigR * element_size_0 / (Btot*dl*m1_smin)
@@ -835,16 +840,7 @@ do i=1, n_local_elms !=== do elements
           endif
           m1_D   = m1_Dfl
           m1_S   = 2.d0 * cs0 / Btot
-          if ( mach1_drop_grazing ) then
-            ! --- No clip: the exact one-sided correction, since above the threshold the
-            ! --- inversion is bounded by construction (|b_n| >= sin(min_sheath_angle)).
-            m1_sup  = max( direction*m1_Dfl, 0.d0 )
-            m1_dsdx = 0.d0
-            if ( direction*m1_Dfl .gt. 0.d0 ) m1_dsdx = 1.d0
-            m1_dsds = 0.d0
-          else
-            call mach1_uout_supplement(direction*m1_Dfl, m1_S, m1_sup, m1_dsdx, m1_dsds)
-          endif
+          call mach1_uout_supplement(direction*m1_Dfl, m1_S, m1_sup, m1_dsdx, m1_dsds)
 
           Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0     + m1_dr * direction * m1_sup
           Mach1BC_v   = - 1.0
