@@ -19,6 +19,8 @@ module mod_floating_transport_diag
   real*8, save, public :: fw_bn_min(FW_NT)  = huge(1.d0)!< most grazing constrained point
   real*8, save, public :: fw_act_n(FW_NT)   = 0.d0      !< points where the one-sided branch is ACTIVE
   real*8, save, public :: fw_tot_n(FW_NT)   = 0.d0      !< constrained points visited
+  real*8, save, public :: fw_res_R(FW_NT)   = 0.d0      !< R of the worst residual
+  real*8, save, public :: fw_res_Z(FW_NT)   = 0.d0      !< Z of the worst residual
   public :: weak_mach_diag_reset, weak_mach_diag_sample
   public :: transport_diag_report, transport_diag_updated
 contains
@@ -171,6 +173,8 @@ contains
     fw_bn_min  = huge(1.d0)
     fw_act_n   = 0.d0
     fw_tot_n   = 0.d0
+    fw_res_R   = 0.d0
+    fw_res_Z   = 0.d0
   end subroutine
 
   !> One sample per boundary quadrature point. `res` is the constraint residual in
@@ -178,11 +182,17 @@ contains
   !! flow demanded, `bnu` = |b.n|, and `act` is 1 when the one-sided branch is active
   !! (i.e. the drift is being compensated) and 0 when it has saturated to zero
   !! because the drift alone already exceeds sonic outflow.
-  subroutine weak_mach_diag_sample(bnd_type, res, cs_bn, tgt, bnu, act)
+  subroutine weak_mach_diag_sample(bnd_type, res, cs_bn, tgt, bnu, act, R, Z)
     integer, intent(in) :: bnd_type
-    real*8,  intent(in) :: res, cs_bn, tgt, bnu, act
+    real*8,  intent(in) :: res, cs_bn, tgt, bnu, act, R, Z
     if ( bnd_type < 1 .or. bnd_type > FW_NT ) return
     !$omp critical (weak_mach_diag)
+    ! --- carry the LOCATION of the worst residual. A per-type extremum with no
+    ! --- position attached has misread this campaign repeatedly.
+    if ( abs(res) > fw_res_max(bnd_type) ) then
+      fw_res_R(bnd_type) = R
+      fw_res_Z(bnd_type) = Z
+    endif
     fw_res_max(bnd_type) = max( fw_res_max(bnd_type), abs(res) )
     fw_cs_max(bnd_type)  = max( fw_cs_max(bnd_type),  cs_bn )
     fw_tgt_max(bnd_type) = max( fw_tgt_max(bnd_type), tgt )

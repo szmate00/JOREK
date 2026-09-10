@@ -43,7 +43,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
 use mod_floating_u, only: floating_u_norm
 use mod_floating_transport_diag, only: weak_mach_diag_reset, FW_NT,                    &
                                        fw_res_max, fw_cs_max, fw_tgt_max, fw_bn_min,   &
-                                       fw_act_n, fw_tot_n
+                                       fw_act_n, fw_tot_n, fw_res_R, fw_res_Z
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -112,6 +112,7 @@ real*8  :: fd_vin_max(FD_NT), fd_vout_max(FD_NT)
 !! the sound-speed term and the ExB drift compensation whose tangential derivative is
 !! missing from the slope row on bicubic elements. Their ratio IS the inconsistency.
 real*8  :: fd_m1cs_max(FD_NT), fd_m1dr_max(FD_NT)
+real*8  :: fw_loc(9)   !! local |res| maxima, kept so the owning rank's (R,Z) survives
 real*8  :: m1_dr
 !> One-sided drift-compatible Bohm supplement (SOLPS BCMOM=13, non-marginal branch,
 !! without extrapolation). NO incidence floor, NO clip, NO smoothing: the single
@@ -1232,24 +1233,40 @@ endif
 ! ---              where the drift alone already exceeds sonic outflow and nothing is
 ! ---              imposed, which is the Bohm inequality doing its job, not a failure.
 if ( floating_u_diag .and. mach1_weak ) then
+  ! --- Keep the local maxima first: the (R,Z) of the worst point has to come from
+  ! --- the rank that actually owns that maximum.
+  fw_loc = fw_res_max
   call MPI_AllReduce(MPI_IN_PLACE, fw_res_max, FW_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fw_cs_max,  FW_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fw_tgt_max, FW_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fw_bn_min,  FW_NT, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fw_act_n,   FW_NT, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fw_tot_n,   FW_NT, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, err)
+  ! --- Blank the coordinates on every rank that does NOT own the global maximum,
+  ! --- using -huge rather than 0 so a genuinely negative Z is not beaten by a
+  ! --- non-owner's zero, then MAX-reduce: only the owner's values survive.
+  do fd_t = 1, FW_NT
+    if ( fw_loc(fd_t) .lt. fw_res_max(fd_t) ) then
+      fw_res_R(fd_t) = -huge(1.d0)
+      fw_res_Z(fd_t) = -huge(1.d0)
+    endif
+  enddo
+  call MPI_AllReduce(MPI_IN_PLACE, fw_res_R,   FW_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fw_res_Z,   FW_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
   if ( my_id .eq. 0 ) then
-    write(*,'(A)') ' [mach1_weak] type    |res|[m/s]    cs*|b.n|[m/s]   target[m/s]' // &
-                   '    |b.n| min      comp[%]       npts'
+    write(*,'(A)') ' [mach1_weak] type    |res|[m/s]    res/cs      |res| at (R,Z)' // &
+                   '        cs*|b.n|[m/s]   target[m/s]    |b.n| min     comp[%]      npts'
     do fd_t = 1, FW_NT
       if ( fw_tot_n(fd_t) .le. 0.d0 ) cycle
-      write(*,'(A,I3,4X,ES12.4,3X,ES12.4,3X,ES12.4,3X,ES12.4,3X,F8.2,3X,ES11.4)') &
-        ' [mach1_weak] ', fd_t,                    &
-        fw_res_max(fd_t) / fd_sq,                  &
-        fw_cs_max(fd_t)  / fd_sq,                  &
-        fw_tgt_max(fd_t) / fd_sq,                  &
-        fw_bn_min(fd_t),                           &
-        1.d2 * fw_act_n(fd_t) / fw_tot_n(fd_t),    &
+      write(*,'(A,I3,4X,ES12.4,2X,F8.4,2X,A,F6.3,A,F7.3,A,3X,ES12.4,3X,ES12.4,3X,ES11.4,3X,F7.2,3X,ES11.4)') &
+        ' [mach1_weak] ', fd_t,                                                        &
+        fw_res_max(fd_t) / fd_sq,                                                      &
+        fw_res_max(fd_t) / max(fw_cs_max(fd_t), tiny(1.d0)),                           &
+        '(', fw_res_R(fd_t), ',', fw_res_Z(fd_t), ')',                                 &
+        fw_cs_max(fd_t)  / fd_sq,                                                      &
+        fw_tgt_max(fd_t) / fd_sq,                                                       &
+        fw_bn_min(fd_t),                                                               &
+        1.d2 * fw_act_n(fd_t) / fw_tot_n(fd_t),                                        &
         fw_tot_n(fd_t)
     enddo
   endif

@@ -460,8 +460,17 @@ do ms=1, n_gauss
     ! --- Sampled only under floating_u_diag, which is also the flag the reset and the
     ! --- print are gated on. Otherwise the running max and the point counts would
     ! --- accumulate across every timestep with nothing ever clearing them.
-    if (mw_on .and. floating_u_diag) &
-      call weak_mach_diag_sample(bnd_type1,mw_res,cs0*mw_bnu,mw_tgt,mw_bnu,mw_act)
+    ! --- Attribute the sample only to endpoint types that actually CARRY the row.
+    ! --- mw_on is an OR over the two endpoints, and the ELM scatter then skips the
+    ! --- Vpar row at any node whose type has mach1 false. Sampling by bnd_type1
+    ! --- regardless reported a large residual against type 3 for a condition that is
+    ! --- deliberately never imposed there, which reads as a failure and is not one.
+    if (mw_on .and. floating_u_diag) then
+      if ( bcs(bnd_type1)%mach1 ) &
+        call weak_mach_diag_sample(bnd_type1,mw_res,cs0*mw_bnu,mw_tgt,mw_bnu,mw_act,BigR,y_g(ms))
+      if ( bnd_type2 /= bnd_type1 .and. bcs(bnd_type2)%mach1 ) &
+        call weak_mach_diag_sample(bnd_type2,mw_res,cs0*mw_bnu,mw_tgt,mw_bnu,mw_act,BigR,y_g(ms))
+    endif
     if (fu_wall) then
       call floating_wall_flux(fu_vn,cs0,c_angle,gamma_sheath_i,fu_particle,fu_heat_i,fu_dp,fu_dhi)
       call floating_wall_flux(fu_vn,cs0,c_angle,gamma_sheath_e,fu_particle,fu_heat_e,fu_dp,fu_dhe)
