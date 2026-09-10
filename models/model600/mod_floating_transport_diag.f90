@@ -21,7 +21,21 @@ module mod_floating_transport_diag
   real*8, save, public :: fw_tot_n(FW_NT)   = 0.d0      !< constrained points visited
   real*8, save, public :: fw_res_R(FW_NT)   = 0.d0      !< R of the worst residual
   real*8, save, public :: fw_res_Z(FW_NT)   = 0.d0      !< Z of the worst residual
-  public :: weak_mach_diag_reset, weak_mach_diag_sample
+  ! --- THE convergence measure for a WEAK condition. The Galerkin form imposes the
+  ! --- weighted MOMENTS of the residual, not its pointwise value: sub-element
+  ! --- oscillation that integrates out is the mechanism that lets it carry a steep
+  ! --- drift at all. A pointwise maximum therefore does NOT measure whether the
+  ! --- condition is satisfied - this does.
+  real*8, save, public :: fw_mom_max(FW_NT) = 0.d0      !< max over edges of |moment|/scale
+  real*8, save, public :: fw_mom_min(FW_NT) = huge(1.d0)!< min over edges
+  real*8, save, public :: fw_mom_sum(FW_NT) = 0.d0      !< sum, for the mean
+  real*8, save, public :: fw_mom_n(FW_NT)   = 0.d0      !< edges sampled
+  ! --- min/mean/max separate "a few bad points" from "systematically off": with a
+  ! --- max alone the two are indistinguishable, which is exactly the ambiguity that
+  ! --- made a pointwise maximum look like a failure of the weak form.
+  real*8, save, public :: fw_res_min(FW_NT) = huge(1.d0)
+  real*8, save, public :: fw_res_sum(FW_NT) = 0.d0
+  public :: weak_mach_diag_reset, weak_mach_diag_sample, weak_mach_mom_sample
   public :: transport_diag_report, transport_diag_updated
 contains
   subroutine transport_diag_reset()
@@ -175,6 +189,12 @@ contains
     fw_tot_n   = 0.d0
     fw_res_R   = 0.d0
     fw_res_Z   = 0.d0
+    fw_mom_max = 0.d0
+    fw_mom_min = huge(1.d0)
+    fw_mom_sum = 0.d0
+    fw_mom_n   = 0.d0
+    fw_res_min = huge(1.d0)
+    fw_res_sum = 0.d0
   end subroutine
 
   !> One sample per boundary quadrature point. `res` is the constraint residual in
@@ -182,6 +202,21 @@ contains
   !! flow demanded, `bnu` = |b.n|, and `act` is 1 when the one-sided branch is active
   !! (i.e. the drift is being compensated) and 0 when it has saturated to zero
   !! because the drift alone already exceeds sonic outflow.
+  !> One sample per boundary EDGE: the largest normalised weighted-residual moment
+  !! over that edge's trace test functions. Zero means the imposed condition is met
+  !! exactly in the sense the weak form actually imposes it.
+  subroutine weak_mach_mom_sample(bnd_type, m)
+    integer, intent(in) :: bnd_type
+    real*8,  intent(in) :: m
+    if ( bnd_type < 1 .or. bnd_type > FW_NT ) return
+    !$omp critical (weak_mach_diag)
+    fw_mom_max(bnd_type) = max( fw_mom_max(bnd_type), m )
+    fw_mom_min(bnd_type) = min( fw_mom_min(bnd_type), m )
+    fw_mom_sum(bnd_type) = fw_mom_sum(bnd_type) + m
+    fw_mom_n(bnd_type)   = fw_mom_n(bnd_type)   + 1.d0
+    !$omp end critical (weak_mach_diag)
+  end subroutine
+
   subroutine weak_mach_diag_sample(bnd_type, res, cs_bn, tgt, bnu, act, R, Z)
     integer, intent(in) :: bnd_type
     real*8,  intent(in) :: res, cs_bn, tgt, bnu, act, R, Z
@@ -194,6 +229,8 @@ contains
       fw_res_Z(bnd_type) = Z
     endif
     fw_res_max(bnd_type) = max( fw_res_max(bnd_type), abs(res) )
+    fw_res_min(bnd_type) = min( fw_res_min(bnd_type), abs(res) )
+    fw_res_sum(bnd_type) = fw_res_sum(bnd_type) + abs(res)
     fw_cs_max(bnd_type)  = max( fw_cs_max(bnd_type),  cs_bn )
     fw_tgt_max(bnd_type) = max( fw_tgt_max(bnd_type), tgt )
     fw_bn_min(bnd_type)  = min( fw_bn_min(bnd_type),  bnu )

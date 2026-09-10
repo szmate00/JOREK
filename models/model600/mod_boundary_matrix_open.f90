@@ -18,7 +18,7 @@ use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
 use mod_floating_transport, only: floating_mach_flux, floating_wall_flux, floating_temperature_slope
-use mod_floating_transport_diag, only: transport_diag_wall, weak_mach_diag_sample
+use mod_floating_transport_diag, only: transport_diag_wall, weak_mach_diag_sample, weak_mach_mom_sample
 use mod_floating_boundary_edges, only: floating_edge_is_exterior
 use mod_floating_u, only: floating_u_norm
 
@@ -82,6 +82,7 @@ logical :: fu_edge, fu_mach, fu_wall
 !! natural condition grad(Vpar).n = 0 takes over continuously.
 logical :: mw_on
 real*8  :: mw_bnu, mw_tgt, mw_res, mw_act, mw_w, mw_bnj, mw_btj, mw_bnuj
+real*8  :: mw_mom(2,2), mw_den(2,2), mw_mmax
 real*8 :: fu_ven, fu_bn, fu_vn, fu_orient, fu_mres, fu_mjac(3), fu_ven_trial
 !> Outward ExB normal speed entering the SHEATH TRANSMISSION term, and the exact
 !! derivative flag of the clip that bounds it. See the block where they are set.
@@ -253,6 +254,13 @@ delta_s = delta_s * tstep / tstep_prev
 
 n_tor_local = i_tor_max - i_tor_min +1
 !--------------------------------------------------- sum over the Gaussian integration points
+! --- Per-EDGE weighted-residual moments of the weak condition, accumulated across
+! --- this edge's Gauss points. These are what the row actually puts into the RHS
+! --- (up to Zbig), i.e. the quantity the Galerkin form controls - unlike a pointwise
+! --- residual, which it deliberately does not.
+mw_mom = 0.d0
+mw_den = 0.d0
+
 do ms=1, n_gauss
 
   ws = wgauss(ms)
@@ -559,7 +567,14 @@ do ms=1, n_gauss
 
           endif ! with_vpar
           if (fu_mach) rhs_ij(var_vpar) = -v*dl*Zbig*fu_mres
-          if (mw_on)   rhs_ij(var_vpar) = -v*BigR*dl*Zbig*mw_w*mw_res
+          if (mw_on) then
+            rhs_ij(var_vpar) = -v*BigR*dl*Zbig*mw_w*mw_res
+            ! --- the moment, and a same-weighting scale to normalise it by. Summed
+            ! --- over toroidal harmonics as well, so with several harmonics this is
+            ! --- a coarser aggregate than the per-harmonic moment.
+            mw_mom(i,j) = mw_mom(i,j) + ws *      v  * BigR*dl *      mw_w  * mw_res
+            mw_den(i,j) = mw_den(i,j) + ws * abs(v) * BigR*dl * abs(mw_w) * cs0*mw_bnu
+          endif
           if (fu_wall) then
             fu_area = v*BigR*dl*tstep
             ! REPLACE the legacy diffusive boundary corrections, not the volume
@@ -898,6 +913,19 @@ do ms=1, n_gauss
 
   enddo
 enddo
+
+! --- Finalise the per-edge moment metric AFTER the Gauss loop.
+if (mw_on .and. floating_u_diag) then
+  mw_mmax = 0.d0
+  do i=1,2
+    do j=1,2
+      mw_mmax = max( mw_mmax, abs(mw_mom(i,j)) / max(mw_den(i,j), tiny(1.d0)) )
+    enddo
+  enddo
+  if ( bcs(bnd_type1)%mach1 ) call weak_mach_mom_sample(bnd_type1, mw_mmax)
+  if ( bnd_type2 /= bnd_type1 .and. bcs(bnd_type2)%mach1 ) &
+    call weak_mach_mom_sample(bnd_type2, mw_mmax)
+endif
 
 return
 end subroutine

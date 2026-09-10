@@ -43,7 +43,9 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
 use mod_floating_u, only: floating_u_norm
 use mod_floating_transport_diag, only: weak_mach_diag_reset, FW_NT,                    &
                                        fw_res_max, fw_cs_max, fw_tgt_max, fw_bn_min,   &
-                                       fw_act_n, fw_tot_n, fw_res_R, fw_res_Z
+                                       fw_act_n, fw_tot_n, fw_res_R, fw_res_Z,       &
+                                       fw_res_min, fw_res_sum,                        &
+                                       fw_mom_max, fw_mom_min, fw_mom_sum, fw_mom_n
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -1253,18 +1255,31 @@ if ( floating_u_diag .and. mach1_weak ) then
   enddo
   call MPI_AllReduce(MPI_IN_PLACE, fw_res_R,   FW_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fw_res_Z,   FW_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fw_res_min, FW_NT, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fw_res_sum, FW_NT, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fw_mom_max, FW_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fw_mom_min, FW_NT, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fw_mom_sum, FW_NT, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fw_mom_n,   FW_NT, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, err)
   if ( my_id .eq. 0 ) then
-    write(*,'(A)') ' [mach1_weak] type    |res|[m/s]    res/cs      |res| at (R,Z)' // &
-                   '        cs*|b.n|[m/s]   target[m/s]    |b.n| min     comp[%]      npts'
+    ! --- mom is THE convergence measure: the normalised weighted-residual MOMENT,
+    ! --- which is what the Galerkin form imposes. |res| is the POINTWISE error, which
+    ! --- the weak form deliberately does not control - sub-element oscillation that
+    ! --- integrates out is the mechanism that lets it carry a steep drift at all. So
+    ! --- a large |res| max with a small mom is the formulation working as intended,
+    ! --- and min/mean/max separates a few bad points from a systematic offset.
+    write(*,'(A)') ' [mach1_weak] type   mom min/mean/max        |res| min/mean/max [m/s]' // &
+                   '          |res|max at (R,Z)   cs*|b.n|      target       |b.n|min    comp[%]     npts'
     do fd_t = 1, FW_NT
       if ( fw_tot_n(fd_t) .le. 0.d0 ) cycle
-      write(*,'(A,I3,4X,ES12.4,2X,F8.4,2X,A,F6.3,A,F7.3,A,3X,ES12.4,3X,ES12.4,3X,ES11.4,3X,F7.2,3X,ES11.4)') &
+      write(*,'(A,I3,2X,3(ES10.3,1X),2X,3(ES11.4,1X),2X,A,F6.3,A,F7.3,A,2X,ES11.4,1X,ES11.4,1X,ES10.3,2X,F7.2,2X,ES10.3)') &
         ' [mach1_weak] ', fd_t,                                                        &
-        fw_res_max(fd_t) / fd_sq,                                                      &
-        fw_res_max(fd_t) / max(fw_cs_max(fd_t), tiny(1.d0)),                           &
+        fw_mom_min(fd_t), fw_mom_sum(fd_t)/max(fw_mom_n(fd_t),1.d0), fw_mom_max(fd_t), &
+        fw_res_min(fd_t)/fd_sq, fw_res_sum(fd_t)/max(fw_tot_n(fd_t),1.d0)/fd_sq,       &
+        fw_res_max(fd_t)/fd_sq,                                                        &
         '(', fw_res_R(fd_t), ',', fw_res_Z(fd_t), ')',                                 &
         fw_cs_max(fd_t)  / fd_sq,                                                      &
-        fw_tgt_max(fd_t) / fd_sq,                                                       &
+        fw_tgt_max(fd_t) / fd_sq,                                                      &
         fw_bn_min(fd_t),                                                               &
         1.d2 * fw_act_n(fd_t) / fw_tot_n(fd_t),                                        &
         fw_tot_n(fd_t)
