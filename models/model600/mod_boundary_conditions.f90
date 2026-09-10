@@ -109,18 +109,18 @@ real*8  :: fd_vin_max(FD_NT), fd_vout_max(FD_NT)
 !! missing from the slope row on bicubic elements. Their ratio IS the inconsistency.
 real*8  :: fd_m1cs_max(FD_NT), fd_m1dr_max(FD_NT)
 real*8  :: m1_dr
-!> One-sided, floored, clipped drift-compatible Bohm supplement (SOLPS BCMOM=13,
-!! non-marginal branch, without extrapolation). The incidence floor and the SOLPS clip
-!! have been removed from this path; mach1_drop_grazing decides instead whether the row is
-!! imposed at a grazing node at all.
-!! m1_D = R^2*u_b/psi_b (exact -vE.n/(Bn*|B|), Vpar units); m1_bfl = min(1,|bn|/s0)
-!! with s0 = min_sheath_angle in radians (the c_angle scale) floors the incidence;
-!! m1_S = 2*cs/Btot is the SOLPS bound; m1_sup is the applied supplement and
-!! m1_dsdx/m1_dsds are its exact derivatives wrt the demand and the bound. u0_bb_r reconstructs the second tangential
-!! derivative of u from BOTH endpoints' value/slope DOFs (same stencil as ps0_bb)
-!! for the bicubic slope-row residual.
-real*8  :: m1_D, m1_S, m1_bfl, m1_smin, m1_Dfl, m1_sup, m1_dsdx, m1_dsds
-real*8  :: m1_dDdb, m1_dSdb, m1_dslope, m1_ucol, m1_clamp, m1_raw, u0_bb_r
+!> One-sided drift-compatible Bohm supplement (SOLPS BCMOM=13, non-marginal branch,
+!! without extrapolation). NO incidence floor, NO clip, NO smoothing: the single
+!! mechanism for a grazing node is mach1_drop_grazing, which drops its row entirely.
+!! A node that keeps its row keeps the unmodified relation in both the value and the
+!! slope, so the two always describe the same function.
+!! m1_D = R^2*u_b/psi_b (exact -vE.n/(Bn*|B|), Vpar units); m1_sup is the applied
+!! supplement and m1_dsdx is its exact derivative wrt the demand. u0_bb_r reconstructs
+!! the second tangential derivative of u from BOTH endpoints' value/slope DOFs (same
+!! stencil as ps0_bb) for the bicubic slope-row residual, whose u columns are
+!! dMach1BC_uv/ud/unv/und.
+real*8  :: m1_D, m1_smin, m1_Dfl, m1_sup, m1_dsdx
+real*8  :: m1_dDdb, m1_dslope, m1_ucol, m1_raw, u0_bb_r, m1_C1, m1_C2
 logical :: m1_skip
 real*8  :: fd_rho_min(FD_NT), fd_T_min(FD_NT), fd_pe_R(FD_NT), fd_pe_Z(FD_NT)
 real*8  :: fd_loc(2,FD_NT)
@@ -134,6 +134,10 @@ integer :: ifail, i_elm
 
 real*8  ::   Mach1BC,   Mach1BC_v,   Mach1BC_T,   Mach1BC_u
 real*8  ::  dMach1BC,  dMach1BC_v,  dMach1BC_T,  dMach1BC_Ti, dMach1BC_Te,  dMach1BC_Tb, dMach1BC_ubb
+!! Slope-row u columns: the slope residual depends on u through U0_b (this node's
+!! tangential-derivative DOF) and through u0_bb_r, reconstructed from the value AND
+!! derivative DOFs of BOTH edge endpoints. All of them must be in the matrix.
+real*8  ::  dMach1BC_uv, dMach1BC_ud, dMach1BC_unv, dMach1BC_und
 real*8  :: d2Mach1BC, d2Mach1BC_v, d2Mach1BC_T, d2Mach1BC_Tb, d2Mach1BC_Tbb
 
 integer :: node_indices( (n_order+1)/2, (n_order+1)/2 ), index_tmp, kk, ll
@@ -767,25 +771,15 @@ do i=1, n_local_elms !=== do elements
           ! --- the recommended branch is exactly the plain sonic row, which is the
           ! --- configuration measured stable.)
           ! ---
-          ! --- Three safeguards, each with a measured failure behind it:
-          ! ---  1. INCIDENCE FLOOR m1_bfl = min(1,|bn|/s0), s0 = min_sheath_angle in
-          ! ---     radians - EXACTLY the c_angle scale that already floors the sheath
-          ! ---     particle and heat fluxes (mod_boundary_matrix_open:93), applied to
-          ! ---     the momentum channel with the same meaning: below s0 the sheath-
-          ! ---     entrance model is floor-dominated and the effective collection
-          ! ---     angle saturates (magnetic presheath / finite Larmor radius). This
-          ! ---     bounds every Jacobian column by ~1/s0 instead of 1/bn - the
-          ! ---     unbounded intra-solve column was how the marginal form died - and
-          ! ---     widens the grazing response band from 2*cs*bn (a step function in
-          ! ---     u) to 2*cs*s0 (a resolvable ramp). NOT a new threshold: the code's
-          ! ---     existing definition of grazing, third use. bn is frozen in time
-          ! ---     (psi is Dirichlet on the wall), so the floor is a static map.
-          ! ---  2. SOLPS CLIP at 2*cs/Btot (manual 3.0.9 p.407/411, b2stbc_cbc=1.0),
-          ! ---     stated in cs units. Hard, not tanh: piecewise-linear branches are
-          ! ---     exact within one frozen solve; the smooth version degenerated to a
-          ! ---     fixed-point iteration (period-2, crash at 319).
-          ! ---  3. ONE-SIDED and anchored at zero, so wall points whose potential
-          ! ---     gradient wobbles around zero produce nothing.
+          ! --- ONE SAFEGUARD ONLY: the supplement is one-sided and anchored at zero,
+          ! --- so a wall point whose potential gradient wobbles about zero produces
+          ! --- nothing. That is a property of the Bohm inequality, not a tuned bound.
+          ! ---
+          ! --- The incidence floor and the SOLPS clip that used to sit here are GONE.
+          ! --- They bounded the value row while leaving the slope row bounded by the
+          ! --- same constant, and when the clip was removed from the value row only,
+          ! --- the two rows stopped describing the same function. Grazing incidence is
+          ! --- now handled in exactly one place - mach1_drop_grazing - and nowhere else.
           ! ---
           ! --- With this row active the sheath ExB heat flux (mod_boundary_matrix_open)
           ! --- stays consistent: total collection remains >= cs*|bn| and bounded.
@@ -796,7 +790,7 @@ do i=1, n_local_elms !=== do elements
 
           ! --- Same convention as c_angle (radians of min_sheath_angle); bn is the
           ! --- incidence SINE - identical to within 5e-5 at 1 degree. A non-positive
-          ! --- angle disables the floor (m1_bfl = 1), never the supplement.
+          ! --- angle disables the row drop, never the supplement.
           m1_smin = min_sheath_angle * PI / 180.d0
 
           ! --- NEVER FORM THE SINGULAR FACTOR. bn_1 below shows |bn| = |ps0_b|/(R*Btot*dl)
@@ -844,10 +838,8 @@ do i=1, n_local_elms !=== do elements
           if ( mach1_drop_grazing .and. m1_smin .gt. 0.d0 .and. abs(bn) .lt. m1_smin ) &
             m1_skip = .true.
 
-          m1_bfl  = 1.d0
           m1_Dfl  = BigR**2 * U0_b           / ps0_b
           m1_ucol = BigR**2 * element_size_0 / ps0_b
-          m1_S    = 2.d0 * cs0 / Btot        ! diagnostic reference scale only
           ! --- A grazing node has psi_b arbitrarily small, so D can overflow. Where the
           ! --- row is skipped nothing is assembled, but the value still reaches the
           ! --- diagnostic and must stay finite.
@@ -860,17 +852,11 @@ do i=1, n_local_elms !=== do elements
           m1_sup  = max( direction*m1_Dfl, 0.d0 )
           m1_dsdx = 0.d0
           if ( direction*m1_Dfl .gt. 0.d0 ) m1_dsdx = 1.d0
-          m1_dsds = 0.d0
           m1_D = m1_Dfl
 
           Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0     + m1_dr * direction * m1_sup
           Mach1BC_v   = - 1.0
-          ! --- m1_dsds is identically zero without the clip (the supplement no longer
-          ! --- depends on cs), so this second line contributes nothing. Retained so the
-          ! --- structure still matches the slope row and a bound can be reinstated in
-          ! --- one place if the A/B calls for it.
-          Mach1BC_T   =           + direction / Btot * factor  * cs0_T                  &
-                                  + m1_dr * m1_dsds * direction * 2.d0 * cs0_T / Btot
+          Mach1BC_T   =           + direction / Btot * factor  * cs0_T
           Mach1BC_u   =             m1_dr * m1_dsdx * m1_ucol
 
           ! --- Report the APPLIED supplement and the sonic term. Their ratio is
@@ -893,80 +879,55 @@ do i=1, n_local_elms !=== do elements
                                   + direction / Btot * Hfact_b * cs0_T
           dMach1BC_Tb =           + direction / Btot * factor  * cs0_T * element_size_0
 
-          ! --- SLOPE ROW OF THE SUPPLEMENT (bicubic). The tangential derivative of
-          ! --- the same expression the value row imposes, on the branch frozen for
-          ! --- this solve:
-          ! ---   active:  d/db [m1_bfl * R^2*u_b/psi_b], with u_bb reconstructed from
-          ! ---            both endpoints (u0_bb_r), psi_bb = ps0_bb, and the floor
-          ! ---            m1_bfl treated as frozen geometry (bn is Dirichlet-static);
-          ! ---   clipped: d/db [direction*2*cs/Btot], temperature part (field lagged,
-          ! ---            as the whole block already lags magnetic geometry);
-          ! ---   inactive: zero.
-          ! --- RESIDUAL-ONLY for the u dependence: the active-branch derivative
-          ! --- involves BOTH endpoints' u DOFs, and cross-node columns written into a
-          ! --- row that several edges visit are exactly the stale-column trap fixed
-          ! --- for the value row below. With the incidence floor the term is smooth
-          ! --- and bounded, and the row keeps its strong Vpar_b diagonal, so lagging
-          ! --- it is plain Picard on a bounded term. The clipped branch's exact
-          ! --- temperature columns ARE carried (dMach1BC_Ti/Te/Tb below).
+          ! --- SLOPE ROW OF THE SUPPLEMENT (bicubic). Exactly the tangential
+          ! --- derivative of the function the value row imposes, on the branch frozen
+          ! --- for this solve: d/db [ R^2*u_b/psi_b ] where active, zero where not.
           ! ---
-          ! --- SAFETY CLAMP at 2*m1_S: the imposed function b -> sup(b) lives in
-          ! --- [0,S], so its mean slope across one edge cannot exceed the band per
-          ! --- unit parameter; steeper pointwise structure is sub-element and not
-          ! --- representable in the Hermite slope DOF anyway. Derived from the clip,
-          ! --- not a new threshold; with the floor active it is rarely reached.
-          m1_dslope = 0.d0
-          m1_clamp  = 0.d0
+          ! --- No floor and no bound. The ONLY mechanism protecting a grazing node is
+          ! --- mach1_drop_grazing, which removes its row entirely; a node that keeps
+          ! --- its row keeps the unmodified relation in BOTH the value and the slope.
+          ! --- Value and slope must describe the SAME function - bounding one and not
+          ! --- the other is exactly what made them inconsistent.
+          ! ---
+          ! --- The u DEPENDENCE IS IN THE JACOBIAN. m1_dDdb = C1*U0_b + C2*u0_bb_r and
+          ! --- u0_bb_r involves the value and derivative DOFs of both endpoints, so the
+          ! --- row carries four u columns. Omitting them was justified while the
+          ! --- incidence floor bounded the term; with no floor it is a lagged unbounded
+          ! --- residual with no matching column, and there is no Newton iteration to
+          ! --- recover - one solve per step makes it a systematic error growing like
+          ! --- 1/psi_b, i.e. worst exactly at grazing incidence.
+          m1_dslope    = 0.d0
+          dMach1BC_uv  = 0.d0
+          dMach1BC_ud  = 0.d0
+          dMach1BC_unv = 0.d0
+          dMach1BC_und = 0.d0
           if ( n_order .eq. 3 .and. m1_dr .ne. 0.d0 ) then
-            ! --- d/db of the FLOORED cancellation is f*D' + f'*D, not f*D' alone.
-            ! --- The floor f = min(1,|bn|/s0) is frozen in TIME (psi is Dirichlet on
-            ! --- the wall) but it is not constant along the boundary: bn varies, and
-            ! --- its tangential derivative bn_b is already formed above. On the
-            ! --- unfloored branch f = 1 identically, so f' = 0 there and the term is
-            ! --- present only where the floor is actually doing something.
-            ! --- Derivative of the SAME branch the value row took, so no separate
-            ! --- floor-derivative term is needed (and none that uses bn_b).
-            if ( m1_smin .gt. 0.d0 .and. abs(bn) .lt. m1_smin ) then
-              ! --- d/db of sign(ps0_b)*R*u_b/(Btot*dl*s0), with Btot ~ F0/R for the
-              ! --- geometric part - the same vacuum-field approximation the legacy
-              ! --- sonic slope already makes through Hfact_b.
-              m1_dDdb = sign(1.d0,ps0_b) * ( 2.d0*R_b*U0_b + BigR*u0_bb_r              &
-                                             - BigR*U0_b*dl_b/dl ) / (Btot*dl*m1_smin)
-            else
-              m1_dDdb = ( 2.d0*BigR*R_b*U0_b + BigR**2*u0_bb_r                         &
-                          - BigR**2*U0_b*ps0_bb/ps0_b ) / ps0_b
-            endif
-            m1_dSdb = 2.d0 * cs0_T * (Ti0_b+Te0_b) / Btot
-            m1_raw  = m1_dsdx * m1_dDdb + m1_dsds * direction * m1_dSdb
-            ! --- The safety clamp is a branch like any other, so differentiate the
-            ! --- branch that is actually taken: on the clamp the imposed slope is
-            ! --- +-2*m1_S = +-4*cs/Btot, whose temperature derivative is +-4*cs_T/Btot
-            ! --- and which does not depend on T_b at all. Adding the unclamped clip
-            ! --- columns there would describe a term the residual is not using.
-            if ( m1_raw .gt. 2.d0*m1_S ) then
-              m1_clamp = +1.d0
-            elseif ( m1_raw .lt. -2.d0*m1_S ) then
-              m1_clamp = -1.d0
-            endif
-            m1_dslope = max( -2.d0*m1_S, min( 2.d0*m1_S, m1_raw ) )
-            dMach1BC    = dMach1BC + m1_dr * m1_dslope
-            if ( m1_clamp .ne. 0.d0 ) then
-              dMach1BC_T  = dMach1BC_T  + m1_dr * m1_clamp * 4.d0 * cs0_T / Btot
-              dMach1BC_Ti = dMach1BC_Ti + m1_dr * m1_clamp * 4.d0 * cs0_T / Btot
-              dMach1BC_Te = dMach1BC_Te + m1_dr * m1_clamp * 4.d0 * cs0_T / Btot
-            else
-              dMach1BC_T  = dMach1BC_T  + m1_dr * m1_dsds * direction * 2.d0 * cs0_TT * T0_b / Btot
-              dMach1BC_Ti = dMach1BC_Ti + m1_dr * m1_dsds * direction * 2.d0 * cs0_TT * T0_b / Btot
-              dMach1BC_Te = dMach1BC_Te + m1_dr * m1_dsds * direction * 2.d0 * cs0_TT * T0_b / Btot
-              dMach1BC_Tb = dMach1BC_Tb + m1_dr * m1_dsds * direction * 2.d0 * cs0_T * element_size_0 / Btot
-            endif
+            ! --- m1_dDdb = C1*U0_b + C2*u0_bb_r, split out so the Jacobian
+            ! --- columns below are literally the coefficients of the residual's u DOFs.
+            m1_C1 = ( 2.d0*BigR*R_b - BigR**2 * ps0_bb / ps0_b ) / ps0_b
+            m1_C2 =   BigR**2 / ps0_b
+            m1_dDdb   = m1_C1 * U0_b + m1_C2 * u0_bb_r
+            m1_raw    = m1_dsdx * m1_dDdb
+            m1_dslope = m1_raw
+            dMach1BC  = dMach1BC + m1_dr * m1_dslope
+            ! --- Exact derivatives of m1_dr*m1_dsdx*(C1*U0_b + C2*u0_bb_r). m1_dsdx is
+            ! --- the frozen max(.,0) branch indicator, which IS the exact derivative of
+            ! --- max on the branch taken.
+            dMach1BC_uv  = m1_dr * m1_dsdx * m1_C2                                        &
+                           * element_list%element(ielm)%size(iv ,1)      * H1_ss(1,1)
+            dMach1BC_ud  = m1_dr * m1_dsdx * ( m1_C1 * element_size_0                     &
+                           + m1_C2 * element_list%element(ielm)%size(iv ,iv_dir) * H1_ss(1,2) )
+            dMach1BC_unv = m1_dr * m1_dsdx * m1_C2                                        &
+                           * element_list%element(ielm)%size(iv2,1)      * H1_ss(2,1)
+            dMach1BC_und = m1_dr * m1_dsdx * m1_C2                                        &
+                           * element_list%element(ielm)%size(iv2,iv_dir) * H1_ss(2,2)
           endif
 
           if (n_order .ge. 5) then
             ! --- Same convention as the value row: floored, gated off outside the
             ! --- active branch where the supplement has no u dependence.
-            dMach1BC     = dMach1BC + m1_dr * m1_dsdx * m1_bfl * BigR**2 * U0_bb/ps0_b
-            dMach1BC_ubb = + m1_dr * m1_dsdx * m1_bfl * BigR**2 * element_size_3/ps0_b ! n_order>=5 not production; unchanged
+            dMach1BC     = dMach1BC + m1_dr * m1_dsdx * BigR**2 * U0_bb/ps0_b
+            dMach1BC_ubb = + m1_dr * m1_dsdx * BigR**2 * element_size_3/ps0_b ! n_order>=5 not production; unchanged
             d2Mach1BC    = - Vpar0_bb + direction / Btot * factor   * cs0_TT * (Ti0_b+Te0_b)**2   &
                                       + direction / Btot * factor   * cs0_T  * (Ti0_bb+Te0_bb)   !&
                                       !+ direction / Btot * Hfact_b  * cs0_T  * T0_b *2.0 !&
@@ -1051,6 +1012,30 @@ do i=1, n_local_elms !=== do elements
           call boundary_conditions_add_one_entry(               &
                  index_node2, kv, in, index_node2, kv, in,      &
                  - zbig * dMach1BC_v,                           &
+                 index_min, index_max, a_mat)
+
+          ! --- u columns of the slope row. Written UNCONDITIONALLY (zero off the active
+          ! --- branch) because add_one_entry ASSIGNS: a column left unwritten keeps
+          ! --- whatever a previously visited edge put there.
+          ! --- NOTE the two endpoint columns sit on a neighbouring node, so at a node
+          ! --- visited by more than one boundary edge the earlier edge's neighbour
+          ! --- columns are not reachable from here and survive alongside this edge's.
+          ! --- Single-edge wall nodes - everything but the corners - are exact.
+          call boundary_conditions_add_one_entry(               &
+                 index_node2, kv, in, index_node,  ku, in,      &
+                 - zbig * dMach1BC_uv,                          &
+                 index_min, index_max, a_mat)
+          call boundary_conditions_add_one_entry(               &
+                 index_node2, kv, in, index_node2, ku, in,      &
+                 - zbig * dMach1BC_ud,                          &
+                 index_min, index_max, a_mat)
+          call boundary_conditions_add_one_entry(                                    &
+                 index_node2, kv, in, node_list%node(inode2)%index(1),      ku, in,  &
+                 - zbig * dMach1BC_unv,                                              &
+                 index_min, index_max, a_mat)
+          call boundary_conditions_add_one_entry(                                    &
+                 index_node2, kv, in, node_list%node(inode2)%index(iv_dir), ku, in,  &
+                 - zbig * dMach1BC_und,                                              &
                  index_min, index_max, a_mat)
 
           if ( with_TiTe ) then

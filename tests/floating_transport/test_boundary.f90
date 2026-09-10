@@ -201,7 +201,6 @@ program test_boundary
       endif
     enddo
   enddo
-  call test_uout_clip()
   ! 6. The wall never emits: drive a huge INWARD ExB and check the collection is
   !    floored at zero, i.e. the added term exactly cancels the parallel expression.
   call set_u(-slope*1.d3,0.d0); call assemble(a,r)
@@ -324,44 +323,6 @@ contains
       endif
     enddo
     write(*,*) 'PASS: floating_temperature_slope is the corr_neg_temp1 derivative'
-  end subroutine
-  !> The Mach-row clip: bound, branch exclusivity, exact identity in the middle
-  !! branch, continuity at both kinks, and the disabled non-positive-bound case.
-  subroutine test_uout_clip()
-    use mod_floating_u, only: mach1_uout_supplement
-    real*8 :: S,x,y,dx,dS,yp,ym,jp,jm,prev
-    integer :: n
-    S=1.7d0
-    prev=-1.d0
-    do n=-40,200
-      x=0.05d0*dble(n)*S
-      call mach1_uout_supplement(x,S,y,dx,dS)
-      if (x<=0.d0) then
-        if (y/=0.d0.or.dx/=0.d0.or.dS/=0.d0) error stop 'supplement must be one-sided'
-        cycle
-      endif
-      if (y<0.d0 .or. y>S) error stop 'supplement outside [0,S]'
-      if (dx*dS/=0.d0) error stop 'branches are not exclusive'
-      ! MONOTONE. The non-monotone "graceful surrender" variant crashed at 550
-      ! against 649 for this clip: past its peak a larger drift gave a smaller
-      ! compensation, the u column reversed sign, and the supplement grew two bumps
-      ! flanking a dip across the ExB spike instead of one plateau. Keep this.
-      if (y<prev-1.d-14) error stop 'supplement must be monotone non-decreasing in x'
-      prev=y
-      if (dx<0.d0 .or. dS<0.d0) error stop 'supplement derivatives must be non-negative'
-      if (x<S .and. (y/=x .or. dx/=1.d0)) error stop 'active branch is not the identity'
-      if (x>=S .and. (y/=S .or. dS/=1.d0)) error stop 'clip branch'
-    enddo
-    ! continuity at both kinks
-    call mach1_uout_supplement( 1.d-13*S,S,y,dx,dS)
-    call mach1_uout_supplement(-1.d-13*S,S,yp,jp,jm)
-    if (abs(y-yp)>1.d-12*S) error stop 'discontinuous at zero'
-    call mach1_uout_supplement(S*(1.d0-1.d-12),S,y,dx,dS)
-    call mach1_uout_supplement(S*(1.d0+1.d-12),S,yp,jp,jm)
-    if (abs(y-yp)>1.d-11*S) error stop 'discontinuous at the clip'
-    call mach1_uout_supplement(5.d0,0.d0,y,dx,dS)
-    if (y/=0.d0.or.dx/=0.d0.or.dS/=0.d0) error stop 'non-positive bound must disable'
-    write(*,*) 'PASS: Mach supplement - one-sided, monotone, clipped, continuous, disabled case'
   end subroutine
   !> d(RHS)/dx by central differences, for every DOF, into fd(row,col).
   subroutine sweep(fd)

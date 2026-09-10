@@ -22,4 +22,8 @@ cd "$build_dir"
   -fimplicit-none -Wall -Wextra \
   "$repo_dir/tests/floating_transport/test_wall_flux_consistency.f90" -o test_wall_flux
 ./test_wall_flux
+"$compiler" -ffree-line-length-none -fcheck=all -ffpe-trap=invalid,zero,overflow \
+  -fimplicit-none -Wall -Wextra \
+  "$repo_dir/tests/floating_transport/test_mach_slope_jacobian.f90" -o test_mach_slope
+./test_mach_slope
 printf 'Test build retained in %s\n' "$build_dir"

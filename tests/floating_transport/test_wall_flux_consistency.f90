@@ -26,6 +26,12 @@ program test_wall_flux_consistency
   call check_case( 1.50d0, -0.005d0,  0.00d0,  -2.00d3, 'grazing, inflow only    ')
   call check_case( 1.55d0,  0.020d0, -4.00d3,   1.00d3, 'parallel flow off wall  ')
 
+  ! --- the normal/tangential split of both flow components
+  call check_decomp( 0.9d0,  1.60d0,  0.70d0, -0.30d0,  1.9d0, -0.4d0, 4.8d4 )
+  call check_decomp(-2.1d0,  1.26d0, -0.05d0,  0.12d0, -0.6d0,  2.2d0,-1.1d4 )
+  call check_decomp( 0.0d0,  2.00d0,  0.00d0,  0.00d0,  1.0d0,  1.0d0, 1.0d0 )
+  call check_decomp( 3.3d0,  1.05d0,  1.00d0,  0.00d0,  0.0d0,  1.0d0, 0.0d0 )
+
   if ( nfail == 0 ) then
     print *, 'PASS: fluid and kinetic wall normal flux agree (drift included, sign-correct)'
   else
@@ -96,5 +102,36 @@ contains
       ' Gamma_new/n_e=', gamma_new/n_e, '   old/new=',                        &
       gamma_old / max(gamma_new, 1.d-30)
   end subroutine check_case
+
+  !> vExB_norm/vExB_tan and vparB_norm/vpar_tan must be an ORTHOGONAL split of the
+  !> same poloidal vector, so each pair has to satisfy
+  !>     (v.n)^2 + (v.t)^2 = |v_pol|^2
+  !> with t = (n_Z,-n_R). If either expression had a swapped or sign-flipped
+  !> component the identity fails, which a single-component test cannot see.
+  subroutine check_decomp(theta, R, U_R, U_Z, BR, BZ, vpar)
+    real*8, intent(in) :: theta, R, U_R, U_Z, BR, BZ, vpar
+    real*8 :: nR, nZ, t_norm, tol
+    real*8 :: vE_n, vE_t, vE_pol2, vp_n, vp_t, vp_pol2
+
+    t_norm = 3.1d-7 ; tol = 1.0d-12
+    nR = cos(theta) ; nZ = sin(theta)
+
+    ! --- exactly the expressions in mod_expression.f90
+    vE_n = ( -R*U_Z*nR + R*U_R*nZ ) / t_norm            ! vExB_norm
+    vE_t = -R * ( U_R*nR + U_Z*nZ ) / t_norm            ! vExB_tan
+    vp_n = vpar * ( BR*nR + BZ*nZ ) / t_norm            ! vparB_norm (poloidal part)
+    vp_t = vpar * ( BR*nZ - BZ*nR ) / t_norm            ! vpar_tan
+
+    vE_pol2 = ( R/t_norm )**2 * ( U_R*U_R + U_Z*U_Z )
+    vp_pol2 = ( vpar/t_norm )**2 * ( BR*BR + BZ*BZ )
+
+    if ( abs(vE_n**2 + vE_t**2 - vE_pol2) > tol*max(1.d0,vE_pol2) .or. &
+         abs(vp_n**2 + vp_t**2 - vp_pol2) > tol*max(1.d0,vp_pol2) ) then
+      nfail = nfail + 1
+      print *, 'MISMATCH decomposition at theta=', theta
+      print *, '   ExB : ', vE_n**2 + vE_t**2, ' vs ', vE_pol2
+      print *, '   par : ', vp_n**2 + vp_t**2, ' vs ', vp_pol2
+    endif
+  end subroutine check_decomp
 
 end program test_wall_flux_consistency
