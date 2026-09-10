@@ -45,7 +45,8 @@ use mod_floating_transport_diag, only: weak_mach_diag_reset, FW_NT,             
                                        fw_res_max, fw_cs_max, fw_tgt_max, fw_bn_min,   &
                                        fw_act_n, fw_tot_n, fw_res_R, fw_res_Z,       &
                                        fw_res_min, fw_res_sum,                        &
-                                       fw_mom_max, fw_mom_min, fw_mom_sum, fw_mom_n
+                                       fw_mom_max, fw_mom_min, fw_mom_sum, fw_mom_n, &
+                                       fw_mom_R, fw_mom_Z
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -1292,9 +1293,17 @@ if ( floating_u_diag .and. mach1_weak ) then
   call MPI_AllReduce(MPI_IN_PLACE, fw_res_Z,   FW_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fw_res_min, FW_NT, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fw_res_sum, FW_NT, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, err)
-  call MPI_AllReduce(MPI_IN_PLACE, fw_mom_max, FW_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fw_mom_min, FW_NT, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fw_mom_sum, FW_NT, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, err)
+  fd_loc_rho = fw_mom_max   ! reuse: local moment maxima, captured pre-reduction
+  call MPI_AllReduce(MPI_IN_PLACE, fw_mom_max, FW_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
+  do fd_t = 1, FW_NT
+    if ( fd_loc_rho(fd_t) .lt. fw_mom_max(fd_t) ) then
+      fw_mom_R(fd_t) = -huge(1.d0) ; fw_mom_Z(fd_t) = -huge(1.d0)
+    endif
+  enddo
+  call MPI_AllReduce(MPI_IN_PLACE, fw_mom_R,   FW_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fw_mom_Z,   FW_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fw_mom_n,   FW_NT, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, err)
   if ( my_id .eq. 0 ) then
     ! --- mom is THE convergence measure: the normalised weighted-residual MOMENT,
@@ -1304,12 +1313,13 @@ if ( floating_u_diag .and. mach1_weak ) then
     ! --- a large |res| max with a small mom is the formulation working as intended,
     ! --- and min/mean/max separates a few bad points from a systematic offset.
     write(*,'(A)') ' [mach1_weak] type   mom min/mean/max        |res| min/mean/max [m/s]' // &
-                   '          |res|max at (R,Z)   cs*|b.n|      target       |b.n|min    comp[%]     npts'
+                   '   mom max at (R,Z)     |res|max at (R,Z)   cs*|b.n|      target       |b.n|min    comp[%]     npts'
     do fd_t = 1, FW_NT
       if ( fw_tot_n(fd_t) .le. 0.d0 ) cycle
-      write(*,'(A,I3,2X,3(ES10.3,1X),2X,3(ES11.4,1X),2X,A,F6.3,A,F7.3,A,2X,ES11.4,1X,ES11.4,1X,ES10.3,2X,F7.2,2X,ES10.3)') &
+      write(*,'(A,I3,2X,3(ES10.3,1X),1X,A,F6.3,A,F7.3,A,2X,3(ES11.4,1X),2X,A,F6.3,A,F7.3,A,2X,ES11.4,1X,ES11.4,1X,ES10.3,2X,F7.2,2X,ES10.3)') &
         ' [mach1_weak] ', fd_t,                                                        &
         fw_mom_min(fd_t), fw_mom_sum(fd_t)/max(fw_mom_n(fd_t),1.d0), fw_mom_max(fd_t), &
+        '(', fw_mom_R(fd_t), ',', fw_mom_Z(fd_t), ')',                                 &
         fw_res_min(fd_t)/fd_sq, fw_res_sum(fd_t)/max(fw_tot_n(fd_t),1.d0)/fd_sq,       &
         fw_res_max(fd_t)/fd_sq,                                                        &
         '(', fw_res_R(fd_t), ',', fw_res_Z(fd_t), ')',                                 &

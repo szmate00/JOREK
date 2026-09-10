@@ -573,7 +573,14 @@ do ms=1, n_gauss
             ! --- over toroidal harmonics as well, so with several harmonics this is
             ! --- a coarser aggregate than the per-harmonic moment.
             mw_mom(i,j) = mw_mom(i,j) + ws *      v  * BigR*dl *      mw_w  * mw_res
-            mw_den(i,j) = mw_den(i,j) + ws * abs(v) * BigR*dl * abs(mw_w) * cs0*mw_bnu
+            ! --- Normalise by cs alone, NOT by cs*|b.n|. With |b.n| in the scale the
+            ! --- reference carries (b.n)^2 and vanishes at tangency, so a near-tangential
+            ! --- edge reports a huge ratio against an essentially-zero scale: at
+            ! --- |b.n| = 1e-6 the local sonic flux is ~0.01 m/s and any residual looks
+            ! --- catastrophic. Using cs, the b.n in the numerator's weight cancels
+            ! --- against the one here, the measure stays bounded through tangency, and
+            ! --- it reads as the flux error in units of the sound speed.
+            mw_den(i,j) = mw_den(i,j) + ws * abs(v) * BigR*dl * abs(mw_w) * cs0
           endif
           if (fu_wall) then
             fu_area = v*BigR*dl*tstep
@@ -922,9 +929,9 @@ if (mw_on .and. floating_u_diag) then
       mw_mmax = max( mw_mmax, abs(mw_mom(i,j)) / max(mw_den(i,j), tiny(1.d0)) )
     enddo
   enddo
-  if ( bcs(bnd_type1)%mach1 ) call weak_mach_mom_sample(bnd_type1, mw_mmax)
+  if ( bcs(bnd_type1)%mach1 ) call weak_mach_mom_sample(bnd_type1, mw_mmax, x_g(1), y_g(1))
   if ( bnd_type2 /= bnd_type1 .and. bcs(bnd_type2)%mach1 ) &
-    call weak_mach_mom_sample(bnd_type2, mw_mmax)
+    call weak_mach_mom_sample(bnd_type2, mw_mmax, x_g(1), y_g(1))
 endif
 
 return

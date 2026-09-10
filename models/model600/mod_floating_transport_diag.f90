@@ -30,6 +30,8 @@ module mod_floating_transport_diag
   real*8, save, public :: fw_mom_min(FW_NT) = huge(1.d0)!< min over edges
   real*8, save, public :: fw_mom_sum(FW_NT) = 0.d0      !< sum, for the mean
   real*8, save, public :: fw_mom_n(FW_NT)   = 0.d0      !< edges sampled
+  real*8, save, public :: fw_mom_R(FW_NT)   = 0.d0      !< R of the worst moment
+  real*8, save, public :: fw_mom_Z(FW_NT)   = 0.d0      !< Z of the worst moment
   ! --- min/mean/max separate "a few bad points" from "systematically off": with a
   ! --- max alone the two are indistinguishable, which is exactly the ambiguity that
   ! --- made a pointwise maximum look like a failure of the weak form.
@@ -193,6 +195,8 @@ contains
     fw_mom_min = huge(1.d0)
     fw_mom_sum = 0.d0
     fw_mom_n   = 0.d0
+    fw_mom_R   = 0.d0
+    fw_mom_Z   = 0.d0
     fw_res_min = huge(1.d0)
     fw_res_sum = 0.d0
   end subroutine
@@ -205,11 +209,15 @@ contains
   !> One sample per boundary EDGE: the largest normalised weighted-residual moment
   !! over that edge's trace test functions. Zero means the imposed condition is met
   !! exactly in the sense the weak form actually imposes it.
-  subroutine weak_mach_mom_sample(bnd_type, m)
+  subroutine weak_mach_mom_sample(bnd_type, m, R, Z)
     integer, intent(in) :: bnd_type
-    real*8,  intent(in) :: m
+    real*8,  intent(in) :: m, R, Z
     if ( bnd_type < 1 .or. bnd_type > FW_NT ) return
     !$omp critical (weak_mach_diag)
+    if ( m > fw_mom_max(bnd_type) ) then
+      fw_mom_R(bnd_type) = R
+      fw_mom_Z(bnd_type) = Z
+    endif
     fw_mom_max(bnd_type) = max( fw_mom_max(bnd_type), m )
     fw_mom_min(bnd_type) = min( fw_mom_min(bnd_type), m )
     fw_mom_sum(bnd_type) = fw_mom_sum(bnd_type) + m
