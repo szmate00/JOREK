@@ -481,6 +481,15 @@ if ( my_id == 0 ) then
         write(*,*) 'WARNING: mach1_weak overrides mach_one_bnd_integral / floating_u_mach_flux.'
         write(*,*) '         Those flags are ignored; unset them so the input reads honestly.'
       endif
+      if (mach1_weak .and. vpar_smoothing) then
+        write(*,*) 'NOTE: vpar_smoothing has NO effect under mach1_weak, and needs none.'
+        write(*,*) '      Its tanh factor exists because the legacy row imposes'
+        write(*,*) '      direction*cs with direction = sign(B.n), which JUMPS by 2*cs'
+        write(*,*) '      where the field crosses tangency. The weak row has no'
+        write(*,*) '      `direction`: its target is cs*|b.n|, continuous through zero,'
+        write(*,*) '      and the assembled row is B.n*(B.n*Vpar - target), which fades'
+        write(*,*) '      away instead of flipping. Unset it so the input reads honestly.'
+      endif
       if (mach1_weak .and. mach1_drop_grazing) then
         write(*,*) 'NOTE: mach1_drop_grazing is redundant under mach1_weak - the weak row is the'
         write(*,*) '      continuous version of the same idea and needs no threshold.'

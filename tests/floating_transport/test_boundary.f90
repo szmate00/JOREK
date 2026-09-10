@@ -270,6 +270,7 @@ program test_boundary
   call test_corr_slope()
   call test_sheath_stabiliser()
   call test_weak_mach()
+  call test_weak_mach_sign()
   write(*,*) 'PASS: sheath ExB energy flux - absent without a gradient, both senses, unbounded, closed wall, FD Jacobian'
   write(*,*) 'PASS: production boundary assembler finite-difference Jacobians and type-2 exclusion'
 contains
@@ -431,6 +432,80 @@ contains
     bcs(1)%mach1=.false.
     write(*,'(a,es9.2)') ' PASS: weak Mach Galerkin row - all Vpar columns match FD (worst rel err ',worst
     write(*,'(a)')       '       ), saturated branch drops its u and T columns'
+  end subroutine
+  !> B.n CHANGING SIGN ON THE WALL. The legacy Mach row imposes direction*cs with
+  !! direction = sign(B.n), which JUMPS by 2*cs where the field crosses tangency -
+  !! that discontinuity is the whole reason vpar_smoothing's tanh factor exists.
+  !!
+  !! The weak row cannot have that defect: the target is cs*|b.n|, continuous through
+  !! zero, there is no `direction` at all (the sign is carried by fu_bn in
+  !! fu_bn*Vpar0), and the assembled row is
+  !!     fu_bn*(fu_bn*Vpar0 - target) = fu_bn^2*Vpar0 - fu_bn*target
+  !! whose first term vanishes as (B.n)^2 and second linearly. The only
+  !! non-smoothness left is the kink of |b.n| at exactly B.n = 0, and it is
+  !! multiplied by fu_bn, which vanishes there too.
+  !!
+  !! So this sweeps the psi slope through zero and requires the row to fade away
+  !! continuously instead of jumping. vpar_smoothing is left OFF throughout: if the
+  !! weak row needed it, this test would fail.
+  subroutine test_weak_mach_sign()
+    real*8 :: g(9),mag(9),rowmax,big,small,asym
+    integer :: kk,ii,rr
+    g = (/ -4.d-2,-2.d-2,-1.d-3,-1.d-6, 0.d0, 1.d-6, 1.d-3, 2.d-2, 4.d-2 /)
+    mach1_weak=.true.
+    vpar_smoothing=.false.
+    bcs(1)%floating_u=.true.; bcs(1)%mach1=.true.; bcs(2)%floating_u=.false.
+    do kk=1,9
+      nodes=base; nodes%boundary=1
+      do ii=1,4
+        nodes(ii)%values(1,1,var_psi)=g(kk)*nodes(ii)%x(1,1,1)
+        nodes(ii)%values(1,2,var_psi)=g(kk)
+      enddo
+      call set_u(1.d-4,0.d0)
+      base=nodes
+      call assemble(a,r)
+      ! --- EXCLUDE the psi column. The assembled row is w*res with w = B.n, so its
+      ! --- exact psi derivative is w*d(res)/dpsi + res*d(w)/dpsi, and the second term
+      ! --- does NOT vanish at tangency - there the row would read as a constraint on
+      ! --- dpsi rather than on Vpar. That is inert in production because psi's trace
+      ! --- AND its tangential derivative are Dirichlet on the wall (which is exactly
+      ! --- why the code treats b.n as a static map), so those DOFs cannot move. This
+      ! --- fixture imposes no psi BC, so the column is live here and would mask the
+      ! --- property being tested: that the CONSTRAINT ON VPAR fades away.
+      rowmax=0.d0
+      do rr=1,nd
+        if (mod(rr-1,n_var)+1/=var_vpar) cycle
+        do ii=1,nd
+          if (mod(ii-1,n_var)+1==var_psi) cycle
+          rowmax=max(rowmax,abs(a(rr,ii)))
+        enddo
+        rowmax=max(rowmax,abs(r(rr)))
+      enddo
+      mag(kk)=rowmax
+    enddo
+    ! --- the row must FADE as the field goes tangential, not jump
+    big   = max(mag(1),mag(9))
+    small = max(mag(4),mag(6))
+    if (small > 1.d-3*big) then
+      write(*,*) 'FAIL weak Mach row does not fade at tangency',small,big
+      error stop 1
+    endif
+    ! --- and it must be continuous ACROSS the sign change: the two samples either
+    ! --- side of B.n = 0 must agree, where the legacy form would differ by ~2*cs
+    asym = abs(mag(4)-mag(6)) / max(big,tiny(1.d0))
+    if (asym > 1.d-4) then
+      write(*,*) 'FAIL weak Mach row jumps across B.n = 0',mag(4),mag(6),asym
+      error stop 1
+    endif
+    if (mag(5) /= 0.d0) then
+      write(*,*) 'FAIL weak Mach row nonzero at exact tangency',mag(5)
+      error stop 1
+    endif
+    mach1_weak=.false.
+    bcs(1)%mach1=.false.
+    nodes=base
+    write(*,'(a,es9.2,a,es9.2)') ' PASS: weak Mach row fades through B.n = 0 without vpar_smoothing'// &
+      ' (tangency/bulk ',small/big,', asymmetry ',asym
   end subroutine
   subroutine sweep(fd)
     real*8,intent(out)::fd(nd,nd)
