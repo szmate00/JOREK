@@ -152,23 +152,26 @@ program test_boundary
   else
     slope=-slope
   endif
-  ! 3. Only the SLOPE of u can drive an ExB flow; a constant offset cannot.
+  ! 3. Only the SLOPE of u can drive an ExB flow; a constant offset cannot. To
+  !    round-off, not exactly: fu_ven comes from eq_s, a floating-point sum over the
+  !    basis, so a constant field's derivative cancels to ~1e-16 rather than to 0.
   call set_u(slope,0.d0);   call assemble(a,r)
   call set_u(slope,7.d0);   call assemble(ap,rp)
-  if (any(a/=ap) .or. any(r/=rp)) error stop 'sheath ExB flux must depend on du/dl only'
-  ! 4. SATURATION at 2*cs*|b_n|: past the clip a further increase of the slope must
-  !    change nothing, and the u column must be exactly zero.
+  if ( maxval(abs(a-ap)) > 1.d-12*max(1.d0,maxval(abs(a))) .or.   &
+       maxval(abs(r-rp)) > 1.d-12*max(1.d0,maxval(abs(r))) )      &
+    error stop 'sheath ExB flux must depend on du/dl only'
+  ! 4. NO BOUND. The flux uses the same total flow as the Mach1 row, unclipped, so a
+  !    further increase of the slope must keep changing it and the u column must stay
+  !    non-zero. This is the inverse of the old assertion: it FAILS if a clip is
+  !    reintroduced here while the Mach row has none.
   call set_u(slope*1.d3,0.d0); call assemble(a,r)
   call set_u(slope*2.d3,0.d0); call assemble(ap,rp)
-  if (any(a/=ap) .or. any(r/=rp)) error stop 'sheath ExB flux is not clipped at 2*cs*|b_n|'
+  if ( maxval(abs(r-rp)) <= 0.d0 ) &
+    error stop 'sheath ExB flux must not saturate - it carries the unclipped drift'
   do row=1,nd
     if (mod(row-1,n_var)+1/=var_Ti .and. mod(row-1,n_var)+1/=var_Te) cycle
-    do i=1,2
-      do dof=1,4
-        col=n_var*4*(i-1)+n_var*(dof-1)+var_u
-        if (a(row,col)/=0.d0) error stop 'clipped sheath ExB flux still has a u column'
-      enddo
-    enddo
+    if ( all( a(row,var_u:nd:n_var) == 0.d0 ) .and. abs(r(row)) > 0.d0 ) &
+      error stop 'unclipped sheath ExB flux must keep its u column at large slope'
   enddo
   ! 5. Verify the ADDED term's Jacobian by DIFFERENCING against a control with the
   !    term absent. The default-path columns have a pre-existing finite-difference
@@ -176,7 +179,7 @@ program test_boundary
   !    or without this flux and is not addressed here; differencing cancels it, so
   !    what is tested is exactly the contribution of the new term and nothing else.
   eps=1.d-9
-  ! Sit well inside the middle branch, away from both kinks of min(max(.,0),bound).
+  ! Sit well away from the one remaining branch boundary, the sign of fu_vtot.
   slope=slope*0.1d0
   call set_u(0.d0,0.d0);  base=nodes; call assemble(ac,rc); call sweep(fdc)
   call set_u(slope,0.d0); base=nodes; call assemble(a,r)
@@ -265,7 +268,7 @@ program test_boundary
   !    identity directly instead.
   call test_corr_slope()
   call test_sheath_stabiliser()
-  write(*,*) 'PASS: sheath ExB energy flux - absent without a gradient, both senses, clipped, closed wall, FD Jacobian'
+  write(*,*) 'PASS: sheath ExB energy flux - absent without a gradient, both senses, unbounded, closed wall, FD Jacobian'
   write(*,*) 'PASS: production boundary assembler finite-difference Jacobians and type-2 exclusion'
 contains
   !> The SOLPS-style zero-sum sheath stabiliser: RESIDUAL bit-identical, Jacobian

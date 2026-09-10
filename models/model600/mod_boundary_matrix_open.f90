@@ -70,7 +70,7 @@ logical :: fu_edge, fu_mach, fu_wall
 real*8 :: fu_ven, fu_bn, fu_vn, fu_orient, fu_mres, fu_mjac(3), fu_ven_trial
 !> Outward ExB normal speed entering the SHEATH TRANSMISSION term, and the exact
 !! derivative flag of the clip that bounds it. See the block where they are set.
-real*8 :: fu_ven_sh, fu_ven_act, fu_ven_clip, fu_ven_open, fu_venc, fu_vtot, fu_bnu
+real*8 :: fu_ven_sh, fu_ven_act, fu_ven_open, fu_vtot
 real*8 :: fu_particle, fu_heat_i, fu_heat_e, fu_dp(2), fu_dhi(2), fu_dhe(2)
 real*8 :: fu_slope_i, fu_slope_e, fu_knee, fu_area
 real*8 :: fu_a,fu_ct,fu_cv,fu_qjac,fu_res
@@ -393,41 +393,26 @@ do ms=1, n_gauss
     ! --- uncompensated, and this term reports that honestly rather than pretending
     ! --- it was cancelled. The c_angle minimum-flux term is additional to both.
     ! ---
-    ! --- CLIP at 2*cs*|bn| is SOLPS's own bound on the ExB contribution (manual
-    ! --- 3.0.9 p.407/411; b2stbc_cbc = 1.0). Stated in cs units, so no incidence
-    ! --- cutoff and no fitted threshold enters, and min/max are piecewise linear so
-    ! --- a branch frozen for one linear solve is exact.
+    ! --- The sheath energy flux uses THE SAME total normal flow the Mach1 row does:
+    ! --- fu_bn*Vpar0 + fu_ven, unclipped. There used to be a SOLPS bound at
+    ! --- 2*cs*|b.n| here, whose only justification was to match the Mach row's
+    ! --- 2*cs/Btot clip on its own supplement. That clip is gone, so keeping this one
+    ! --- would leave the momentum and energy conditions bounding the same drift
+    ! --- differently - the exact inconsistency the bound was introduced to avoid.
     ! ---
     ! --- Branches, each with an exact derivative (fu_ven_open selects an open wall,
-    ! --- fu_ven_act the unclipped ExB, fu_ven_clip its SIGNED saturated branch):
-    ! ---   fu_vtot <= 0        : collection 0    d/du 0      d/dVpar -fu_bn
-    ! ---   |fu_ven| <  bound   : sh = fu_ven     d/du trial  d/dVpar 0
-    ! ---   |fu_ven| >= bound   : sh = +-bound    d/dT +-2*cs_T*|bn|
+    ! --- fu_ven_act the ExB column):
+    ! ---   fu_vtot <= 0 : collection 0    d/du 0      d/dVpar -fu_bn
+    ! ---   fu_vtot >  0 : sh = fu_ven     d/du trial  d/dVpar 0
     fu_ven_sh   = 0.d0
     fu_ven_act  = 0.d0
-    fu_ven_clip = 0.d0
     fu_ven_open = 0.d0
-    ! --- SOLPS's bound is +-2*cs*|b_x| with b_x the UNIT-field normal component, so
-    ! --- the velocity bound needs |b.n| = |B.n|/|B|, not |B.n|. fu_bn is B_pol.n and
-    ! --- carries a factor |B| (that is exactly why fu_bn*Vpar0 is a velocity: Vpar is
-    ! --- v/|B|). Using abs(fu_bn) directly made the clip a factor Btot ~ F0/R too
-    ! --- loose, and left the heat and Mach conditions bounding the same drift
-    ! --- differently - the Mach row limits its supplement to 2*cs/Btot in Vpar units,
-    ! --- whose normal-speed equivalent IS 2*cs*|b.n|.
-    fu_bnu = abs(fu_bn) / Btot
     if (fu_edge) then
-      fu_venc = max( -2.d0*cs0*fu_bnu, min( fu_ven, 2.d0*cs0*fu_bnu ) )
-      fu_vtot = fu_bn*Vpar0 + fu_venc
+      fu_vtot = fu_bn*Vpar0 + fu_ven
       if (fu_vtot > 0.d0) then
         fu_ven_open = 1.d0
-        fu_ven_sh   = fu_venc
-        if ( fu_ven .ge. 2.d0*cs0*fu_bnu ) then
-          fu_ven_clip = +1.d0
-        elseif ( fu_ven .le. -2.d0*cs0*fu_bnu ) then
-          fu_ven_clip = -1.d0
-        else
-          fu_ven_act = 1.d0
-        endif
+        fu_ven_sh   = fu_ven
+        fu_ven_act  = 1.d0
       else
         ! Wall closed: total inflow, collect nothing rather than emit.
         fu_ven_sh = -fu_bn*Vpar0
@@ -635,13 +620,11 @@ do ms=1, n_gauss
                                             + v * (gamma_sheath_i-1.d0) * r0  * Ti  * fu_ven_sh * BigR * dl        * theta * tstep &
                                             + v * (gamma_sheath_i-1.d0) * r0  * Ti  * cs0   * BigR  * dl * c_angle * theta * tstep &
                                             + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * cs_Ti * BigR  * dl * c_angle * theta * tstep
-                    ! --- Exact derivative of the clipped outward ExB flux: fu_ven_act is 1
-                    ! --- only in the unclipped branch, so the column is exactly right there
-                    ! --- and exactly zero on either saturated branch. The cs and |b_n| in the
-                    ! --- clip BOUND are lagged, as the magnetic geometry already is here.
+                    ! --- Exact derivative of the outward ExB flux. fu_ven_act is 1 on the
+                    ! --- open branch and 0 on the closed one, so the column is exact in both.
+                    ! --- With no clip there is no bound left to differentiate, hence no
+                    ! --- temperature column from this term.
                     amat(var_Ti,var_u)    = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * fu_ven_act * fu_ven_trial * BigR * dl * theta * tstep
-                    amat(var_Ti,var_Ti)   = amat(var_Ti,var_Ti)                                                                     &
-                                          + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * fu_ven_clip * 2.d0*cs_Ti*fu_bnu * BigR * dl * theta * tstep
                     ! --- ZERO-SUM SHEATH STABILISER (SOLPS b2stbc_stab_coeff_sheath_*).
                     ! --- alpha multiplies the SAME sheath flux prefactor as the transmission
                     ! --- coefficient and enters the JACOBIAN ONLY; the residual keeps the
@@ -651,7 +634,10 @@ do ms=1, n_gauss
                     amat(var_Ti,var_Ti)   = amat(var_Ti,var_Ti)                                       &
                                           + v * stab_coeff_sheath_ti * r0 * Ti * ( vpar0 * ps0_s * normal_sign3         &
                                               + fu_ven_sh * BigR * dl + cs0 * BigR * dl * c_angle ) * theta * tstep
-                    amat(var_Ti,var_Te)   = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * fu_ven_clip * 2.d0*cs_Te*fu_bnu * BigR * dl * theta * tstep
+                    ! --- was the clip bound's cross-temperature column; the bound is gone.
+                    ! --- Assigned, not deleted: this is a plain "=" slot, and an unwritten
+                    ! --- entry would keep whatever value was already in it.
+                    amat(var_Ti,var_Te)   = 0.d0
 
                     amat(var_Te,var_psi)  = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * vpar0 * psi_s * normal_sign3 * theta * tstep 
                     amat(var_Te,var_rho)  = + v * (gamma_sheath_e-1.d0) * rho * Te0 * vpar0 * ps0_s * normal_sign3 * theta * tstep & 
@@ -662,8 +648,6 @@ do ms=1, n_gauss
                                             + v * (gamma_sheath_e-1.d0) * r0  * Te  * cs0   * BigR  * dl * c_angle * theta * tstep &
                                             + v * (gamma_sheath_e-1.d0) * r0  * Te0 * cs_Te * BigR  * dl * c_angle * theta * tstep
                     amat(var_Te,var_u)    = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * fu_ven_act * fu_ven_trial * BigR * dl * theta * tstep
-                    amat(var_Te,var_Te)   = amat(var_Te,var_Te)                                                                     &
-                                          + v * (gamma_sheath_e-1.d0) * r0  * Te0 * fu_ven_clip * 2.d0*cs_Te*fu_bnu * BigR * dl * theta * tstep
                     ! --- ZERO-SUM SHEATH STABILISER (SOLPS b2stbc_stab_coeff_sheath_*).
                     ! --- alpha multiplies the SAME sheath flux prefactor as the transmission
                     ! --- coefficient and enters the JACOBIAN ONLY; the residual keeps the
@@ -673,7 +657,7 @@ do ms=1, n_gauss
                     amat(var_Te,var_Te)   = amat(var_Te,var_Te)                                       &
                                           + v * stab_coeff_sheath_te * r0 * Te * ( vpar0 * ps0_s * normal_sign3         &
                                               + fu_ven_sh * BigR * dl + cs0 * BigR * dl * c_angle ) * theta * tstep
-                    amat(var_Te,var_Ti)   = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * fu_ven_clip * 2.d0*cs_Ti*fu_bnu * BigR * dl * theta * tstep
+                    amat(var_Te,var_Ti)   = 0.d0
 
                     ! --- The closed-wall term below must be folded into THESE assignments,
                     ! --- not accumulated earlier: these are plain "=" and would overwrite it,
@@ -695,8 +679,6 @@ do ms=1, n_gauss
                                             + v * (gamma_sheath  -1.d0) * r0  *  T  * cs0   * BigR  * dl * c_angle * theta * tstep &
                                             + v * (gamma_sheath  -1.d0) * r0  *  T0 * cs_T  * BigR  * dl * c_angle * theta * tstep
                     amat(var_T,var_u)     = + v * (gamma_sheath  -1.d0) * r0  *  T0 * fu_ven_act * fu_ven_trial * BigR * dl * theta * tstep
-                    amat(var_T,var_T)     = amat(var_T,var_T)                                                                       &
-                                          + v * (gamma_sheath  -1.d0) * r0  *  T0 * fu_ven_clip * 2.d0*cs_T *fu_bnu * BigR * dl * theta * tstep
                     ! --- ZERO-SUM SHEATH STABILISER (SOLPS b2stbc_stab_coeff_sheath_*).
                     ! --- alpha multiplies the SAME sheath flux prefactor as the transmission
                     ! --- coefficient and enters the JACOBIAN ONLY; the residual keeps the
