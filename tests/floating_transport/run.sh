@@ -4,6 +4,7 @@ repo_dir=$(cd "$(dirname "$0")/../.." && pwd)
 build_dir=$(mktemp -d "${TMPDIR:-/tmp}/jorek-floating-tests.XXXXXX")
 compiler=${FC:-gfortran}
 cd "$build_dir"
+python3 "$repo_dir/tests/floating_transport/check_imports.py"
 "$compiler" -ffree-line-length-none -fcheck=all -ffpe-trap=invalid,zero,overflow \
   -fimplicit-none -Wall -Wextra -Wno-compare-reals \
   "$repo_dir/models/model600/mod_floating_transport.f90" \

@@ -38,7 +38,8 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        mach_one_bnd_integral, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,                            &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass,                                                   &
-       sheath_V_wall, floating_u_diag, D_perp, mach1_omit_drift, floating_u_mach_flux, min_sheath_angle, mach1_drop_grazing
+       sheath_V_wall, floating_u_diag, D_perp, mach1_omit_drift, floating_u_mach_flux, min_sheath_angle, mach1_drop_grazing, &
+       mach1_weak
 use mod_floating_u, only: floating_u_norm
 use mod_floating_transport_diag, only: weak_mach_diag_reset, FW_NT,                    &
                                        fw_res_max, fw_cs_max, fw_tgt_max, fw_bn_min,   &
