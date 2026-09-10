@@ -457,7 +457,11 @@ do ms=1, n_gauss
     endif
     mw_res = fu_bn*Vpar0 - mw_tgt
     mw_w   = fu_bn                   ! = d(res)/d(Vpar)
-    if (mw_on) call weak_mach_diag_sample(bnd_type1,mw_res,cs0*mw_bnu,mw_tgt,mw_bnu,mw_act)
+    ! --- Sampled only under floating_u_diag, which is also the flag the reset and the
+    ! --- print are gated on. Otherwise the running max and the point counts would
+    ! --- accumulate across every timestep with nothing ever clearing them.
+    if (mw_on .and. floating_u_diag) &
+      call weak_mach_diag_sample(bnd_type1,mw_res,cs0*mw_bnu,mw_tgt,mw_bnu,mw_act)
     if (fu_wall) then
       call floating_wall_flux(fu_vn,cs0,c_angle,gamma_sheath_i,fu_particle,fu_heat_i,fu_dp,fu_dhi)
       call floating_wall_flux(fu_vn,cs0,c_angle,gamma_sheath_e,fu_particle,fu_heat_e,fu_dp,fu_dhe)

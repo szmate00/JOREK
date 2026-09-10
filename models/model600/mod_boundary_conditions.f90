@@ -208,9 +208,6 @@ if ( floating_u_diag ) then
   fd_rho_min = huge(1.d0) ; fd_T_min = huge(1.d0)
   fd_pe_R = 0.d0 ; fd_pe_Z = 0.d0
 endif
-! --- The weak Mach condition is assembled in mod_boundary_matrix_open, so its
-! --- accumulators are reset here (before assembly) and reduced/printed below.
-if ( floating_u_diag .and. mach1_weak ) call weak_mach_diag_reset()
 
 do i=1, n_local_elms !=== do elements
 
@@ -1256,6 +1253,11 @@ if ( floating_u_diag .and. mach1_weak ) then
         fw_tot_n(fd_t)
     enddo
   endif
+  ! --- Reset AFTER printing, not before. boundary_matrix_open accumulates during
+  ! --- element assembly (construct_matrix_mod:201), which runs BEFORE this routine
+  ! --- (:788) - so resetting on entry wipes exactly the samples we are about to
+  ! --- report, and the table printed its header with no rows.
+  call weak_mach_diag_reset()
 endif
 
 if (RMP_on) then

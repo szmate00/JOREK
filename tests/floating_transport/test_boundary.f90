@@ -4,7 +4,8 @@ program test_boundary
   use data_structure
   use mod_boundary_matrix_open
   use mod_floating_boundary_edges
-  use mod_floating_transport_diag, only: transport_diag_reset,transport_diag_report
+  use mod_floating_transport_diag, only: transport_diag_reset,transport_diag_report,  &
+                                         weak_mach_diag_reset,fw_tot_n,fw_cs_max,fw_res_max
   use basis_at_gaussian, only: set_basis
   implicit none
   integer,parameter :: nd=4*4*n_var
@@ -347,7 +348,15 @@ contains
     ! --- difference straddles it - that is a bad test state, not a bad Jacobian.
     call set_u(1.d-4,0.d0)
     base=nodes
+    call weak_mach_diag_reset()
     call assemble(aw,rw)
+    ! --- The diagnostic must actually receive samples. It first shipped printing its
+    ! --- header with no rows, because the reset lived at the top of
+    ! --- boundary_conditions while the accumulation happens earlier, during element
+    ! --- assembly - so every sample was wiped just before being reported.
+    if (fw_tot_n(1) <= 0.d0) error stop 'weak Mach diagnostic received no samples'
+    if (fw_cs_max(1) <= 0.d0) error stop 'weak Mach diagnostic has no sonic target'
+    if (fw_res_max(1) < 0.d0) error stop 'weak Mach diagnostic residual not recorded'
     ! --- the row has to exist at all
     worst=0.d0
     do rr=1,nd
