@@ -268,6 +268,7 @@ program test_boundary
   !    identity directly instead.
   call test_corr_slope()
   call test_sheath_stabiliser()
+  call test_weak_mach()
   write(*,*) 'PASS: sheath ExB energy flux - absent without a gradient, both senses, unbounded, closed wall, FD Jacobian'
   write(*,*) 'PASS: production boundary assembler finite-difference Jacobians and type-2 exclusion'
 contains
@@ -328,6 +329,100 @@ contains
     write(*,*) 'PASS: floating_temperature_slope is the corr_neg_temp1 derivative'
   end subroutine
   !> d(RHS)/dx by central differences, for every DOF, into fd(row,col).
+  !> WEAK (Galerkin) drift-inclusive Bohm condition: every column of the residual
+  !! must be in the matrix. This is the check the nodal route never had - its slope
+  !! row's residual depended on four u DOFs with no column at all, which is what made
+  !! it a systematic per-step error with no Newton iteration to absorb it.
+  !! Sweeps psi as well as u/Vpar/Ti/Te, because the weak row has a psi column
+  !! (through B.n) that the shared `sweep` does not perturb.
+  subroutine test_weak_mach()
+    real*8 :: aw(nd,nd),rw(nd),fw(nd,nd),e2,sc,er,worst
+    integer,parameter :: wvars(5)=[var_u,var_vpar,var_Ti,var_Te,var_psi]
+    integer :: kk,vv,ii,dd,cc,rr
+    mach1_weak=.true.
+    nodes=base; nodes%boundary=1
+    bcs(1)%floating_u=.true.; bcs(1)%mach1=.true.; bcs(2)%floating_u=.false.
+    ! --- Sit WELL inside the compensating branch. In this fixture cs*|b.n| ~ 2.9e-3,
+    ! --- so a slope of 2e-3 puts vE.n right on the max(.,0) kink and the finite
+    ! --- difference straddles it - that is a bad test state, not a bad Jacobian.
+    call set_u(1.d-4,0.d0)
+    base=nodes
+    call assemble(aw,rw)
+    ! --- the row has to exist at all
+    worst=0.d0
+    do rr=1,nd
+      if (mod(rr-1,n_var)+1/=var_vpar) cycle
+      worst=max(worst,maxval(abs(aw(rr,:))))
+    enddo
+    if (worst<=0.d0) error stop 'weak Mach row was not assembled'
+    ! --- finite-difference every column of the Vpar rows
+    e2=1.d-9
+    fw=0.d0
+    do kk=1,5
+      vv=wvars(kk)
+      do ii=1,2
+        do dd=1,4
+          cc=n_var*4*(ii-1)+n_var*(dd-1)+vv
+          nodes=base; nodes(ii)%values(1,dd,vv)=nodes(ii)%values(1,dd,vv)+e2
+          call assemble(ap,rp)
+          nodes=base; nodes(ii)%values(1,dd,vv)=nodes(ii)%values(1,dd,vv)-e2
+          call assemble(am,rm)
+          fw(:,cc)=(rp-rm)/(2*e2)
+        enddo
+      enddo
+    enddo
+    nodes=base
+    ! --- rhs = -w*res and amat = +w*d(res)/dx, so amat + d(rhs)/dx must vanish
+    worst=0.d0
+    do kk=1,5
+      vv=wvars(kk)
+      do ii=1,2
+        do dd=1,4
+          cc=n_var*4*(ii-1)+n_var*(dd-1)+vv
+          do rr=1,nd
+            if (mod(rr-1,n_var)+1/=var_vpar) cycle
+            sc=max(1.d0,maxval(abs(aw(:,cc))))
+            er=abs(aw(rr,cc)+fw(rr,cc))/sc
+            if (er>worst) worst=er
+            if (er>1.d-5) then
+              write(*,*) 'FAIL weak Mach FD row,col,var,err',rr,cc,vv,er,aw(rr,cc),fw(rr,cc)
+              error stop 1
+            endif
+          enddo
+        enddo
+      enddo
+    enddo
+    ! --- SATURATED branch: drive the drift far past sonic outflow. Bohm is an
+    ! --- inequality, so nothing is imposed - the target pins at zero and the u and
+    ! --- temperature columns must be exactly zero, with the residual carrying only
+    ! --- the parallel term. This is the branch the nodal one-sided form also took.
+    ! --- vE.n scales as MINUS the slope here, so a negative slope is the one that
+    ! --- drives the drift past sonic outflow and saturates the target at zero.
+    call set_u(-1.d0,0.d0)
+    base=nodes
+    call assemble(aw,rw)
+    do rr=1,nd
+      if (mod(rr-1,n_var)+1/=var_vpar) cycle
+      do kk=1,4
+        vv=wvars(kk)
+        if (vv==var_vpar) cycle
+        do ii=1,2
+          do dd=1,4
+            cc=n_var*4*(ii-1)+n_var*(dd-1)+vv
+            if (aw(rr,cc)/=0.d0) then
+              write(*,*) 'FAIL saturated weak Mach row keeps a column',rr,cc,vv,aw(rr,cc)
+              error stop 1
+            endif
+          enddo
+        enddo
+      enddo
+    enddo
+    nodes=base
+    mach1_weak=.false.
+    bcs(1)%mach1=.false.
+    write(*,'(a,es9.2)') ' PASS: weak Mach Galerkin row - all Vpar columns match FD (worst rel err ',worst
+    write(*,'(a)')       '       ), saturated branch drops its u and T columns'
+  end subroutine
   subroutine sweep(fd)
     real*8,intent(out)::fd(nd,nd)
     integer::kk,vv,ii,dd,cc

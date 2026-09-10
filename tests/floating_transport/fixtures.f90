@@ -37,7 +37,7 @@ module phys_module
   real*8 :: density_reflection=0.d0,neutral_reflection=0.d0,visco_par_heating=0.d0
   real*8 :: gamma_sheath_i=0.6d0,gamma_sheath_e=3.d0,gamma_sheath=3.d0
   real*8 :: stab_coeff_sheath_te=0.d0,stab_coeff_sheath_ti=0.d0,stab_coeff_sheath_ni=0.d0
-  logical :: mach1_drop_grazing=.false.
+  logical :: mach1_drop_grazing=.false.,mach1_weak=.false.
   real*8 :: neutral_line_R_start(10)=0.d0,neutral_line_R_end(10)=0.d0
   real*8 :: neutral_line_Z_start(10)=0.d0,neutral_line_Z_end(10)=0.d0,neutral_line_source(10)=0.d0
 end module

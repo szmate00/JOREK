@@ -64,7 +64,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 F0,                                                 &
                 gamma_stangeby,gamma_i_stangeby,gamma_e_stangeby,   &
                 gamma_sheath, gamma_sheath_i, gamma_sheath_e,       &
-                mach1_drop_grazing,                                  &
+                mach1_drop_grazing, mach1_weak,                      &
                 stab_coeff_sheath_te, stab_coeff_sheath_ti,          &
                 stab_coeff_sheath_ni,                                &
                 deuterium_adas, deuterium_adas_1e20,                &
@@ -464,6 +464,27 @@ if ( my_id == 0 ) then
         ' NOTE: boundary type', i, ' carries the prescribed floating potential V_p-V_wall = Lambda*kTe/e'
     enddo
     if (my_id .eq. 0) then
+      if (mach1_weak) then
+        write(*,*) 'NOTE: mach1_weak imposes the drift-inclusive Bohm condition as a Galerkin'
+        write(*,*) '      boundary integral over each wall edge, not as nodal value+slope rows.'
+        write(*,*) '      res = (B.n)*Vpar - max(cs*|b.n| - vE.n, 0), weighted by d(res)/d(Vpar)'
+        write(*,*) '      = B.n, so the Vpar column carries (B.n)^2 and the constraint fades'
+        write(*,*) '      SMOOTHLY to nothing as the field grazes the wall. No floor, no clip,'
+        write(*,*) '      no angle threshold; mach1_drop_grazing and min_sheath_angle have no'
+        write(*,*) '      role in the momentum channel. It supersedes the nodal Mach rows, the'
+        write(*,*) '      legacy mach_one_bnd_integral and floating_u_mach_flux, all of which'
+        write(*,*) '      are forced off. Bohm is imposed only in an INTEGRAL sense, so the'
+        write(*,*) '      flow may be locally sub- or super-sonic inside an element - check the'
+        write(*,*) '      [mach1_weak] |res| column, which is that error in m/s.'
+      endif
+      if (mach1_weak .and. (mach_one_bnd_integral .or. floating_u_mach_flux)) then
+        write(*,*) 'WARNING: mach1_weak overrides mach_one_bnd_integral / floating_u_mach_flux.'
+        write(*,*) '         Those flags are ignored; unset them so the input reads honestly.'
+      endif
+      if (mach1_weak .and. mach1_drop_grazing) then
+        write(*,*) 'NOTE: mach1_drop_grazing is redundant under mach1_weak - the weak row is the'
+        write(*,*) '      continuous version of the same idea and needs no threshold.'
+      endif
       write(*,*) 'NOTE: floating_u is a PRESCRIBED-POTENTIAL boundary condition. It imposes the'
       write(*,*) '      value the potential would take at zero net current, but it does NOT'
       write(*,*) '      enforce zero current: only the u rows are replaced, zj keeps its ordinary'

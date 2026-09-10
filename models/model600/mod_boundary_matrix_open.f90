@@ -18,7 +18,7 @@ use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
 use mod_floating_transport, only: floating_mach_flux, floating_wall_flux, floating_temperature_slope
-use mod_floating_transport_diag, only: transport_diag_wall
+use mod_floating_transport_diag, only: transport_diag_wall, weak_mach_diag_sample
 use mod_floating_boundary_edges, only: floating_edge_is_exterior
 use mod_floating_u, only: floating_u_norm
 
@@ -67,6 +67,21 @@ logical    :: xpoint2
 integer    :: n_tor_local 
 logical    :: apply_natural_bc(0:n_var)
 logical :: fu_edge, fu_mach, fu_wall
+!! WEAK (Galerkin) DRIFT-INCLUSIVE BOHM CONDITION on Vpar. One residual per boundary
+!! quadrature point, projected onto the trace test functions, replacing the nodal
+!! value+slope rows entirely:
+!!
+!!    res = (B.n)*Vpar - max( cs*|b.n| - vE.n , 0 )
+!!
+!! i.e. the parallel normal flow must supply whatever the drift does not, and is never
+!! asked to reverse (Bohm is an inequality: if the drift alone already exceeds sonic
+!! outflow there is nothing to impose). The row is weighted by d(res)/d(Vpar) = B.n,
+!! which is the Galerkin projection onto the space Vpar can control - and which makes
+!! the constraint fade smoothly as the field grazes the wall, with NO threshold: the
+!! Vpar column carries (B.n)^2, so a tangential point simply loses authority and the
+!! natural condition grad(Vpar).n = 0 takes over continuously.
+logical :: mw_on
+real*8  :: mw_bnu, mw_tgt, mw_res, mw_act, mw_w, mw_bnj, mw_btj, mw_bnuj
 real*8 :: fu_ven, fu_bn, fu_vn, fu_orient, fu_mres, fu_mjac(3), fu_ven_trial
 !> Outward ExB normal speed entering the SHEATH TRANSMISSION term, and the exact
 !! derivative flag of the clip that bounds it. See the block where they are set.
@@ -166,7 +181,10 @@ if (fu_edge) then
   fu_edge=floating_edge_is_exterior(element_id,fu_side)
 endif
 if (floating_u_transport_diag) call floating_u_norm(fu_a,fu_ct,fu_cv)
-fu_mach = floating_u_mach_flux .and. fu_edge .and. &
+! --- mach1_weak REPLACES every other Mach route. Precedence is enforced here rather
+! --- than trusted to the namelist so the three can never be assembled together.
+mw_on = mach1_weak .and. with_vpar .and. (bcs(bnd_type1)%mach1 .or. bcs(bnd_type2)%mach1)
+fu_mach = floating_u_mach_flux .and. fu_edge .and. (.not. mach1_weak) .and. &
           (bcs(bnd_type1)%mach1 .or. bcs(bnd_type2)%mach1)
 fu_wall = floating_u_wall_flux .and. fu_edge
 
@@ -180,7 +198,7 @@ do i_var=1, n_var
   if ( (i_var==var_vpar) .and. (bcs(bnd_type1)%natural%vpar .or. bcs(bnd_type2)%natural%vpar))  apply_natural_bc(i_var)=.true.
 enddo
 
-if (fu_mach) apply_natural_bc(var_vpar)=.true.
+if (fu_mach .or. mw_on) apply_natural_bc(var_vpar)=.true.
 
 do i=1,2    ! sum over 2 verices
   
@@ -426,6 +444,20 @@ do ms=1, n_gauss
     endif
     if (fu_mach) call floating_mach_flux(Vpar0,fu_ven,fu_bn,Btot,cs0,vpar_smoothing, &
                                        vpar_smoothing_coef,fu_mres,fu_mjac)
+
+    ! --- WEAK BOHM RESIDUAL. fu_bn is B_pol.n and carries a factor |B|, which is why
+    ! --- fu_bn*Vpar0 is already a velocity (Vpar is v/|B|); |b.n| therefore needs the
+    ! --- explicit /Btot. No clip, no floor, no angle threshold enters.
+    mw_bnu = abs(fu_bn) / Btot
+    mw_tgt = cs0*mw_bnu - fu_ven
+    mw_act = 1.d0
+    if ( mw_tgt .le. 0.d0 ) then
+      mw_tgt = 0.d0                  ! drift alone already sonic or more: impose nothing
+      mw_act = 0.d0
+    endif
+    mw_res = fu_bn*Vpar0 - mw_tgt
+    mw_w   = fu_bn                   ! = d(res)/d(Vpar)
+    if (mw_on) call weak_mach_diag_sample(bnd_type1,mw_res,cs0*mw_bnu,mw_tgt,mw_bnu,mw_act)
     if (fu_wall) then
       call floating_wall_flux(fu_vn,cs0,c_angle,gamma_sheath_i,fu_particle,fu_heat_i,fu_dp,fu_dhi)
       call floating_wall_flux(fu_vn,cs0,c_angle,gamma_sheath_e,fu_particle,fu_heat_e,fu_dp,fu_dhe)
@@ -460,7 +492,7 @@ do ms=1, n_gauss
     endif
 
     factor_cs_bnd_integral = 0.d0
-    if (mach_one_bnd_integral) factor_cs_bnd_integral = 1.d0
+    if (mach_one_bnd_integral .and. .not. mach1_weak) factor_cs_bnd_integral = 1.d0
 
     do i=1,2                ! loop over nodes
 
@@ -514,6 +546,7 @@ do ms=1, n_gauss
 
           endif ! with_vpar
           if (fu_mach) rhs_ij(var_vpar) = -v*dl*Zbig*fu_mres
+          if (mw_on)   rhs_ij(var_vpar) = -v*BigR*dl*Zbig*mw_w*mw_res
           if (fu_wall) then
             fu_area = v*BigR*dl*tstep
             ! REPLACE the legacy diffusive boundary corrections, not the volume
@@ -532,7 +565,7 @@ do ms=1, n_gauss
 
           do i_var = 1, n_var
             if ( .not. apply_natural_bc(i_var) ) cycle
-            if (fu_mach .and. i_var==var_vpar) then
+            if ((fu_mach .or. mw_on) .and. i_var==var_vpar) then
               if (.not. bcs(nodes(i)%boundary)%mach1) cycle
             endif
             RHS(index_ij+(i_var-1)*(n_tor_local)) = RHS(index_ij+(i_var-1)*(n_tor_local)) + rhs_ij(i_var) * ws
@@ -725,6 +758,45 @@ do ms=1, n_gauss
                 endif   ! with_vpar
                 ! Magnetic geometry is lagged for these experiments. All vpar,
                 ! u, rho and temperature dependencies are differentiated.
+                if (mw_on) then
+                  ! --- WEAK BOHM JACOBIAN. Every column of the residual is here; the
+                  ! --- row replaces whatever the natural vpar terms put in it.
+                  ! ---   res  = (B.n)*Vpar - max(cs*|b.n| - vE.n, 0)
+                  ! ---   d/dVpar = B.n            d/du = +act*d(vE.n)/du
+                  ! ---   d/dT    = -act*|b.n|*d(cs)/dT
+                  ! ---   d/dpsi  via B.n, using ps0_s*normal_sign3 == fu_bn*BigR*dl so
+                  ! ---           the trial contribution to B.n is psi_s*normal_sign3/(BigR*dl)
+                  ! --- The Galerkin WEIGHT mw_w is left lagged. That omission is safe in a
+                  ! --- way the nodal row's missing u column was NOT: d(w)/dx multiplies the
+                  ! --- residual itself, so it vanishes as the constraint is met, whereas a
+                  ! --- missing d(res)/dx term does not vanish and accumulates every step.
+                  amat(var_vpar,:)=0.d0
+                  amat(var_vpar,var_vpar)= v*BigR*dl*Zbig*mw_w * mw_w * vpar
+                  amat(var_vpar,var_u)   = v*BigR*dl*Zbig*mw_w * mw_act * fu_ven_trial
+                  ! --- psi column. The row that reaches the RHS is w*res with w = B.n,
+                  ! --- and BOTH factors depend on psi, so the derivative is
+                  ! ---     w*d(res)/dpsi + res*d(w)/dpsi
+                  ! --- The second term is NOT negligible: it is multiplied by the
+                  ! --- residual, which is only small once the constraint is met. During
+                  ! --- a transient it dominated the column by a factor ~2.7 in the unit
+                  ! --- test. Omitting a term because "it vanishes at the solution" is
+                  ! --- precisely the reasoning that left the nodal slope row without its
+                  ! --- u columns, so it is carried here.
+                  ! --- d(B.n)/ddof uses ps0_s*normal_sign3 == fu_bn*BigR*dl, and
+                  ! --- d(Btot)/ddof the trial R/Z derivatives, so |b.n| is exact too.
+                  mw_bnj  = psi_s*normal_sign3/(BigR*dl)
+                  mw_btj  = ( ps0_x*rho_x + ps0_y*rho_y ) / ( BigR**2 * Btot )
+                  mw_bnuj = sign(1.d0,fu_bn)*mw_bnj/Btot - abs(fu_bn)*mw_btj/Btot**2
+                  amat(var_vpar,var_psi) = v*BigR*dl*Zbig                                   &
+                        * (   mw_w * ( Vpar0*mw_bnj - mw_act*cs0*mw_bnuj )                  &
+                            + mw_res * mw_bnj )
+                  if (with_TiTe) then
+                    amat(var_vpar,var_Ti)= -v*BigR*dl*Zbig*mw_w * mw_act * cs_Ti * mw_bnu
+                    amat(var_vpar,var_Te)= -v*BigR*dl*Zbig*mw_w * mw_act * cs_Te * mw_bnu
+                  else
+                    amat(var_vpar,var_T) = -v*BigR*dl*Zbig*mw_w * mw_act * cs_T  * mw_bnu
+                  endif
+                endif
                 if (fu_mach) then
                   amat(var_vpar,:)=0.d0
                   amat(var_vpar,var_vpar)=v*dl*Zbig*fu_mjac(1)*vpar
@@ -791,7 +863,7 @@ do ms=1, n_gauss
                   do i_var = 1, n_var
 
                     if ( .not. apply_natural_bc(i_var) ) cycle
-                    if (fu_mach .and. i_var==var_vpar) then
+                    if ((fu_mach .or. mw_on) .and. i_var==var_vpar) then
                       if (.not. bcs(nodes(i)%boundary)%mach1) cycle
                     endif
 

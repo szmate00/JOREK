@@ -6,6 +6,20 @@ module mod_floating_transport_diag
   integer, parameter :: np=24, ns=6
   real*8, save :: score(ns)=huge(1.d0), payload(np,ns)=0.d0
   public :: transport_diag_reset, transport_diag_volume, transport_diag_wall
+
+  ! --- WEAK MACH ROW DIAGNOSTICS, per boundary type. Accumulated here rather than in
+  ! --- mod_boundary_conditions because the condition is now assembled in
+  ! --- mod_boundary_matrix_open. Deliberately MPI-free: this module is compiled into
+  ! --- the serial unit-test build. The reduction and the print live in
+  ! --- mod_boundary_conditions, which already runs after assembly on every rank.
+  integer, parameter, public :: FW_NT = 9
+  real*8, save, public :: fw_res_max(FW_NT) = -1.d0     !< max |residual| of the weak condition
+  real*8, save, public :: fw_cs_max(FW_NT)  = -1.d0     !< max cs*|b.n|, the sonic normal target
+  real*8, save, public :: fw_tgt_max(FW_NT) = -1.d0     !< max parallel normal flow actually demanded
+  real*8, save, public :: fw_bn_min(FW_NT)  = huge(1.d0)!< most grazing constrained point
+  real*8, save, public :: fw_act_n(FW_NT)   = 0.d0      !< points where the one-sided branch is ACTIVE
+  real*8, save, public :: fw_tot_n(FW_NT)   = 0.d0      !< constrained points visited
+  public :: weak_mach_diag_reset, weak_mach_diag_sample
   public :: transport_diag_report, transport_diag_updated
 contains
   subroutine transport_diag_reset()
@@ -149,4 +163,33 @@ contains
       endif
     enddo
   end subroutine
+  !> Zero the weak-Mach accumulators. Called once per timestep before assembly.
+  subroutine weak_mach_diag_reset()
+    fw_res_max = -1.d0
+    fw_cs_max  = -1.d0
+    fw_tgt_max = -1.d0
+    fw_bn_min  = huge(1.d0)
+    fw_act_n   = 0.d0
+    fw_tot_n   = 0.d0
+  end subroutine
+
+  !> One sample per boundary quadrature point. `res` is the constraint residual in
+  !! JOREK velocity units, `cs_bn` the sonic normal target, `tgt` the parallel normal
+  !! flow demanded, `bnu` = |b.n|, and `act` is 1 when the one-sided branch is active
+  !! (i.e. the drift is being compensated) and 0 when it has saturated to zero
+  !! because the drift alone already exceeds sonic outflow.
+  subroutine weak_mach_diag_sample(bnd_type, res, cs_bn, tgt, bnu, act)
+    integer, intent(in) :: bnd_type
+    real*8,  intent(in) :: res, cs_bn, tgt, bnu, act
+    if ( bnd_type < 1 .or. bnd_type > FW_NT ) return
+    !$omp critical (weak_mach_diag)
+    fw_res_max(bnd_type) = max( fw_res_max(bnd_type), abs(res) )
+    fw_cs_max(bnd_type)  = max( fw_cs_max(bnd_type),  cs_bn )
+    fw_tgt_max(bnd_type) = max( fw_tgt_max(bnd_type), tgt )
+    fw_bn_min(bnd_type)  = min( fw_bn_min(bnd_type),  bnu )
+    fw_act_n(bnd_type)   = fw_act_n(bnd_type) + act
+    fw_tot_n(bnd_type)   = fw_tot_n(bnd_type) + 1.d0
+    !$omp end critical (weak_mach_diag)
+  end subroutine
+
 end module

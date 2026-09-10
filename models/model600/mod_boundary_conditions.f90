@@ -40,6 +40,9 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        bcs, loop_voltage, central_density, central_mass,                                                   &
        sheath_V_wall, floating_u_diag, D_perp, mach1_omit_drift, floating_u_mach_flux, min_sheath_angle, mach1_drop_grazing
 use mod_floating_u, only: floating_u_norm
+use mod_floating_transport_diag, only: weak_mach_diag_reset, FW_NT,                    &
+                                       fw_res_max, fw_cs_max, fw_tgt_max, fw_bn_min,   &
+                                       fw_act_n, fw_tot_n
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -204,6 +207,9 @@ if ( floating_u_diag ) then
   fd_rho_min = huge(1.d0) ; fd_T_min = huge(1.d0)
   fd_pe_R = 0.d0 ; fd_pe_Z = 0.d0
 endif
+! --- The weak Mach condition is assembled in mod_boundary_matrix_open, so its
+! --- accumulators are reset here (before assembly) and reduced/printed below.
+if ( floating_u_diag .and. mach1_weak ) call weak_mach_diag_reset()
 
 do i=1, n_local_elms !=== do elements
 
@@ -837,6 +843,11 @@ do i=1, n_local_elms !=== do elements
           m1_skip = .false.
           if ( mach1_drop_grazing .and. m1_smin .gt. 0.d0 .and. abs(bn) .lt. m1_smin ) &
             m1_skip = .true.
+          ! --- mach1_weak imposes the condition as a boundary integral in
+          ! --- mod_boundary_matrix_open, so NO nodal row is assembled here at all.
+          ! --- apply_cs stays true, which is what keeps the Dirichlet Vpar row skipped
+          ! --- above, so the trace is governed by the weak condition alone.
+          if ( mach1_weak ) m1_skip = .true.
 
           m1_Dfl  = BigR**2 * U0_b           / ps0_b
           m1_ucol = BigR**2 * element_size_0 / ps0_b
@@ -1208,6 +1219,40 @@ if ( floating_u_diag ) then
         ! --- sentinel by tiny() printed -4.5e307. Report 0 for such types instead.
         merge( fd_m1dr_max(fd_t) / max(fd_m1cs_max(fd_t), tiny(1.d0)),                 &
                0.d0, fd_m1cs_max(fd_t) .gt. 0.d0 )
+    enddo
+  endif
+endif
+
+! --- WEAK MACH CONDITION TABLE. Printed only when mach1_weak is active, because the
+! --- nodal columns (m1 cs / m1 drift) above are meaningless then - no nodal row exists.
+! ---   |res|      how well the Galerkin condition is met, in m/s. THE health metric.
+! ---   cs*|b.n|   the sonic normal target.
+! ---   target     the parallel normal flow actually demanded of Vpar.
+! ---   |b.n| min  the most grazing constrained point: shows the tail the row must carry.
+! ---   comp%      fraction of quadrature points where the one-sided branch is ACTIVE,
+! ---              i.e. the drift is being compensated. 100 - comp% is the fraction
+! ---              where the drift alone already exceeds sonic outflow and nothing is
+! ---              imposed, which is the Bohm inequality doing its job, not a failure.
+if ( floating_u_diag .and. mach1_weak ) then
+  call MPI_AllReduce(MPI_IN_PLACE, fw_res_max, FW_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fw_cs_max,  FW_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fw_tgt_max, FW_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fw_bn_min,  FW_NT, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fw_act_n,   FW_NT, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fw_tot_n,   FW_NT, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, err)
+  if ( my_id .eq. 0 ) then
+    write(*,'(A)') ' [mach1_weak] type    |res|[m/s]    cs*|b.n|[m/s]   target[m/s]' // &
+                   '    |b.n| min      comp[%]       npts'
+    do fd_t = 1, FW_NT
+      if ( fw_tot_n(fd_t) .le. 0.d0 ) cycle
+      write(*,'(A,I3,4X,ES12.4,3X,ES12.4,3X,ES12.4,3X,ES12.4,3X,F8.2,3X,ES11.4)') &
+        ' [mach1_weak] ', fd_t,                    &
+        fw_res_max(fd_t) / fd_sq,                  &
+        fw_cs_max(fd_t)  / fd_sq,                  &
+        fw_tgt_max(fd_t) / fd_sq,                  &
+        fw_bn_min(fd_t),                           &
+        1.d2 * fw_act_n(fd_t) / fw_tot_n(fd_t),    &
+        fw_tot_n(fd_t)
     enddo
   endif
 endif

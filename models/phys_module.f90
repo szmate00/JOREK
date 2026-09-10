@@ -66,6 +66,7 @@ module phys_module
   !! rather than a prescribed value. b.n is frozen in time (psi is Dirichlet on the
   !! wall), so the threshold is a STATIC spatial map: no node can flicker across it.
   logical :: mach1_drop_grazing   !< skip the Mach row where the field grazes, instead of floor+clip
+  logical :: mach1_weak           !< impose the drift-inclusive Bohm condition as a boundary integral instead of nodal rows
   real*8  :: stab_coeff_sheath_te !< zero-sum stabiliser on the electron sheath energy BC
   real*8  :: stab_coeff_sheath_ti !< zero-sum stabiliser on the ion sheath energy BC
   real*8  :: stab_coeff_sheath_ni !< zero-sum stabiliser on the sheath particle BC
