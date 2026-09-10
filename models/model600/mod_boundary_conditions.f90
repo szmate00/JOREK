@@ -114,6 +114,12 @@ real*8  :: fd_vin_max(FD_NT), fd_vout_max(FD_NT)
 !! the sound-speed term and the ExB drift compensation whose tangential derivative is
 !! missing from the slope row on bicubic elements. Their ratio IS the inconsistency.
 real*8  :: fd_m1cs_max(FD_NT), fd_m1dr_max(FD_NT)
+!! Locations of the rho and T minima. A per-type extremum with no position has
+!! blocked three separate diagnoses in this campaign: it cannot say whether the
+!! reported minimum is even at the cell that is failing, so it cannot distinguish
+!! a steady drain from a single-step overshoot.
+real*8  :: fd_rho_R(FD_NT), fd_rho_Z(FD_NT), fd_TmR(FD_NT), fd_TmZ(FD_NT)
+real*8  :: fd_loc_rho(FD_NT), fd_loc_T(FD_NT)  !! LOCAL minima, captured pre-reduction
 real*8  :: fw_loc(9)   !! local |res| maxima, kept so the owning rank's (R,Z) survives
 real*8  :: m1_dr
 !> One-sided drift-compatible Bohm supplement (SOLPS BCMOM=13, non-marginal branch,
@@ -209,6 +215,7 @@ if ( floating_u_diag ) then
   fd_vin_max = 0.d0 ; fd_vout_max = 0.d0
   fd_m1cs_max = -1.d0 ; fd_m1dr_max = -1.d0
   fd_rho_min = huge(1.d0) ; fd_T_min = huge(1.d0)
+  fd_rho_R = 0.d0 ; fd_rho_Z = 0.d0 ; fd_TmR = 0.d0 ; fd_TmZ = 0.d0
   fd_pe_R = 0.d0 ; fd_pe_Z = 0.d0
 endif
 
@@ -331,10 +338,16 @@ do i=1, n_local_elms !=== do elements
         if ( D_perp(1) .gt. 0.d0 ) fd_pe = fd_vn * fd_h / D_perp(1)
         fd_res_max(bnd_type) = max( fd_res_max(bnd_type), fd_res )
         fd_vn_max (bnd_type) = max( fd_vn_max (bnd_type), fd_vn  )
-        fd_rho_min(bnd_type) = min( fd_rho_min(bnd_type),                               &
-                                    node_list%node(inode)%values(1,1,var_rho) )
-        fd_T_min  (bnd_type) = min( fd_T_min  (bnd_type),                               &
-                                    node_list%node(inode)%values(1,1,fu_var_T) )
+        if ( node_list%node(inode)%values(1,1,var_rho) .lt. fd_rho_min(bnd_type) ) then
+          fd_rho_min(bnd_type) = node_list%node(inode)%values(1,1,var_rho)
+          fd_rho_R  (bnd_type) = node_list%node(inode)%x(1,1,1)
+          fd_rho_Z  (bnd_type) = node_list%node(inode)%x(1,1,2)
+        endif
+        if ( node_list%node(inode)%values(1,1,fu_var_T) .lt. fd_T_min(bnd_type) ) then
+          fd_T_min(bnd_type) = node_list%node(inode)%values(1,1,fu_var_T)
+          fd_TmR  (bnd_type) = node_list%node(inode)%x(1,1,1)
+          fd_TmZ  (bnd_type) = node_list%node(inode)%x(1,1,2)
+        endif
         if ( fd_pe .gt. fd_pe_max(bnd_type) ) then
           fd_pe_max(bnd_type) = fd_pe
           fd_pe_R  (bnd_type) = node_list%node(inode)%x(1,1,1)
@@ -1180,6 +1193,11 @@ if ( floating_u_diag ) then
     fd_loc(1,fd_t) = fd_pe_max(fd_t)
     fd_loc(2,fd_t) = real(my_id,8)
   enddo
+  ! --- Capture the LOCAL minima before reducing: the coordinate of a minimum can
+  ! --- only be recovered from the rank that actually owns it, so this must happen
+  ! --- ahead of the MIN reductions below, not after them.
+  fd_loc_rho = fd_rho_min
+  fd_loc_T   = fd_T_min
   call MPI_AllReduce(MPI_IN_PLACE, fd_res_max, FD_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fd_vn_max,  FD_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fd_rho_min, FD_NT, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, err)
@@ -1188,6 +1206,21 @@ if ( floating_u_diag ) then
   call MPI_AllReduce(MPI_IN_PLACE, fd_vout_max,FD_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fd_m1cs_max,FD_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fd_m1dr_max,FD_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
+  ! --- Blank the coordinates on every rank that does NOT own the global minimum,
+  ! --- with -huge rather than zero so a negative Z is not beaten by a non-owner's
+  ! --- zero, then MAX-reduce: only the owning rank's values survive.
+  do fd_t = 1, FD_NT
+    if ( fd_loc_rho(fd_t) .gt. fd_rho_min(fd_t) ) then
+      fd_rho_R(fd_t) = -huge(1.d0) ; fd_rho_Z(fd_t) = -huge(1.d0)
+    endif
+    if ( fd_loc_T(fd_t)   .gt. fd_T_min(fd_t)   ) then
+      fd_TmR(fd_t)   = -huge(1.d0) ; fd_TmZ(fd_t)   = -huge(1.d0)
+    endif
+  enddo
+  call MPI_AllReduce(MPI_IN_PLACE, fd_rho_R, FD_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fd_rho_Z, FD_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fd_TmR,   FD_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
+  call MPI_AllReduce(MPI_IN_PLACE, fd_TmZ,   FD_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fd_loc,     FD_NT, MPI_2DOUBLE_PRECISION, MPI_MAXLOC, MPI_COMM_WORLD, err)
   ! --- fd_pe_max is reduced through fd_loc (MAXLOC carries the owning rank so the
   ! --- location can be broadcast). Copy the reduced value back, otherwise rank 0
@@ -1203,17 +1236,19 @@ if ( floating_u_diag ) then
     call MPI_Bcast(fd_pe_Z(fd_t), 1, MPI_DOUBLE_PRECISION, fd_owner, MPI_COMM_WORLD, err)
   enddo
   if ( my_id .eq. 0 ) then
-    write(*,'(A)') ' [floating_u] type   |u-uf|[V]    |vE.n|[m/s]    Pe_core  Pe at (R,Z)          min rho    min T[eV]   vE.n out    vE.n IN     m1 cs      m1 drift   drift/cs'
+    write(*,'(A)') ' [floating_u] type   |u-uf|[V]    |vE.n|[m/s]    Pe_core  Pe at (R,Z)          min rho    rho at (R,Z)         min T[eV]   T at (R,Z)           vE.n out    vE.n IN     m1 cs      m1 drift   drift/cs'
     do fd_t = 1, FD_NT
       if ( fd_res_max(fd_t) .lt. 0.d0 ) cycle
-      write(*,'(A,I3,4X,ES10.3,4X,ES10.3,4X,ES9.2,2X,A,F6.3,A,F7.3,A,4X,ES10.3,3X,ES10.3,3X,ES10.3,2X,ES10.3,2X,ES10.3,2X,ES10.3,2X,ES9.2)') &
+      write(*,'(A,I3,4X,ES10.3,4X,ES10.3,4X,ES9.2,2X,A,F6.3,A,F7.3,A,4X,ES10.3,2X,A,F6.3,A,F7.3,A,3X,ES10.3,2X,A,F6.3,A,F7.3,A,3X,ES10.3,2X,ES10.3,2X,ES10.3,2X,ES10.3,2X,ES9.2)') &
         ' [floating_u] ', fd_t,                                    &
         fd_res_max(fd_t) / abs(fu_C_V),                            &
         fd_vn_max(fd_t)  / fd_sq,                                  &
         fd_pe_max(fd_t),                                           &
         '(', fd_pe_R(fd_t), ',', fd_pe_Z(fd_t), ')',               &
         fd_rho_min(fd_t),                                          &
+        '(', fd_rho_R(fd_t), ',', fd_rho_Z(fd_t), ')',             &
         fd_T_min(fd_t) / ( MU_ZERO * central_density * 1.d20 * EL_CHG ),                &
+        '(', fd_TmR(fd_t), ',', fd_TmZ(fd_t), ')',                 &
         fd_vout_max(fd_t) / fd_sq, fd_vin_max(fd_t) / fd_sq,                          &
         fd_m1cs_max(fd_t), fd_m1dr_max(fd_t),                                          &
         ! --- A type never visited by a Mach row keeps its -1 sentinels; dividing the
