@@ -99,11 +99,69 @@ def main():
             print('  %-52s MISSING: %s' % (rel, ', '.join(missing)))
         else:
             print('  %-52s only-list complete (%d imported)' % (rel, len(imported)))
+    bad += extent_check()
     if bad:
-        print('IMPORT CHECK FAIL: %d file(s) reference a phys_module name they do not import' % bad)
+        print('IMPORT CHECK FAIL: %d problem(s)' % bad)
         return 1
     print('IMPORT CHECK PASS')
     return 0
+
+
+def extent_check():
+    """Whole-array assignments between arrays of different declared extent.
+
+    mod_boundary_conditions declares fd_* with FD_NT = 12 while the diagnostics
+    module declares fw_* with FW_NT = 9, so `fd_loc_rho = fw_mom_max` is a shape
+    mismatch that ifort rejects. The harness cannot compile that file, so this is
+    caught statically instead.
+    """
+    bad = 0
+    files = ['models/model600/mod_boundary_conditions.f90',
+             'models/model600/mod_floating_transport_diag.f90']
+    # resolve named integer parameters, so an extent written as 9 and one written
+    # as FW_NT (= 9) compare equal instead of reporting a false mismatch
+    const = {}
+    for rel in files:
+        path = os.path.join(REPO, rel)
+        if not os.path.exists(path):
+            continue
+        for m in re.finditer(r'integer\s*,\s*parameter[^:]*::\s*([A-Za-z]\w*)\s*=\s*(\d+)',
+                             read(path), re.I):
+            const[m.group(1).lower()] = m.group(2)
+
+    def resolve(e):
+        return const.get(e.lower(), e)
+
+    extent = {}
+    for rel in files:
+        path = os.path.join(REPO, rel)
+        if not os.path.exists(path):
+            continue
+        for line in read(path).split('\n'):
+            s = line.split('!')[0]
+            if not re.match(r'\s*(real|integer)', s, re.I) or '::' not in s:
+                continue
+            for item in s.split('::', 1)[1].split(','):
+                m = re.match(r'\s*([A-Za-z]\w*)\s*\(\s*([A-Za-z]\w*|\d+)\s*\)', item)
+                if m:
+                    extent.setdefault(m.group(1).lower(), m.group(2))
+    for rel in files:
+        path = os.path.join(REPO, rel)
+        if not os.path.exists(path):
+            continue
+        for n, line in enumerate(read(path).split('\n'), 1):
+            s = line.split('!')[0].strip()
+            m = re.fullmatch(r'([A-Za-z]\w*)\s*=\s*([A-Za-z]\w*)', s)
+            if not m:
+                continue
+            l, r = m.group(1).lower(), m.group(2).lower()
+            if l in extent and r in extent and resolve(extent[l]) != resolve(extent[r]):
+                print('  %s:%d  EXTENT MISMATCH: %s(%s) = %s(%s)'
+                      % (rel, n, l, extent[l], r, extent[r]))
+                bad += 1
+    if not bad:
+        print('  %-52s no cross-extent whole-array assignments' % 'array extents')
+    return bad
 
 if __name__ == '__main__':
     sys.exit(main())

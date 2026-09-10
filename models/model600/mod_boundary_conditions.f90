@@ -121,7 +121,7 @@ real*8  :: fd_m1cs_max(FD_NT), fd_m1dr_max(FD_NT)
 !! a steady drain from a single-step overshoot.
 real*8  :: fd_rho_R(FD_NT), fd_rho_Z(FD_NT), fd_TmR(FD_NT), fd_TmZ(FD_NT)
 real*8  :: fd_loc_rho(FD_NT), fd_loc_T(FD_NT)  !! LOCAL minima, captured pre-reduction
-real*8  :: fw_loc(9)   !! local |res| maxima, kept so the owning rank's (R,Z) survives
+real*8  :: fw_loc(FW_NT) !! local fw_* maxima, kept so the owning rank's (R,Z) survives
 real*8  :: m1_dr
 !> One-sided drift-compatible Bohm supplement (SOLPS BCMOM=13, non-marginal branch,
 !! without extrapolation). NO incidence floor, NO clip, NO smoothing: the single
@@ -1295,10 +1295,13 @@ if ( floating_u_diag .and. mach1_weak ) then
   call MPI_AllReduce(MPI_IN_PLACE, fw_res_sum, FW_NT, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fw_mom_min, FW_NT, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, err)
   call MPI_AllReduce(MPI_IN_PLACE, fw_mom_sum, FW_NT, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, err)
-  fd_loc_rho = fw_mom_max   ! reuse: local moment maxima, captured pre-reduction
+  ! --- fw_loc is sized FW_NT (9), fd_loc_rho is FD_NT (12): the fd_* and fw_* arrays
+  ! --- have DIFFERENT extents, so they must not be cross-assigned. fw_loc is free
+  ! --- again by here - its earlier use for fw_res_max finished above.
+  fw_loc = fw_mom_max
   call MPI_AllReduce(MPI_IN_PLACE, fw_mom_max, FW_NT, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, err)
   do fd_t = 1, FW_NT
-    if ( fd_loc_rho(fd_t) .lt. fw_mom_max(fd_t) ) then
+    if ( fw_loc(fd_t) .lt. fw_mom_max(fd_t) ) then
       fw_mom_R(fd_t) = -huge(1.d0) ; fw_mom_Z(fd_t) = -huge(1.d0)
     endif
   enddo
