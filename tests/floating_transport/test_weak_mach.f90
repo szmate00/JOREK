@@ -8,6 +8,8 @@
 !!     exactly zero; only the Vpar column survives.
 !!  4. B.n crossing zero along the wall: the row fades continuously with the incidence, with no
 !!     jump between the two signs.
+!!  5. Inflow closure on the density row: absent while the total normal flow is outward; with
+!!     inward flow every column (rho, u, Vpar, Ti, Te) of the rho rows matches finite differences.
 program test_weak_mach
   use mod_parameters
   use phys_module
@@ -140,6 +142,46 @@ program test_weak_mach
   enddo
   if ( rowmax(4) > 1.d-12*rowmax(7) ) error stop 'FAIL: row does not vanish at tangency'
   write(*,'(a)') ' PASS: weak row is even in B.n, monotone in |B.n| and vanishes at tangency'
+
+  ! ---------------------------------------------------------------- 5. inflow closure
+  do i = 1, 4
+    base(i)%values(1,1,var_psi) = 0.08d0*base(i)%x(1,1,1)
+    base(i)%values(1,2,var_psi) = 0.08d0
+  enddo
+  ! outward total flow: the rho rows must be exactly those of the mach1_weak-off assembly
+  mach1_weak = .false.; nodes = base; call assemble(a0, r0)
+  mach1_weak = .true.;  nodes = base; call assemble(a, r)
+  do row = 1, nd
+    if ( .not. isvar(row, var_rho) ) cycle
+    if ( any(a(row,:) /= a0(row,:)) .or. r(row) /= r0(row) ) error stop 'FAIL: inflow term active with outward flow'
+  enddo
+  ! inward total flow: reverse Vpar so Vpar*(B.n) < 0 with a small drift
+  base(:)%values(1,1,var_vpar) = -0.04d0
+  nodes = base; call assemble(a, r)
+  worst = 0.d0
+  do k = 1, size(fd_vars)
+    var = fd_vars(k)
+    do i = 1, 2
+      do dof = 1, 4
+        col = n_var*4*(i-1) + n_var*(dof-1) + var
+        nodes = base; nodes(i)%values(1,dof,var) = nodes(i)%values(1,dof,var) + eps; call assemble(ap, rp)
+        nodes = base; nodes(i)%values(1,dof,var) = nodes(i)%values(1,dof,var) - eps; call assemble(am, rm)
+        scale = max(1.d0, maxval(abs(a(:,col))))
+        do row = 1, nd
+          if ( .not. isvar(row, var_rho) ) cycle
+          err = abs( a(row,col) + (rp(row)-rm(row))/(2*eps) ) / scale
+          worst = max(worst, err)
+          if ( err > 1.d-6 ) then
+            write(*,'(a,3i5,3es12.3)') ' FAIL: inflow FD row,col,var,err,amat,fd', row, col, var, err, a(row,col), -(rp(row)-rm(row))/(2*eps)
+            error stop 1
+          endif
+        enddo
+      enddo
+    enddo
+  enddo
+  nodes = base; call assemble(a0, r0)
+  if ( all(r0(pack([(row, row=1,nd)], [(isvar(row,var_rho), row=1,nd)])) == 0.d0) ) error stop 'FAIL: inflow term not assembled'
+  write(*,'(a,es9.2)') ' PASS: inflow closure: inactive for outward flow, every rho-row column matches FD, worst rel err ', worst
 
 contains
 

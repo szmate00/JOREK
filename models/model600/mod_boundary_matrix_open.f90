@@ -59,7 +59,7 @@ real*8     :: c_1, c_2, c_3, c_angle, neutral_source
 real*8     :: element_size_ij, element_size_kl, element_size_perp
 real*8     :: grad_t(2), B0_R, B0_Z, factor_cs_bnd_integral
 logical    :: mw_on                                              ! weak Bohm condition (mach1_weak) on this edge
-real*8     :: mw_orient, mw_vEn, mw_Bn, mw_tgt, mw_act, mw_res, mw_w
+real*8     :: mw_orient, mw_vEn, mw_Bn, mw_vn, mw_tgt, mw_act, mw_res, mw_w, mw_in
 logical    :: xpoint2
 integer    :: n_tor_local 
 logical    :: apply_natural_bc(0:n_var)
@@ -336,6 +336,16 @@ do ms=1, n_gauss
     mw_w      = 0.d0
     if ( mw_on ) mw_w = Zbig * mw_Bn * dl
 
+    ! --- Inflow closure. Where the TOTAL normal flow vn = Vpar*(B_pol.n) + vE.n is inward the density
+    ! --- equation, advected with the undifferentiated test function, has no boundary datum. The weak
+    ! --- inflow term  -oint v*min(vn,0)*(rho - rho_in) dl  with rho_in = 0 (no plasma enters from a wall)
+    ! --- supplies it: its coefficient is the physical inflow rate, it vanishes identically where the flow
+    ! --- is outward, and it is what takes over where the weak Bohm row above loses authority at grazing
+    ! --- incidence. Same edges as that row. The temperatures get no term: with rho_in = 0 nothing enters.
+    mw_vn = mw_Bn * Vpar0 + mw_vEn
+    mw_in = 0.d0
+    if ( mw_on .and. (mw_vn .lt. 0.d0) ) mw_in = 1.d0
+
     c_1 = vpar_smoothing_coef(1); c_2 = vpar_smoothing_coef(2); c_3 = vpar_smoothing_coef(3)
     if (vpar_smoothing) then
       factor = 0.25d0 * ( 1.d0 + tanh( (abs(bdotn) - c_1) / c_2 ) )**2 - c_3
@@ -368,6 +378,9 @@ do ms=1, n_gauss
             ! --- Density reflection and minimum particle flux
             rhs_ij(var_rho)   = + v * density_reflection * r0      * vpar0 * ps0_s * normal_sign3 * tstep     &
                                 - v * r0      * cs0 * BigR * dl * c_angle * tstep     ! particle flux at 1 degree angle  
+
+            ! --- Weak inflow term (mach1_weak): rho relaxes to rho_in = 0 at the inflow rate |vn|
+            rhs_ij(var_rho)   = rhs_ij(var_rho) + v * mw_in * mw_vn * r0 * BigR * dl * tstep
 
             ! --- Sheath heat flux (c_angle for mininum heat fluxes at grazing angles)
             if (with_TiTe) then
@@ -449,6 +462,11 @@ do ms=1, n_gauss
                   amat(var_rho,var_rho)   = - v * density_reflection * rho * vpar0 * ps0_s * normal_sign3 * theta * tstep &
                                             + v                      * rho * cs0   * BigR * dl * c_angle  * theta * tstep 
                   amat(var_rho,var_vpar)  = - v * density_reflection * r0  * vpar  * ps0_s * normal_sign3 * theta * tstep 
+
+                  ! --- Weak inflow term (mach1_weak): exact columns of vn*rho, vn = Vpar*(B_pol.n) - orient*R*u_s/dl
+                  amat(var_rho,var_rho)   = amat(var_rho,var_rho)  - v * mw_in * mw_vn * rho  * BigR * dl * theta * tstep
+                  amat(var_rho,var_vpar)  = amat(var_rho,var_vpar) - v * mw_in * mw_Bn * vpar * r0 * BigR * dl * theta * tstep
+                  amat(var_rho,var_u)     =                        + v * mw_in * mw_orient * BigR**2 * psi_s * r0 * theta * tstep
 
                   ! --- Sheath heat flux
                   if (with_TiTe) then                
