@@ -1,7 +1,9 @@
 !> Serial checks of the weak Bohm row (mach1_weak) in the PRODUCTION assembler
 !! mod_boundary_matrix_open.f90, compiled against tests/floating_transport/fixtures.f90.
 !!
-!!  1. mach1_weak off: no Vpar row is assembled and nothing else changes when it is switched on.
+!!  1. mach1_weak off: no Vpar row is assembled. Switched on with u constant along the wall, every
+!!     other row keeps its residual and its columns, except for the new u columns of the sheath
+!!     fluxes (a sensitivity that exists even where vE.n = 0).
 !!  2. Compensating branch: every column of the Vpar rows (u, Vpar, Ti, Te, rho) matches a
 !!     central finite difference of the residual. Removing any column makes this fail.
 !!  3. Saturated branch (drift alone beyond sonic outflow): the u and temperature columns are
@@ -10,6 +12,9 @@
 !!     jump between the two signs.
 !!  5. Inflow closure on the density row: absent while the total normal flow is outward; with
 !!     inward flow every column (rho, u, Vpar, Ti, Te) of the rho rows matches finite differences.
+!!  6. Sheath energy fluxes on the total outgoing flow: with a tangential u slope every column of
+!!     the Ti and Te rows matches finite differences; with inward total flow they collect nothing
+!!     beyond the grazing-incidence floor.
 program test_weak_mach
   use mod_parameters
   use phys_module
@@ -42,9 +47,10 @@ program test_weak_mach
     base(i)%values(1,3,var_psi)  = 0.02d0                    ! free normal derivative, enters |B| only
   enddo
   base%boundary = 1
-  call set_u(1.d-4)      ! small tangential u slope: inside the compensating branch, away from the kink
 
   ! ---------------------------------------------------------------- 1. off / on
+  ! u constant along the wall: vE.n = 0, so with outward flow every row but Vpar's is unchanged
+  call set_u(0.d0)
   mach1_weak = .false.
   nodes = base; call assemble(a0, r0)
   do row = 1, nd
@@ -52,16 +58,25 @@ program test_weak_mach
   enddo
   mach1_weak = .true.
   nodes = base; call assemble(a, r)
+  ! (to roundoff: the total-flow measure max(vn,0)*R*dl equals vpar0*ps0_s*normal_sign3 analytically;
+  !  the u columns are new and are checked against finite differences in 6)
   do row = 1, nd
     if ( isvar(row, var_vpar) ) cycle
-    if ( any(a(row,:) /= a0(row,:)) .or. r(row) /= r0(row) ) error stop 'FAIL: mach1_weak changed a non-Vpar row'
+    scale = max(1.d0, maxval(abs(a0(row,:))), abs(r0(row)))
+    if ( abs(r(row) - r0(row)) > 1.d-12*scale ) error stop 'FAIL: mach1_weak changed a residual'
+    do col = 1, nd
+      if ( isvar(col, var_u) ) cycle
+      if ( abs(a(row,col) - a0(row,col)) > 1.d-12*scale ) error stop 'FAIL: mach1_weak changed a non-u column'
+    enddo
   enddo
   worst = 0.d0
   do row = 1, nd
     if ( isvar(row, var_vpar) ) worst = max(worst, maxval(abs(a(row,:))))
   enddo
   if ( worst <= 0.d0 ) error stop 'FAIL: weak row not assembled'
-  write(*,'(a)') ' PASS: mach1_weak off leaves no Vpar row; on touches only the Vpar rows'
+  write(*,'(a)') ' PASS: mach1_weak off leaves no Vpar row; on keeps every other residual and column but u'
+  call set_u(1.d-4)      ! small tangential u slope: inside the compensating branch, away from the kink
+  nodes = base; call assemble(a, r)
 
   ! ---------------------------------------------------------------- 2. FD every column
   ! rhs = -w*res and amat = +w*d(res)/dx, so amat + d(rhs)/dx must vanish. psi carries no column:
@@ -182,6 +197,57 @@ program test_weak_mach
   nodes = base; call assemble(a0, r0)
   if ( all(r0(pack([(row, row=1,nd)], [(isvar(row,var_rho), row=1,nd)])) == 0.d0) ) error stop 'FAIL: inflow term not assembled'
   write(*,'(a,es9.2)') ' PASS: inflow closure: inactive for outward flow, every rho-row column matches FD, worst rel err ', worst
+
+  ! ---------------------------------------------------------------- 6. energy fluxes on the total flow
+  base(:)%values(1,1,var_vpar) = 0.04d0
+  call set_u(1.d-4)
+  nodes = base; call assemble(a, r)
+  worst = 0.d0
+  do k = 1, size(fd_vars)
+    var = fd_vars(k)
+    do i = 1, 2
+      do dof = 1, 4
+        col = n_var*4*(i-1) + n_var*(dof-1) + var
+        nodes = base; nodes(i)%values(1,dof,var) = nodes(i)%values(1,dof,var) + eps; call assemble(ap, rp)
+        nodes = base; nodes(i)%values(1,dof,var) = nodes(i)%values(1,dof,var) - eps; call assemble(am, rm)
+        scale = max(1.d0, maxval(abs(a(:,col))))
+        do row = 1, nd
+          if ( .not. (isvar(row, var_Ti) .or. isvar(row, var_Te)) ) cycle
+          err = abs( a(row,col) + (rp(row)-rm(row))/(2*eps) ) / scale
+          worst = max(worst, err)
+          if ( err > 1.d-6 ) then
+            write(*,'(a,3i5,3es12.3)') ' FAIL: energy-row FD row,col,var,err,amat,fd', row, col, var, err, a(row,col), -(rp(row)-rm(row))/(2*eps)
+            error stop 1
+          endif
+        enddo
+      enddo
+    enddo
+  enddo
+  ! the u column must actually be there
+  err = 0.d0
+  do row = 1, nd
+    if ( .not. isvar(row, var_Te) ) cycle
+    do i = 1, 2
+      do dof = 1, 4
+        err = max(err, abs(a(row, n_var*4*(i-1)+n_var*(dof-1)+var_u)))
+      enddo
+    enddo
+  enddo
+  if ( err <= 0.d0 ) error stop 'FAIL: energy row has no u column'
+  ! inward total flow: the sheath collection is gone, only the c_angle floor remains, and the
+  ! Te row must then be independent of u and Vpar
+  base(:)%values(1,1,var_vpar) = -0.04d0
+  nodes = base; call assemble(a, r)
+  do row = 1, nd
+    if ( .not. isvar(row, var_Te) ) cycle
+    do i = 1, 2
+      do dof = 1, 4
+        if ( a(row, n_var*4*(i-1)+n_var*(dof-1)+var_u)    /= 0.d0 ) error stop 'FAIL: closed wall keeps a u column'
+        if ( a(row, n_var*4*(i-1)+n_var*(dof-1)+var_vpar) /= 0.d0 ) error stop 'FAIL: closed wall keeps a Vpar column'
+      enddo
+    enddo
+  enddo
+  write(*,'(a,es9.2)') ' PASS: sheath energy fluxes on the total flow: Ti/Te rows match FD, closed wall collects nothing, worst rel err ', worst
 
 contains
 
