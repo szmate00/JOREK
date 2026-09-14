@@ -21,6 +21,7 @@ program test_weak_mach
   use data_structure
   use mod_boundary_matrix_open
   use basis_at_gaussian, only: set_basis
+  use mod_floating_diag, only: floating_diag_reset, floating_diag_report
   implicit none
   integer, parameter :: nd = 4*4*n_var
   integer, parameter :: fd_vars(5) = [var_u, var_vpar, var_Ti, var_Te, var_rho]
@@ -248,6 +249,14 @@ program test_weak_mach
     enddo
   enddo
   write(*,'(a,es9.2)') ' PASS: sheath energy fluxes on the total flow: Ti/Te rows match FD, closed wall collects nothing, worst rel err ', worst
+
+  ! ---------------------------------------------------------------- 7. diagnostics change nothing
+  call floating_diag_reset()
+  floating_u_diag = .true.;  nodes = base; call assemble(ap, rp)
+  floating_u_diag = .false.; nodes = base; call assemble(a, r)
+  if ( any(a /= ap) .or. any(r /= rp) ) error stop 'FAIL: floating_u_diag changed the equations'
+  call floating_diag_report(0)
+  write(*,'(a)') ' PASS: wall diagnostics leave the equations untouched'
 
 contains
 

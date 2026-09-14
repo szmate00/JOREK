@@ -17,6 +17,7 @@ use phys_module
 use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
+use mod_floating_diag, only: floating_diag_add
 
 implicit none
 
@@ -362,6 +363,12 @@ do ms=1, n_gauss
       fx_v = fx_out * mw_Bn * BigR * dl
       fx_p = fx_out * vpar0 * normal_sign3
       fx_u = - fx_out * mw_orient * BigR**2
+    endif
+
+    if ( floating_u_diag .and. mw_on ) then
+      call floating_diag_add(bnd_type1, ws*dl, mw_vn, mw_vEn, mw_Bn, mw_res, cs0*abs(bdotn), r0, Te0, BigR, y_g(ms))
+      if ( bnd_type2 .ne. bnd_type1 ) &
+        call floating_diag_add(bnd_type2, ws*dl, mw_vn, mw_vEn, mw_Bn, mw_res, cs0*abs(bdotn), r0, Te0, BigR, y_g(ms))
     endif
 
     c_1 = vpar_smoothing_coef(1); c_2 = vpar_smoothing_coef(2); c_3 = vpar_smoothing_coef(3)

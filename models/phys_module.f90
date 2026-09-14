@@ -66,6 +66,7 @@ module phys_module
   real*8  :: sheath_Lambda        !< Floating sheath potential drop in units of Te/e (model600 bcs%floating_u)
   real*8  :: sheath_V_wall        !< Wall potential in volts (model600 bcs%floating_u)
   logical :: admissible_update    !< Reject a step whose rho or T is non-positive at any Gauss point; halve dt and re-solve (model600)
+  logical :: floating_u_diag      !< Print per-boundary-type wall diagnostics of the weak Bohm row and floating potential (model600)
   integer :: mode(n_tor)          !< Toroidal mode number corresponding to the JOREK modes, e.g., for n_period=8 and n_tor=3, mode(:)=0,8,8
   integer :: mode_coord(n_coord_tor)  !< Toroidal mode number corresponding to the JOREK RZ grid modes
   integer :: nout                 !< Output a restart file every nout timesteps

@@ -99,6 +99,7 @@ subroutine preset_parameters
   sheath_Lambda         = 3.d0   ! floating sheath drop, e*Phi/Te
   sheath_V_wall         = 0.d0   ! wall potential [V]
   admissible_update     = .false.! forced .true. with bcs%floating_u
+  floating_u_diag       = .false.! wall diagnostics table each matrix construction
 
   amix                 = 0.d0
   amix_freeb           = 0.85d0
