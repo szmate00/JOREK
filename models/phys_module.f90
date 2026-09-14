@@ -62,6 +62,7 @@ module phys_module
   logical :: vpar_smoothing       !< apply a smoothing function to smooth jumps in Vpar at B.n=0
   real*8  :: vpar_smoothing_coef(3) !< coefficients for the smoothing profile of the parallel velocity
   real*8  :: min_sheath_angle     !< For sheath boundary conditions: Minimum incident angle for heat and particle fluxes (in degrees)
+  real*8  :: sheath_Lambda        !< Floating sheath potential drop in units of Te/e, used by bcs(:)%sheath_j. -0.5*log(2*pi*(me/mi)*(1+Ti/Te)) = 2.84 for deuterium with Ti=Te; 3 by convention.
   integer :: mode(n_tor)          !< Toroidal mode number corresponding to the JOREK modes, e.g., for n_period=8 and n_tor=3, mode(:)=0,8,8
   integer :: mode_coord(n_coord_tor)  !< Toroidal mode number corresponding to the JOREK RZ grid modes
   integer :: nout                 !< Output a restart file every nout timesteps
@@ -197,6 +198,7 @@ module phys_module
     type (type_dirichlet_bc) :: dirichlet
     type (type_natural_bc)   :: natural
     logical                  :: mach1 
+    logical                  :: sheath_j   !< sheath current-voltage BC on the potential (model600)
   end type type_bcs
 
   type (type_bcs), dimension(max_bnd_types) :: bcs   

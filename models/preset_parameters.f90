@@ -95,6 +95,7 @@ subroutine preset_parameters
   Vpar_smoothing        = .false. ! smooth the transitions of Vpar positive/negavtive at B.n
   Vpar_smoothing_coef   = (/0.01d0, 0.d0, 0.d0 /) !(/ 0.01d0, 0.016d0, 0.00575446347d0/)
   min_sheath_angle      = 1.d0   ! 1 degree (not in radians)
+  sheath_Lambda         = 3.d0   ! Stangeby 2.68 / Artola (2026); 2.84 is the deuterium Ti=Te value
 
   amix                 = 0.d0
   amix_freeb           = 0.85d0
@@ -437,6 +438,8 @@ subroutine preset_parameters
   bcs( 19)%dirichlet%rho_imp  = .false.
 
   ! --- Mach 1
+  bcs(:)%sheath_j = .false.  ! opt-in: replaces the Dirichlet u rows on the flagged boundary types
+
   bcs(:)%mach1   = .false.
 
   bcs(  1)%mach1 = .true.
