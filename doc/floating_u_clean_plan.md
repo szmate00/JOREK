@@ -266,6 +266,26 @@ supersonic demand); the inflow closure supplies the density datum where the tota
 `mach1_weak_drift` keeps the SOLPS non-marginal form for A/B on the same restart. The wall table
 reports max |Vpar*B|/cs and min Ti so the interaction is measured, not argued. R1-R3 are shelved.
 
+### R5. The non-marginal condition in FLUX form (thought through 2026-09-14 night, not coded)
+
+SOLPS's recommended non-marginal condition states that the ion flux into the sheath is at least
+sonic, Gamma >= n*cs*|b.n|, drifts included. Its guard-cell velocity is the implementation device
+(and is clipped at ~2cs); the physics is the flux. In JOREK the velocity form builds a one-element
+Vpar layer whose divergence must cancel the ExB inflow to O(1) (R4). Proposal: keep the momentum
+row marginal, Vpar = +-cs/|B| (what the presheath delivers at the MPS entrance), and impose the
+sonic flux on the DENSITY row as a wall sink of the deficit,
+
+    - oint v * rho * max( cs*|b.n| - vn , 0 ) dl ,   vn = Vpar*(B.n) + vE.n ,
+
+which with marginal Vpar is max(-vE.n, 0): the wall removes plasma at the inward drift rate, as a
+boundary flux against a volume advection term - the pair Galerkin handles correctly. Exact rho and
+u columns, no Vpar-u coupling, no branch on momentum, no supersonic layer. Energy rows and kinetic
+recycling use the same flux max(vn, cs*|b.n|). This term CONTAINS the inflow closure (deficit >=
+|vn| when vn < 0) and replaces it. Open physics: whether the sheath collects the full sonic flux
+when the tangential field drives the drift away from the wall (Geraldini 2024 says they compete at
+shallow incidence); marginal and flux-form non-marginal bracket it, the A/B measures the bracket.
+Fallback if the velocity form is wanted as such: SOLPS's 2cs bound plus the inflow closure.
+
 ### What stays
 
 Items 1-4 and 6-9 are unchanged and verified. The definition of done is unchanged: default
