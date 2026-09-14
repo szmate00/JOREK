@@ -305,7 +305,8 @@ subroutine do_jorek_timestep(this, sim, ev)
   integer        :: n_halvings
   integer, parameter :: max_halvings = 8
   logical        :: update_applied
-  real*8         :: state_min(3)
+  real*8         :: state_min(3), state_at(2,3)
+  integer        :: iworst
 
   call init_expr()
   allocate(res(exprs_all_int%n_expr+1))
@@ -314,7 +315,15 @@ subroutine do_jorek_timestep(this, sim, ev)
   ! Get the timestep size. With admissible_update a rejected step halves it; the next steps then grow
   ! back geometrically towards the requested value, and tstep_prev is the step actually taken.
   dt_jorek = get_tstep_n(this%istep)
-  if ( admissible_update .and. this%dt_last .gt. 0.d0 ) dt_jorek = min(dt_jorek, 2.d0*this%dt_last)
+  if ( admissible_update .and. this%dt_last .gt. 0.d0 ) then
+    dt_jorek = min(dt_jorek, 2.d0*this%dt_last)
+    if ( dt_jorek .lt. get_tstep_n(this%istep) / 2.d0**max_halvings ) then
+      if ( sim%my_id .eq. 0 ) write(*,'(a,es10.3,a)') '>>>>> admissible_update: dt has collapsed to ', dt_jorek, &
+        ' - the state is inadmissible at any step size, not undershooting. ABORTING <<<<<'
+      sim%stop_now = .true.
+      return
+    endif
+  endif
   if (dt_jorek .eq. 0.d0) then
     write(*,*) "Jorek timestep is 0, assuming end of simulation."
     sim%stop_now = .true.
@@ -408,7 +417,7 @@ subroutine do_jorek_timestep(this, sim, ev)
     n_halvings = 0
     do
       call update_values(sim%fields%element_list, sim%fields%node_list, this%deltas)
-      call state_gauss_minima(sim%my_id, sim%fields%node_list, sim%fields%element_list, state_vars(), state_min)
+      call state_gauss_minima(sim%my_id, sim%fields%node_list, sim%fields%element_list, state_vars(), state_min, state_at)
       update_applied = .true.
       if ( all(state_min .gt. 0.d0) ) exit
       this%deltas%val(1:this%deltas%n) = -this%deltas%val(1:this%deltas%n)
@@ -420,8 +429,11 @@ subroutine do_jorek_timestep(this, sim, ev)
         sim%stop_now = .true.
         return
       endif
-      if ( sim%my_id == 0 ) write(*,'(a,es10.3,a,3es10.2)') ' admissible_update: rejected, dt -> ', 0.5d0*dt_jorek, &
-                                                            '  min rho,Ti,Te = ', state_min
+      if ( sim%my_id == 0 ) then
+        iworst = minloc(state_min, 1)
+        write(*,'(a,es10.3,a,3es10.2,a,2f9.4)') ' admissible_update: rejected, dt -> ', 0.5d0*dt_jorek, &
+            '  min rho,Ti,Te = ', state_min, '  worst at (R,Z) = ', state_at(:,iworst)
+      endif
       if ( present(ev) ) ev%start = ev%start - 0.5d0*dt
       dt_jorek = 0.5d0*dt_jorek ; tstep = dt_jorek ; dt = dt_jorek * sim%t_norm
       this%solver%tstep = tstep
