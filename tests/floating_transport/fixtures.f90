@@ -57,11 +57,26 @@ module data_structure
     integer :: n_elements=0
     type(type_element) :: element(8)
   end type
+contains
+  subroutine make_deep_copy_node(a, b)
+    type(type_node), intent(in)  :: a
+    type(type_node), intent(out) :: b
+    b = a
+  end subroutine
 end module
 module mpi_mod
   implicit none
-  integer, parameter :: MPI_COMM_WORLD=0
+  integer, parameter :: MPI_COMM_WORLD=0, MPI_DOUBLE_PRECISION=1, MPI_MIN=2
 contains
+  subroutine MPI_COMM_SIZE(comm, n, ierr)
+    integer :: comm, n, ierr
+    n = 1; ierr = comm
+  end subroutine
+  subroutine MPI_ALLREDUCE(send, recv, n, datatype, op, comm, ierr)
+    real*8  :: send(*), recv(*)
+    integer :: n, datatype, op, comm, ierr
+    recv(1:n) = send(1:n); ierr = datatype + op + comm
+  end subroutine
   subroutine MPI_ABORT(comm, code, ierr)
     integer :: comm, code, ierr
     ierr = code + comm
@@ -78,6 +93,7 @@ module basis_at_gaussian
   use gauss
   implicit none
   real*8 :: H1(2,2,4), H1_s(2,2,4), H1_ss(2,2,4), HZ(1,1)=1.d0, HZ_p(1,1)=0.d0
+  real*8 :: H(4,4,4,4)   ! 2D bicubic Hermite basis (vertex, dof, ms, mt) from the 1D products
 contains
   subroutine set_basis()
     integer :: i
@@ -90,6 +106,22 @@ contains
       H1_s(:,2,i) =[ 3*s*s-4*s+1,      3*s*s-2*s     ]
       H1_ss(:,1,i)=[ 12*s-6,          -12*s+6        ]
       H1_ss(:,2,i)=[ 6*s-4,            6*s-2         ]
+    enddo
+    call set_basis_2d()
+  end subroutine
+  !> vertices 1:(0,0) 2:(1,0) 3:(1,1) 4:(0,1); dofs 1:value 2:d/ds 3:d/dt 4:d2/dsdt
+  subroutine set_basis_2d()
+    integer :: iv, jd, ms, mt, ia, ib, ja, jb
+    do iv = 1, 4
+      ia = merge(1, 2, iv==1 .or. iv==4) ; ib = merge(1, 2, iv==1 .or. iv==2)
+      do jd = 1, 4
+        ja = merge(1, 2, jd==1 .or. jd==3) ; jb = merge(1, 2, jd==1 .or. jd==2)
+        do ms = 1, 4
+          do mt = 1, 4
+            H(iv,jd,ms,mt) = H1(ia,ja,ms) * H1(ib,jb,mt)
+          enddo
+        enddo
+      enddo
     enddo
   end subroutine
 end module

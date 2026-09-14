@@ -835,6 +835,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   if ( any(bcs(:)%floating_u) ) then
     write(*,REAL_FMT) 'sheath_Lambda         ', sheath_Lambda
     write(*,REAL_FMT) 'sheath_V_wall         ', sheath_V_wall
+    write(*,LOGI_FMT) 'admissible_update     ', admissible_update
     write(*,'(1X,A,30I3)') 'floating_u on boundary types:', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%floating_u )
   end if
 

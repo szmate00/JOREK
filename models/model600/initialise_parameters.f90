@@ -209,7 +209,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 fluid_configs, init_particles_only,                 &
                 find_RZ_nearby_iter, find_RZ_nearby_tol,            &
                 min_sheath_angle, bcs, part_kill_ratio,             &
-                sheath_Lambda, sheath_V_wall,                       &
+                sheath_Lambda, sheath_V_wall, admissible_update,    &
                 use_sc, add_sources_in_sc, visco_sc_num,            &
                 D_perp_sc_num, D_par_sc_num, ZK_perp_sc_num,        &
                 ZK_par_sc_num, ZK_i_perp_sc_num, ZK_i_par_sc_num,   &
@@ -271,6 +271,8 @@ if (my_id .eq. 0) then
       write(*,*) 'ERROR: floating_u normalisation selftest failed, EXITING!'
       stop
     end if
+    if ( .not. admissible_update ) write(*,*) 'NOTE: bcs%floating_u sets admissible_update = .true.'
+    admissible_update = .true.
   end if
 
   if ( ( n_tor .eq. 1 ) .and. freeboundary .and. (.not. freeboundary_equil) ) then
