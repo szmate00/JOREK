@@ -90,7 +90,7 @@ To see all available boundary conditions, see the table below for boundary type 
 | Variable | Dirichlet | Natural (bc_natural_open=.t.) | Special | None applied |
 |----------|-----------|-------------------------------|---------|--------------|
 | $\psi$ | `bcs(i)%dirichlet%psi` | None | [free-boundary](/JOREK/physics/model_extensions/freebound.html) | ? |
-| $u$ | `bcs(i)%dirichlet%u` | None | None | ? |
+| $u$ | `bcs(i)%dirichlet%u` | None | `bcs(i)%sheath_j` (model600)<br><br>**Condition**: sheath current-voltage characteristic<br>$j = j_{sat}(1-e^{\Lambda - e\Phi/k_BT_e})$<br>with $\Lambda$ = sheath_Lambda<br>[see here](/JOREK/../../../doc/sheath_current_bc.md) | ? |
 | $j$ | `bcs(i)%dirichlet%zj` | None | [free-boundary](/JOREK/physics/model_extensions/freebound.html) | Determined by induction equation |
 | $w$ | `bcs(i)%dirichlet%w` | None | None | ? |
 | $\rho$ | `bcs(i)%dirichlet%rho` | `bcs(i)%natural%rho`<br><br>**Condition**: $D\nabla\rho\cdot\mathbf{n} = -r_\rho\rho\mathbf{v}_\parallel \cdot\mathbf{n}$<br>with $r_\rho$ = density_reflection | None | $\nabla\rho\cdot\mathbf{n}=0$ |
