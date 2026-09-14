@@ -182,6 +182,25 @@ c. Same with kinetic neutrals on. Done criterion 5 from the wall-flux table.
 d. dt halved and mesh refined at the targets: the inflow fraction and the wall fluxes must converge.
    If they do not, item 4's inflow state is wrong, not under-resolved.
 
+## Status (2026-09-14)
+
+| item | state | commit / test |
+|---|---|---|
+| 1 potential row | done | `mod_floating_u.f90`, self-test both field signs |
+| 2 weak Bohm row | done | FD every column, negative controls, B.n sweep |
+| 3 one total flow | done | Ti/Te rows FD, closed wall, kinetic recycling on the same flow; calc_NeTevpar Te fix |
+| 4 inflow closure | done | rho rows FD, absent for outward flow |
+| 5 admissible update | done | `mod_state_check`, between-node undershoot test; no MPI build yet |
+| 6 exterior sides | done | connectivity test |
+| 7 diagnostics | done (wall table); boundary postproc expressions not ported | equations untouched |
+| 8 tests | done | `tests/floating_transport/run.sh` |
+| 9 documentation | done | `doc/floating_u.md` |
+| 10 ladder | not started: needs the cluster build | |
+
+Ladder step a is expected to differ from develop only where the inflow closure is active
+(grazing points with inward parallel flow, which the weak row leaves natural); everywhere else
+the rows are identical to develop with u = 0, as the harness checks.
+
 ## Order of work
 
 1 and 2 first (they define the potential and the momentum channel), then 6 (removes an unknown from
