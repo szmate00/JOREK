@@ -8,7 +8,8 @@
 !!   mom      normalised weighted moment of the Bohm residual, |sum Bn*res*dl| / sum |Bn|*cs*dl,
 !!            which is what the Galerkin row imposes (pointwise |res| is not controlled at grazing
 !!            incidence and is deliberately not reported)
-!!   min rho, min Te   at the wall Gauss points, and where
+!!   max M    largest wall Mach number |Vpar*B|/cs: the parallel flow the momentum row demands
+!!   min rho, min Ti, min Te   at the wall Gauss points, and where (rho, Te)
 module mod_floating_diag
 
   implicit none
@@ -21,6 +22,7 @@ module mod_floating_diag
   real*8, save :: x_ven(nt), x_ven_R(nt), x_ven_Z(nt)
   real*8, save :: n_rho(nt), n_rho_R(nt), n_rho_Z(nt)
   real*8, save :: n_Te(nt),  n_Te_R(nt),  n_Te_Z(nt)
+  real*8, save :: x_mach(nt), n_Ti(nt)
 
 contains
 
@@ -31,14 +33,15 @@ subroutine floating_diag_reset()
   x_ven = -huge(1.d0) ; x_ven_R = 0.d0 ; x_ven_Z = 0.d0
   n_rho =  huge(1.d0) ; n_rho_R = 0.d0 ; n_rho_Z = 0.d0
   n_Te  =  huge(1.d0) ; n_Te_R  = 0.d0 ; n_Te_Z  = 0.d0
+  x_mach = 0.d0 ; n_Ti = huge(1.d0)
 end subroutine floating_diag_reset
 
 
 !> One wall Gauss point. Quantities in JOREK units except where noted; dl includes the weight.
-subroutine floating_diag_add(bnd_type, dl, vn, vEn, Bn, res, cs_bn, rho, Te, R, Z)
+subroutine floating_diag_add(bnd_type, dl, vn, vEn, Bn, res, cs_bn, mach, rho, Ti, Te, R, Z)
   implicit none
   integer, intent(in) :: bnd_type
-  real*8,  intent(in) :: dl, vn, vEn, Bn, res, cs_bn, rho, Te, R, Z
+  real*8,  intent(in) :: dl, vn, vEn, Bn, res, cs_bn, mach, rho, Ti, Te, R, Z
   if ( bnd_type .lt. 1 .or. bnd_type .gt. nt ) return
   !$omp critical (floating_diag)
   s_len(bnd_type) = s_len(bnd_type) + dl
@@ -48,6 +51,8 @@ subroutine floating_diag_add(bnd_type, dl, vn, vEn, Bn, res, cs_bn, rho, Te, R, 
   if ( vEn .gt. x_ven(bnd_type) ) then
     x_ven(bnd_type) = vEn ; x_ven_R(bnd_type) = R ; x_ven_Z(bnd_type) = Z
   endif
+  x_mach(bnd_type) = max(x_mach(bnd_type), mach)
+  n_Ti(bnd_type)   = min(n_Ti(bnd_type), Ti)
   if ( rho .lt. n_rho(bnd_type) ) then
     n_rho(bnd_type) = rho ; n_rho_R(bnd_type) = R ; n_rho_Z(bnd_type) = Z
   endif
@@ -67,7 +72,7 @@ subroutine floating_diag_report(my_id)
   implicit none
   integer, intent(in) :: my_id
 
-  real*8  :: len(nt), inflow(nt), mom(nt), den(nt), ven(nt), rmin(nt), tmin(nt)
+  real*8  :: len(nt), inflow(nt), mom(nt), den(nt), ven(nt), rmin(nt), tmin(nt), mach(nt), timin(nt)
   real*8  :: loc(3,2,nt), loc_g(3,2,nt), v_norm, T_eV
   integer :: it, ierr
 
@@ -78,6 +83,8 @@ subroutine floating_diag_report(my_id)
   call MPI_ALLREDUCE(x_ven, ven,    nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(n_rho, rmin,   nt, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(n_Te,  tmin,   nt, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(x_mach, mach,  nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(n_Ti,  timin,  nt, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, ierr)
 
   ! --- Locations: the rank holding each extremum sends its (R,Z), the others send -huge
   loc = -huge(1.d0)
@@ -94,12 +101,12 @@ subroutine floating_diag_report(my_id)
   v_norm = 1.d0 / sqrt(MU_ZERO * central_density * 1.d20 * central_mass * ATOMIC_MASS_UNIT)   ! m/s per unit
   T_eV   = 1.d0 / (EL_CHG * MU_ZERO * central_density * 1.d20)                                ! eV per unit
 
-  write(*,'(A)') ' [floating_u] type  inflow   max vE.n[m/s]  at (R,Z)             mom       min rho    at (R,Z)             min Te[eV]  at (R,Z)'
+  write(*,'(A)') ' [floating_u] type  inflow   max vE.n[m/s]  at (R,Z)             mom      max M    min rho    at (R,Z)           min Ti[eV] min Te[eV]  at (R,Z)'
   do it = 1, nt
     if ( len(it) .le. 0.d0 ) cycle
-    write(*,'(A,I4,F9.3,ES14.3,2F9.4,ES11.2,ES11.2,2F9.4,ES11.2,2F9.4)')       &
+    write(*,'(A,I4,F9.3,ES14.3,2F9.4,ES11.2,F8.2,ES11.2,2F9.4,2ES11.2,2F9.4)')       &
       ' [floating_u] ', it, inflow(it)/len(it), ven(it)*v_norm, loc_g(1,:,it), &
-      abs(mom(it))/max(den(it), tiny(1.d0)), rmin(it), loc_g(2,:,it), tmin(it)*T_eV, loc_g(3,:,it)
+      abs(mom(it))/max(den(it), tiny(1.d0)), mach(it), rmin(it), loc_g(2,:,it), timin(it)*T_eV, tmin(it)*T_eV, loc_g(3,:,it)
   enddo
 
 end subroutine floating_diag_report

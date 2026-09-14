@@ -4,7 +4,9 @@
 !!  1. mach1_weak off: no Vpar row is assembled. Switched on with u constant along the wall, every
 !!     other row keeps its residual and its columns, except for the new u columns of the sheath
 !!     fluxes (a sensitivity that exists even where vE.n = 0).
-!!  2. Compensating branch: every column of the Vpar rows (u, Vpar, Ti, Te, rho) matches a
+!!  2. Drift-compensating form (mach1_weak_drift): every column of the Vpar rows (u, Vpar, Ti, Te,
+!!     rho) matches finite differences; the default marginal form has no u column and matches too.
+!!     Every column of the Vpar rows matches a
 !!     central finite difference of the residual. Removing any column makes this fail.
 !!  3. Saturated branch (drift alone beyond sonic outflow): the u and temperature columns are
 !!     exactly zero; only the Vpar column survives.
@@ -57,7 +59,7 @@ program test_weak_mach
   do row = 1, nd
     if ( isvar(row, var_vpar) .and. any(a0(row,:) /= 0.d0) ) error stop 'FAIL: Vpar row assembled with mach1_weak off'
   enddo
-  mach1_weak = .true.
+  mach1_weak = .true.; mach1_weak_drift = .true.   ! drift-compensating form first, its u column is the hard one
   nodes = base; call assemble(a, r)
   ! (to roundoff: the total-flow measure max(vn,0)*R*dl equals vpar0*ps0_s*normal_sign3 analytically;
   !  the u columns are new and are checked against finite differences in 6)
@@ -121,6 +123,33 @@ program test_weak_mach
     enddo
   enddo
   write(*,'(a,es9.2)') ' INFO: lagged psi (normal derivative) sensitivity relative to the Vpar column: ', err/scale
+
+  ! --- marginal form (default): no u column at all, every other column still matches FD
+  mach1_weak_drift = .false.
+  nodes = base; call assemble(a, r)
+  do row = 1, nd
+    if ( .not. isvar(row, var_vpar) ) cycle
+    do col = 1, nd
+      if ( isvar(col, var_u) .and. a(row,col) /= 0.d0 ) error stop 'FAIL: marginal weak row carries a u column'
+    enddo
+  enddo
+  do k = 1, size(fd_vars)
+    var = fd_vars(k)
+    do i = 1, 2
+      do dof = 1, 4
+        col = n_var*4*(i-1) + n_var*(dof-1) + var
+        nodes = base; nodes(i)%values(1,dof,var) = nodes(i)%values(1,dof,var) + eps; call assemble(ap, rp)
+        nodes = base; nodes(i)%values(1,dof,var) = nodes(i)%values(1,dof,var) - eps; call assemble(am, rm)
+        scale = max(1.d0, maxval(abs(a(:,col))))
+        do row = 1, nd
+          if ( .not. isvar(row, var_vpar) ) cycle
+          if ( abs( a(row,col) + (rp(row)-rm(row))/(2*eps) ) / scale > 1.d-6 ) error stop 'FAIL: marginal weak row FD'
+        enddo
+      enddo
+    enddo
+  enddo
+  write(*,'(a)') ' PASS: marginal weak row (default) has no u column and matches FD'
+  mach1_weak_drift = .true.
 
   ! ---------------------------------------------------------------- 3. saturated branch
   call set_u(-1.d0)      ! vE.n far beyond sonic outflow: target pinned at zero

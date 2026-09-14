@@ -60,7 +60,7 @@ real*8     :: c_1, c_2, c_3, c_angle, neutral_source
 real*8     :: element_size_ij, element_size_kl, element_size_perp
 real*8     :: grad_t(2), B0_R, B0_Z, factor_cs_bnd_integral
 logical    :: mw_on                                              ! weak Bohm condition (mach1_weak) on this edge
-real*8     :: mw_orient, mw_vEn, mw_Bn, mw_vn, mw_tgt, mw_act, mw_res, mw_w, mw_in
+real*8     :: mw_orient, mw_vEn, mw_Bn, mw_vn, mw_tgt, mw_act, mw_cs, mw_res, mw_w, mw_in
 real*8     :: fx_n, fx_v, fx_p, fx_u, fx_out                    ! normal-flow measure of the sheath fluxes and its columns
 logical    :: xpoint2
 integer    :: n_tor_local 
@@ -319,21 +319,31 @@ do ms=1, n_gauss
     normal_sign  = sign(1.d0,bdotn)
     normal_sign3 = sign(1.d0,ps0_s) * normal_sign
 
-    ! --- Weak Bohm condition:  res = (B_pol.n)*Vpar - max( cs*|b.n| - vE.n , 0 )
-    ! --- i.e. the parallel flow supplies whatever outward normal flow the ExB drift does not, and is never
-    ! --- asked to reverse (Bohm is an inequality). The row is weighted by d(res)/d(Vpar) = B_pol.n, so a
-    ! --- grazing point loses authority as (B.n)^2 and the natural Vpar condition takes over continuously.
+    ! --- Weak Bohm condition (marginal form):  res = (B_pol.n)*Vpar - cs*|b.n|,  i.e. Vpar = +-cs/|B|,
+    ! --- weighted by d(res)/d(Vpar) = B_pol.n so that a grazing point loses authority as (B.n)^2 and the
+    ! --- natural Vpar condition takes over continuously. The ExB drift is NOT compensated by the parallel
+    ! --- flow: compensating an inward drift of 10 km/s at a few percent incidence would demand a
+    ! --- several-times-sonic parallel flow in the last element, whose divergence must then cancel the
+    ! --- ExB inflow term to O(1) within that element - the dispersive density dipole at the strike
+    ! --- point. Where the total flow is inward the inflow closure below supplies the density datum.
+    ! --- mach1_weak_drift restores the SOLPS non-marginal form, target max(cs*|b.n| - vE.n, 0).
     ! --- vE.n = -orient*R*u_s/dl is the outward ExB normal flow for v_E = (-R*u_Z, +R*u_R) and the edge
     ! --- tangent (x_s, y_s)/dl. Vpar*(B_pol.n) is the parallel normal flow, a velocity since v = Vpar*B.
     mw_orient = sign(1.d0, y_s(ms)*normal(1) - x_s(ms)*normal(2))
     mw_vEn    = - mw_orient * BigR * eq_s(mp,var_u,ms) / dl
     mw_Bn     = bdotn * Btot
-    mw_tgt    = cs0 * abs(bdotn) - mw_vEn
-    mw_act    = 1.d0
-    if ( mw_tgt .le. 0.d0 ) then          ! the drift alone gives sonic outflow or more: nothing to impose
-      mw_tgt = 0.d0
-      mw_act = 0.d0
+    mw_tgt    = cs0 * abs(bdotn)
+    mw_act    = 0.d0                      ! coefficient of the u column: drift not in the row
+    if ( mach1_weak_drift ) then
+      mw_tgt = cs0 * abs(bdotn) - mw_vEn
+      mw_act = 1.d0
+      if ( mw_tgt .le. 0.d0 ) then        ! the drift alone gives sonic outflow or more: nothing to impose
+        mw_tgt = 0.d0
+        mw_act = 0.d0
+      endif
     endif
+    mw_cs     = 1.d0                      ! coefficient of the temperature columns (cs in the target)
+    if ( mach1_weak_drift .and. mw_act .eq. 0.d0 ) mw_cs = 0.d0
     mw_res    = mw_Bn * Vpar0 - mw_tgt
     mw_w      = 0.d0
     if ( mw_on ) mw_w = Zbig * mw_Bn * dl
@@ -366,9 +376,9 @@ do ms=1, n_gauss
     endif
 
     if ( floating_u_diag .and. mw_on ) then
-      call floating_diag_add(bnd_type1, ws*dl, mw_vn, mw_vEn, mw_Bn, mw_res, cs0*abs(bdotn), r0, Te0, BigR, y_g(ms))
+      call floating_diag_add(bnd_type1, ws*dl, mw_vn, mw_vEn, mw_Bn, mw_res, cs0*abs(bdotn), abs(Vpar0)*Btot/cs0, r0, Ti0, Te0, BigR, y_g(ms))
       if ( bnd_type2 .ne. bnd_type1 ) &
-        call floating_diag_add(bnd_type2, ws*dl, mw_vn, mw_vEn, mw_Bn, mw_res, cs0*abs(bdotn), r0, Te0, BigR, y_g(ms))
+        call floating_diag_add(bnd_type2, ws*dl, mw_vn, mw_vEn, mw_Bn, mw_res, cs0*abs(bdotn), abs(Vpar0)*Btot/cs0, r0, Ti0, Te0, BigR, y_g(ms))
     endif
 
     c_1 = vpar_smoothing_coef(1); c_2 = vpar_smoothing_coef(2); c_3 = vpar_smoothing_coef(3)
@@ -551,10 +561,10 @@ do ms=1, n_gauss
                   ! --- Weak Bohm condition on the total normal flow (mach1_weak): exact columns of mw_res
                   amat(var_vpar,var_vpar) = amat(var_vpar,var_vpar) + v * mw_w * mw_Bn * vpar
                   if (with_TiTe) then
-                    amat(var_vpar,var_Ti) = amat(var_vpar,var_Ti) - v * mw_w * mw_act * abs(bdotn) * cs_Ti
-                    amat(var_vpar,var_Te) = amat(var_vpar,var_Te) - v * mw_w * mw_act * abs(bdotn) * cs_Te
+                    amat(var_vpar,var_Ti) = amat(var_vpar,var_Ti) - v * mw_w * mw_cs * abs(bdotn) * cs_Ti
+                    amat(var_vpar,var_Te) = amat(var_vpar,var_Te) - v * mw_w * mw_cs * abs(bdotn) * cs_Te
                   else
-                    amat(var_vpar,var_T)  = amat(var_vpar,var_T)  - v * mw_w * mw_act * abs(bdotn) * cs_T
+                    amat(var_vpar,var_T)  = amat(var_vpar,var_T)  - v * mw_w * mw_cs * abs(bdotn) * cs_T
                   endif
                   amat(var_vpar,var_u)    = - v * mw_w * mw_act * mw_orient * BigR * psi_s / dl
                   ! --- No psi column: B_pol.n depends on the tangential psi derivative only, which is Dirichlet on

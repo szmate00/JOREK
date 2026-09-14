@@ -92,7 +92,8 @@ subroutine preset_parameters
   deuterium_adas_1e20   = .false. 
   old_deuterium_atomic  = .false. 
   mach_one_bnd_integral = .false. ! implement Mach one condition as boundary integral
-  mach1_weak            = .false. ! weak Bohm condition on the total normal flow (replaces the nodal Mach rows)
+  mach1_weak            = .false. ! weak Bohm condition Vpar = +-cs/|B| (replaces the nodal Mach rows)
+  mach1_weak_drift      = .false. ! compensate the ExB drift by parallel flow (SOLPS non-marginal form)
   Vpar_smoothing        = .false. ! smooth the transitions of Vpar positive/negavtive at B.n
   Vpar_smoothing_coef   = (/0.01d0, 0.d0, 0.d0 /) !(/ 0.01d0, 0.016d0, 0.00575446347d0/)
   min_sheath_angle      = 1.d0   ! 1 degree (not in radians)

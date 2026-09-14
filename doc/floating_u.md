@@ -37,13 +37,18 @@ as in a develop run. `floating_u_diag = .t.` prints the wall table.
    `C_V = sqrt(mu0*rho0)/F0`. Phi = +F0*u in JOREK's right-handed (R,Z,phi) basis; a_n carries
    the sign of F0 so the physical potential does not depend on the field direction. Self-test
    at setup.
-2. **Weak Bohm condition on the total normal flow** (`mach1_weak`, `mod_boundary_matrix_open.f90`):
-   one Galerkin residual per wall Gauss point on edges whose both endpoints are `mach1` types,
-   `res = (B_pol.n)*Vpar - max(cs*|b.n| - vE.n, 0)`, weighted by `d(res)/d(Vpar) = B_pol.n`.
-   The parallel flow supplies the outward normal flow the drift does not, is never asked to
-   reverse, and loses authority as (B.n)^2 at grazing incidence with no threshold. The nodal
-   Mach rows are not assembled, and type 3 gets no Dirichlet Vpar row. Columns on Vpar, Ti, Te
-   and the u trace are exact; the |B| dependence on the free normal psi derivative is lagged.
+2. **Weak Bohm condition** (`mach1_weak`, `mod_boundary_matrix_open.f90`): one Galerkin residual
+   per wall Gauss point on edges whose both endpoints are `mach1` types,
+   `res = (B_pol.n)*Vpar - cs*|b.n|`, i.e. Vpar = +-cs/|B| (the marginal form), weighted by
+   `d(res)/d(Vpar) = B_pol.n` so it loses authority as (B.n)^2 at grazing incidence with no
+   threshold. The ExB drift is deliberately NOT compensated by the parallel flow: doing so demands
+   a several-times-sonic parallel flow in the last element wherever the drift is inward, whose
+   divergence must cancel the ExB inflow to O(1) within that element, which is the density dipole
+   at the strike point the old branch died of. Where the total flow is inward the inflow closure
+   (item 3) supplies the density datum instead. `mach1_weak_drift = .t.` restores the SOLPS
+   non-marginal form `max(cs*|b.n| - vE.n, 0)` for comparison. The nodal Mach rows are not
+   assembled and type 3 gets no Dirichlet Vpar row. Columns on Vpar, Ti, Te (and u with the
+   drift form) are exact; the |B| dependence on the free normal psi derivative is lagged.
 3. **Inflow closure** on the density row where the total normal flow is inward:
    `-oint v*min(vn,0)*(rho - 0) dl`, exact columns on rho, u, Vpar. Zero where the flow is
    outward. The temperatures get no term.
@@ -64,13 +69,14 @@ as in a develop run. `floating_u_diag = .t.` prints the wall table.
 ## Reading `floating_u_diag`
 
 ```
- [floating_u] type  inflow   max vE.n[m/s]  at (R,Z)   mom   min rho  at (R,Z)   min Te[eV]  at (R,Z)
+ [floating_u] type  inflow  max vE.n[m/s] at (R,Z)  mom  max M  min rho at (R,Z)  min Ti[eV] min Te[eV] at (R,Z)
 ```
 
 `inflow` is the fraction of that type's wall length with inward total flow (where the inflow
 closure is active). `mom = |sum Bn*res*dl| / sum |Bn|*cs*dl` is what the weak row imposes; the
-pointwise residual at grazing incidence is not controlled by design and is not reported. The
-minima are at the wall Gauss points.
+pointwise residual at grazing incidence is not controlled by design and is not reported. `max M`
+is the largest wall Mach number |Vpar*B|/cs, the parallel flow the momentum row demands: about 1
+in the marginal form, several with `mach1_weak_drift`. The minima are at the wall Gauss points.
 
 ## Tests
 

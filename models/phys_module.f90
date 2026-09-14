@@ -59,7 +59,8 @@ module phys_module
                                   !< the fluid model, only recombination coefficients in the kinetic model
   logical :: deuterium_adas_1e20  !< use OPEN ADAS with fixed density=1e20 to calculate ionization, recombination and radiation coeffients for deuterium
   logical :: mach_one_bnd_integral!< use a boundary integral (boundary_matrix_open) to implement Mach=one boundary condition
-  logical :: mach1_weak           !< weak (Galerkin) Bohm condition on the TOTAL normal flow, Vpar*(B.n) >= cs*|b.n| - vE.n (model600)
+  logical :: mach1_weak           !< weak (Galerkin) Bohm condition Vpar*(B_pol.n) = cs*|b.n| on the wall (model600)
+  logical :: mach1_weak_drift     !< mach1_weak on the TOTAL normal flow, Vpar*(B_pol.n) >= cs*|b.n| - vE.n (SOLPS non-marginal form)
   logical :: vpar_smoothing       !< apply a smoothing function to smooth jumps in Vpar at B.n=0
   real*8  :: vpar_smoothing_coef(3) !< coefficients for the smoothing profile of the parallel velocity
   real*8  :: min_sheath_angle     !< For sheath boundary conditions: Minimum incident angle for heat and particle fluxes (in degrees)

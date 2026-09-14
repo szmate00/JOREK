@@ -254,6 +254,18 @@ Add the volume minima of rho, Ti, Te with (R,Z) to the `[floating_u]` table (inf
 no control), so the step-438 Ti zero and any later one are attributed to a wall, an outer
 boundary profile or the strike-point layer before anything is changed.
 
+### R4. The floating_u - mach1 interaction (user's lead, 2026-09-14 night): drift compensation
+
+With the drift in the Bohm row, an inward ExB of 10 km/s at a few percent incidence is compensated by
+a several-times-sonic parallel flow in the last element. Its parallel divergence B.n*dVpar/dn is
+O(vE.n/h) and must cancel the ExB inflow term of the same size within one element; the Galerkin
+remainder is O(1) per step - the strike-point density dipole. The old branch's `mach1_omit_drift`
+outlived every compensating variant (770 vs 605) with no inflow closure at all. DECISION: the weak
+row now imposes the marginal Bohm form Vpar = +-cs/|B| by default (no u column, no branch, no
+supersonic demand); the inflow closure supplies the density datum where the total flow is inward.
+`mach1_weak_drift` keeps the SOLPS non-marginal form for A/B on the same restart. The wall table
+reports max |Vpar*B|/cs and min Ti so the interaction is measured, not argued. R1-R3 are shelved.
+
 ### What stays
 
 Items 1-4 and 6-9 are unchanged and verified. The definition of done is unchanged: default

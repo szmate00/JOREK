@@ -31,7 +31,7 @@ module phys_module
   real*8  :: min_sheath_angle=1.d0, F0=2.97d0, gamma=5.d0/3.d0
   real*8  :: T_min_neg=3.d-5, T_1=0.01d0, corr_neg_temp_coef(2)=[0.5d0,0.5d0]
   real*8  :: central_density=1.d0, central_mass=2.014d0, sheath_Lambda=3.d0, sheath_V_wall=0.d0
-  logical :: vpar_smoothing=.false., mach_one_bnd_integral=.false., mach1_weak=.false., floating_u_diag=.false.
+  logical :: vpar_smoothing=.false., mach_one_bnd_integral=.false., mach1_weak=.false., mach1_weak_drift=.false., floating_u_diag=.false.
   real*8  :: vpar_smoothing_coef(3)=[0.02d0,0.016d0,0.005754d0]
   real*8  :: density_reflection=0.d0, neutral_reflection=0.d0, visco_par_heating=0.d0
   real*8  :: gamma_sheath_i=0.6d0, gamma_sheath_e=3.d0, gamma_sheath=3.d0
