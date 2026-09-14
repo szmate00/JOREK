@@ -295,3 +295,9 @@ namelist, production ramp, no stabiliser coefficient, no floor, Lambda 3 on ever
 
 1 and 2 first (they define the potential and the momentum channel), then 6 (removes an unknown from
 every later run), then 4, then 5, then 3, then 7-9. Ladder step a after 6, step b after 5.
+
+### A/B/C on the same restart (2026-09-14 night)
+
+A `mach1_weak` default (marginal); B `mach1_weak_drift = .t.`; C `mach1_weak_drift = .t.`,
+`mach1_weak_drift_bound = 2.d0` (SOLPS b2stbc_cbc). Read `max M` on type 1 (expected ~1 / several / <= 3),
+inflow fraction, min rho and its location, and lifetime on the production ramp.

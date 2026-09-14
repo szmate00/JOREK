@@ -60,7 +60,7 @@ real*8     :: c_1, c_2, c_3, c_angle, neutral_source
 real*8     :: element_size_ij, element_size_kl, element_size_perp
 real*8     :: grad_t(2), B0_R, B0_Z, factor_cs_bnd_integral
 logical    :: mw_on                                              ! weak Bohm condition (mach1_weak) on this edge
-real*8     :: mw_orient, mw_vEn, mw_Bn, mw_vn, mw_tgt, mw_act, mw_cs, mw_res, mw_w, mw_in
+real*8     :: mw_orient, mw_vEn, mw_Bn, mw_vn, mw_tgt, mw_act, mw_cs, mw_res, mw_w, mw_in, mw_s, mw_x
 real*8     :: fx_n, fx_v, fx_p, fx_u, fx_out                    ! normal-flow measure of the sheath fluxes and its columns
 logical    :: xpoint2
 integer    :: n_tor_local 
@@ -326,7 +326,11 @@ do ms=1, n_gauss
     ! --- several-times-sonic parallel flow in the last element, whose divergence must then cancel the
     ! --- ExB inflow term to O(1) within that element - the dispersive density dipole at the strike
     ! --- point. Where the total flow is inward the inflow closure below supplies the density datum.
-    ! --- mach1_weak_drift restores the SOLPS non-marginal form, target max(cs*|b.n| - vE.n, 0).
+    ! --- mach1_weak_drift restores the SOLPS non-marginal form, target max(cs*|b.n| - vE.n, 0). With
+    ! --- mach1_weak_drift_bound = c > 0 the compensation of an INWARD drift d = -vE.n > 0 is bounded
+    ! --- smoothly at s = c*cs*|b.n| (SOLPS b2stbc_cbc, c = 2): target cs*|b.n| + s*tanh(d/s), whose u
+    ! --- column carries sech^2(d/s) and so fades out where the bound takes over, with no branch. The
+    ! --- flow beyond the bound is inward and is handled by the inflow closure below.
     ! --- vE.n = -orient*R*u_s/dl is the outward ExB normal flow for v_E = (-R*u_Z, +R*u_R) and the edge
     ! --- tangent (x_s, y_s)/dl. Vpar*(B_pol.n) is the parallel normal flow, a velocity since v = Vpar*B.
     mw_orient = sign(1.d0, y_s(ms)*normal(1) - x_s(ms)*normal(2))
@@ -334,16 +338,22 @@ do ms=1, n_gauss
     mw_Bn     = bdotn * Btot
     mw_tgt    = cs0 * abs(bdotn)
     mw_act    = 0.d0                      ! coefficient of the u column: drift not in the row
+    mw_cs     = 1.d0                      ! coefficient of the temperature columns (cs in the target)
     if ( mach1_weak_drift ) then
       mw_tgt = cs0 * abs(bdotn) - mw_vEn
       mw_act = 1.d0
       if ( mw_tgt .le. 0.d0 ) then        ! the drift alone gives sonic outflow or more: nothing to impose
         mw_tgt = 0.d0
         mw_act = 0.d0
+        mw_cs  = 0.d0
+      elseif ( mach1_weak_drift_bound .gt. 0.d0 .and. mw_vEn .lt. 0.d0 ) then
+        mw_s   = mach1_weak_drift_bound * cs0 * abs(bdotn)
+        mw_x   = - mw_vEn / mw_s
+        mw_tgt = cs0 * abs(bdotn) + mw_s * tanh(mw_x)
+        mw_act = 1.d0 / cosh(mw_x)**2
+        mw_cs  = 1.d0 + mach1_weak_drift_bound * ( tanh(mw_x) - mw_x / cosh(mw_x)**2 )   ! d(target)/d(cs) / |b.n|
       endif
     endif
-    mw_cs     = 1.d0                      ! coefficient of the temperature columns (cs in the target)
-    if ( mach1_weak_drift .and. mw_act .eq. 0.d0 ) mw_cs = 0.d0
     mw_res    = mw_Bn * Vpar0 - mw_tgt
     mw_w      = 0.d0
     if ( mw_on ) mw_w = Zbig * mw_Bn * dl

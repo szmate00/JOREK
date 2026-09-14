@@ -61,6 +61,7 @@ module phys_module
   logical :: mach_one_bnd_integral!< use a boundary integral (boundary_matrix_open) to implement Mach=one boundary condition
   logical :: mach1_weak           !< weak (Galerkin) Bohm condition Vpar*(B_pol.n) = cs*|b.n| on the wall (model600)
   logical :: mach1_weak_drift     !< mach1_weak on the TOTAL normal flow, Vpar*(B_pol.n) >= cs*|b.n| - vE.n (SOLPS non-marginal form)
+  real*8  :: mach1_weak_drift_bound !< bound on the drift-compensating parallel flow in units of cs*|b.n| (SOLPS: 2); 0 = unbounded
   logical :: vpar_smoothing       !< apply a smoothing function to smooth jumps in Vpar at B.n=0
   real*8  :: vpar_smoothing_coef(3) !< coefficients for the smoothing profile of the parallel velocity
   real*8  :: min_sheath_angle     !< For sheath boundary conditions: Minimum incident angle for heat and particle fluxes (in degrees)

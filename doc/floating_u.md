@@ -46,7 +46,11 @@ as in a develop run. `floating_u_diag = .t.` prints the wall table.
    divergence must cancel the ExB inflow to O(1) within that element, which is the density dipole
    at the strike point the old branch died of. Where the total flow is inward the inflow closure
    (item 3) supplies the density datum instead. `mach1_weak_drift = .t.` restores the SOLPS
-   non-marginal form `max(cs*|b.n| - vE.n, 0)` for comparison. The nodal Mach rows are not
+   non-marginal form `max(cs*|b.n| - vE.n, 0)` for comparison, and `mach1_weak_drift_bound = 2.d0`
+   bounds that compensation smoothly at 2cs|b.n| (SOLPS b2stbc_cbc): target cs|b.n| + s*tanh(d/s)
+   with s = 2cs|b.n| and d the inward drift, u column sech^2(d/s), the excess left to the inflow
+   closure. Three forms, one restart: A marginal (default), B drift unbounded, C drift bounded.
+   The nodal Mach rows are not
    assembled and type 3 gets no Dirichlet Vpar row. Columns on Vpar, Ti, Te (and u with the
    drift form) are exact; the |B| dependence on the free normal psi derivative is lagged.
 3. **Inflow closure** on the density row where the total normal flow is inward:

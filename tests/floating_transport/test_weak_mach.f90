@@ -151,6 +151,38 @@ program test_weak_mach
   write(*,'(a)') ' PASS: marginal weak row (default) has no u column and matches FD'
   mach1_weak_drift = .true.
 
+  ! --- bounded drift compensation (mach1_weak_drift_bound = 2): FD every column with the bound
+  ! --- inactive (small inward drift), half active and saturated (large inward drift)
+  mach1_weak_drift_bound = 2.d0
+  do k = 1, 3
+    if ( k == 1 ) call set_u(+1.d-4)
+    if ( k == 2 ) call set_u(+4.d-3)
+    if ( k == 3 ) call set_u(+1.d0)
+    nodes = base; call assemble(a, r)
+    do i = 1, size(fd_vars)
+      var = fd_vars(i)
+      do row = 1, 2
+        do dof = 1, 4
+          col = n_var*4*(row-1) + n_var*(dof-1) + var
+          nodes = base; nodes(row)%values(1,dof,var) = nodes(row)%values(1,dof,var) + eps; call assemble(ap, rp)
+          nodes = base; nodes(row)%values(1,dof,var) = nodes(row)%values(1,dof,var) - eps; call assemble(am, rm)
+          scale = max(1.d0, maxval(abs(a(:,col))))
+          do isl = 1, nd
+            if ( .not. isvar(isl, var_vpar) ) cycle
+            err = abs( a(isl,col) + (rp(isl)-rm(isl))/(2*eps) ) / scale
+            if ( err > 1.d-6 ) then
+              write(*,'(a,4i5,3es12.3)') ' FAIL: bounded drift FD case,row,col,var,err,amat,fd', k, isl, col, var, err, a(isl,col), -(rp(isl)-rm(isl))/(2*eps)
+              error stop 1
+            endif
+          enddo
+        enddo
+      enddo
+    enddo
+  enddo
+  mach1_weak_drift_bound = 0.d0
+  call set_u(1.d-4)
+  write(*,'(a)') ' PASS: bounded drift compensation matches FD below, across and beyond the bound'
+
   ! ---------------------------------------------------------------- 3. saturated branch
   call set_u(-1.d0)      ! vE.n far beyond sonic outflow: target pinned at zero
   nodes = base; call assemble(a, r)

@@ -872,6 +872,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   write(*,LOGI_FMT) 'mach_one_bnd_integral ', mach_one_bnd_integral
   write(*,LOGI_FMT) 'mach1_weak            ', mach1_weak
   write(*,LOGI_FMT) 'mach1_weak_drift      ', mach1_weak_drift
+  write(*,REAL_FMT) 'mach1_weak_drift_bound', mach1_weak_drift_bound
   write(*,LOGI_FMT) 'deuterium_adas        ', deuterium_adas       
   write(*,LOGI_FMT) 'old_deuterium_atomic  ', old_deuterium_atomic
   write(*,LOGI_FMT) 'deuterium_adas_1e20   ', deuterium_adas_1e20
