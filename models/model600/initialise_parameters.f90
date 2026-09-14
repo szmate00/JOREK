@@ -272,8 +272,6 @@ if (my_id .eq. 0) then
       write(*,*) 'ERROR: floating_u normalisation selftest failed, EXITING!'
       stop
     end if
-    if ( .not. admissible_update ) write(*,*) 'NOTE: bcs%floating_u sets admissible_update = .true.'
-    admissible_update = .true.
   end if
 
   if ( ( n_tor .eq. 1 ) .and. freeboundary .and. (.not. freeboundary_equil) ) then

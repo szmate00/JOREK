@@ -1,0 +1,16 @@
+\contentsline {section}{\numberline {1}What a finite element solution actually is}{1}{section.1}%
+\contentsline {section}{\numberline {2}Strong form, weak form}{2}{section.2}%
+\contentsline {section}{\numberline {3}Three ways to impose a boundary condition}{3}{section.3}%
+\contentsline {section}{\numberline {4}The failure, in one dimension, checkable by hand}{3}{section.4}%
+\contentsline {paragraph}{Essential imposition (what the nodal condition does).}{3}{section*.2}%
+\contentsline {paragraph}{Weak imposition (projection).}{3}{section*.3}%
+\contentsline {section}{\numberline {5}The condition we actually want to impose}{4}{section.5}%
+\contentsline {section}{\numberline {6}Choosing the weak statement}{5}{section.6}%
+\contentsline {paragraph}{(a) Collocation.}{5}{section*.4}%
+\contentsline {paragraph}{(b) Plain Galerkin, $w_j=\varphi _j$.}{5}{section*.5}%
+\contentsline {paragraph}{(c) Least squares on the flux error.}{5}{section*.6}%
+\contentsline {section}{\numberline {7}What the resulting system looks like, and what $B_n^2$ means}{5}{section.7}%
+\contentsline {subsection}{\numberline {7.1}Why the sign change is now harmless}{6}{subsection.7.1}%
+\contentsline {section}{\numberline {8}Assembly, and why every derivative must be present}{6}{section.8}%
+\contentsline {section}{\numberline {9}What you give up, and how to measure it}{7}{section.9}%
+\contentsline {section}{\numberline {10}The answer in one paragraph}{7}{section.10}%

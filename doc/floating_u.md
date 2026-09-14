@@ -26,9 +26,9 @@ mach1_weak        = .t.      ! required, checked at setup
 sheath_Lambda     = 3.d0     ! default
 ```
 
-`dirichlet%u` stays `.true.` on those types (the floating row replaces it). `admissible_update`
-is switched on automatically. Nothing else needs setting; `min_sheath_angle`, `D_perp_sc_num`
-and every other parameter stay at their defaults. `floating_u_diag = .t.` prints the wall table.
+`dirichlet%u` stays `.true.` on those types (the floating row replaces it). Nothing else needs
+setting; `min_sheath_angle`, `D_perp_sc_num`, the timestep ramp and every other parameter stay
+as in a develop run. `floating_u_diag = .t.` prints the wall table.
 
 ## What is assembled
 
@@ -49,10 +49,11 @@ and every other parameter stay at their defaults. `floating_u_diag = .t.` prints
    outward. The temperatures get no term.
 4. **One total normal flow** `max(Vpar*(B_pol.n) + vE.n, 0)` in the sheath energy transmission
    and density reflection rows (exact u, Vpar, psi columns) and in the kinetic recycling flux.
-5. **Admissible update** (`core/mod_jorek_timestepping.f90`, `core/mod_state_check.f90`): a step
-   whose rho, Ti or Te is non-positive at any Gauss point is undone, dt is halved and the step
-   re-solved (up to 8 halvings, then abort). dt recovers geometrically; `tstep_prev` is the step
-   actually taken.
+5. **Admissible update, opt-in diagnostic** (`admissible_update = .t.`, `core/mod_state_check.f90`):
+   a step whose rho or Te is non-positive at any Gauss point (Ti below minus the corr_neg scale)
+   is undone, dt halved and re-solved, up to 8 halvings, with the location printed. Off by
+   default: a production run must not need it, and if it fires the cause is to be fixed, not the
+   step size.
 6. **Exterior sides only** (`mod_boundary_edges.f90`): the open-boundary integral is skipped on
    interior sides with two labelled endpoints; their number is printed once.
 
