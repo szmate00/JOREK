@@ -201,6 +201,64 @@ Ladder step a is expected to differ from develop only where the inflow closure i
 (grazing points with inward parallel flow, which the weak row leaves natural); everywhere else
 the rows are identical to develop with u = 0, as the harness checks.
 
+## Revision after the first cluster runs (2026-09-14, evening)
+
+Facts from the runs: the build works, the weak Bohm row holds the 12.5 km/s inner-strike-point
+drift at mom ~1e-7, inflow is 2% of the type-5 wall and zero elsewhere, and the first negative
+value (Ti, -3e-4 eV, location unknown) appeared at step 438. The step-rejection policy (old item 5)
+was removed: the run must go through the production ramp
+`tstep_n = 1e-3, 1e-2, 1e-1, 0.3, 1, 2, 10` untouched. Positivity therefore has to be a property of
+the discretisation. Three mechanisms can break it, none of them a boundary-condition matter, and
+each has a parameter-free treatment:
+
+### R1. The ramp switches drive BDF2 outside its stability bound
+
+JOREK's Gears scheme is the exact variable-step BDF2 (checked: zeta = dt/(dt+dt_prev) with the
+history scaled by dt/dt_prev reproduces the (1+2r)/(1+r), -(1+r), r^2/(1+r) coefficients). A
+variable-step BDF2 is zero-stable only for step ratios r < 1+sqrt(2) = 2.41. The ramp has ratios
+10, 10, 10, 3, 3.3, 2, 5. At a switch with ratio r, any field that decayed by more than
+(1+r)^2/r^2 - 1 over the previous step is extrapolated NEGATIVE regardless of the right-hand side:
+at r = 5 a 31% drop per step suffices (numerator 6*y1 - 25/6*y0 < 0 for y1/y0 < 25/36). A cold
+strike-point layer with a 13 us step and a 10 us parallel transit does that; a wall with u = 0
+does not, which is why develop never saw it. Every old floating-u run died at steps 598-608, the
+2 -> 10 switch.
+
+Treatment (standard for variable-step multistep codes, no parameter): take the first step after
+a ratio beyond 1+sqrt(2) as a one-step implicit Euler step (zeta = 0), then resume BDF2. One flag
+set by the timestepper, read where zeta is formed (mod_elt_matrix_fft, mod_boundary_matrix_open).
+Changes nothing for ramps with ratios below the bound.
+
+### R2. Cell Peclet number of the ExB advection at the strike point
+
+Continuous Galerkin without upwinding is non-monotone for advection once Pe_h = v*h/D > 2. The
+imposed potential makes Pe_h large exactly at the strike point: with the measured 12.5 km/s,
+h = 2.9 mm and the D_perp of the reference case (5.3 m^2/s), Pe_h = 6.9. This is the dispersive
+density dipole the earlier branch saw (one-cell negative spot at the strike point one step before
+Ti and w react), and the reason `use_sc` with `D_perp_sc_num = 10` was the only thing that ever
+gave long runs. That coefficient is a dimensional tuning knob and is out.
+
+Treatment, in order of preference:
+  (a) Resolution: refine the target region until Pe_h < 2, i.e. h < 2*D_perp/v_E, about 0.8 mm
+      here. A grid criterion the user controls; no code. Cost: elements.
+  (b) Streamline-upwind stabilisation of the poloidal (ExB) advection of rho, Ti, Te with the
+      standard optimal coefficient tau = h/(2|v|) * (coth Pe_h - 1/Pe_h), applied along the flow
+      only. No free constant; it vanishes as Pe_h^2 where the mesh resolves the flow, so it is
+      inactive everywhere a develop run is resolved. Streamline-diffusion form first (a few lines
+      in the rho and T rows, FD-testable); consistent SUPG weighting of the full residual only if
+      the diffusion form measurably smears the target profiles.
+  (c) `use_sc` as it exists, with its coefficient scanned. Rejected by principle.
+
+### R3. Locate every first violation
+
+Add the volume minima of rho, Ti, Te with (R,Z) to the `[floating_u]` table (information only,
+no control), so the step-438 Ti zero and any later one are attributed to a wall, an outer
+boundary profile or the strike-point layer before anything is changed.
+
+### What stays
+
+Items 1-4 and 6-9 are unchanged and verified. The definition of done is unchanged: default
+namelist, production ramp, no stabiliser coefficient, no floor, Lambda 3 on every wall type.
+
 ## Order of work
 
 1 and 2 first (they define the potential and the momentum channel), then 6 (removes an unknown from
