@@ -83,9 +83,9 @@ integer :: ilarge2, kv, kT, kTi, kTe, ku, kn, ilarge_vv, ilarge_vT, ilarge_vus, 
 integer :: ilarge_vsvs, ilarge_vsTs, ilarge_vsT, ilarge_vut, ilarge_vtvt, ilarge_vtTt, ilarge_vtT
 integer :: ierr
 logical :: apply_psi_BC, apply_current_BC, s_constant_boundary, t_constant_boundary, apply_cs, apply_dirichlet_1234, apply_dirichlet_all
-logical :: apply_sheath_j, sj_T_frozen
-real*8  :: rho0, rho0_b, zj0, zj0_b, u0, sj_res, sj_dres, sj_scal, sj_xnorm, sj_jratio
-real*8  :: sj_c_u, sj_c_T, sj_c_Te, sj_c_Ti, sj_c_rho, sj_c_zj
+logical :: apply_sheath_j, sj_Te_frozen, sj_sat, sj_owned
+real*8  :: rho0, rho0_b, zj0, zj0_b, u0, sj_res, sj_dres, sj_res_raw, sj_scal, sj_xnorm, sj_jratio
+real*8  :: sj_c_u, sj_c_T, sj_c_Te, sj_c_rho, sj_c_vpar, sj_c_zj
 
 real*8, allocatable :: psi_RMP_cos1(:),dpsi_RMP_cos_dR1(:),dpsi_RMP_cos_dZ1(:)
 real*8, allocatable :: psi_RMP_sin1(:),dpsi_RMP_sin_dR1(:),dpsi_RMP_sin_dZ1(:)
@@ -326,7 +326,10 @@ do i=1, n_local_elms !=== do elements
           ! --- sheath row is never assembled, so it must not claim the Dirichlet u rows either, or
           ! --- u would be left with no equation at all on exactly the corner nodes that have bitten
           ! --- every previous attempt at this boundary condition.
-          apply_sheath_j = bcs(bnd_type)%sheath_j .and. .not. &
+          ! --- with_vpar is required: j_sat is built from the actual Vpar, and the characteristic
+          ! --- presumes ion outflow at the wall, which is what bcs(i)%mach1 provides. Requiring it
+          ! --- here also keeps the shared geometry block below unreachable without a Vpar variable.
+          apply_sheath_j = bcs(bnd_type)%sheath_j .and. with_vpar .and. .not. &
                            ( (node_list%node(inode )%boundary .eq. 3) .and. &
                              (node_list%node(inode2)%boundary .eq. 2) )
           !---------------------------------------------------------------------------------------------------                      
@@ -554,10 +557,10 @@ do i=1, n_local_elms !=== do elements
           endif
 
           ! ============================ SHEATH CURRENT BC ON u =============================
-          ! --- Artola's linearised sheath current-voltage characteristic (eq. 17), as one scalar
-          ! --- constraint replacing the u value row and the u boundary-derivative row. See
-          ! --- models/model600/mod_sheath_current.f90 for the derivation and for why this row is
-          ! --- insensitive to the boundary node type and to grazing incidence.
+          ! --- The sheath current-voltage characteristic as one scalar constraint replacing the u
+          ! --- value row and the u boundary-derivative row. See
+          ! --- models/model600/mod_sheath_current.f90 for the characteristic, the two branches,
+          ! --- and why the residual is written in the potential rather than in the current.
           if ( apply_sheath_j ) then
 
             u0     = node_list%node(inode)%values(1,1,var_u)
@@ -571,33 +574,33 @@ do i=1, n_local_elms !=== do elements
               rho0_b = 0.d0
             endif
 
-            ! --- Whether the temperature floor above is active. If it is, Te and Ti are constants
-            ! --- at this node and the consistent temperature columns are zero.
+            ! --- Whether the temperature floor above is active. Only Te enters the residual, so
+            ! --- this is a single, independent test - Ti has no column here at all.
             if ( with_TiTe ) then
-              sj_T_frozen = ( node_list%node(inode)%values(1,1,var_Ti) .le. T_min ) .or. &
-                            ( node_list%node(inode)%values(1,1,var_Te) .le. T_min )
+              sj_Te_frozen = ( node_list%node(inode)%values(1,1,var_Te) .le. T_min )
             else
-              sj_T_frozen = ( node_list%node(inode)%values(1,1,var_T ) .le. T_min )
+              sj_Te_frozen = ( node_list%node(inode)%values(1,1,var_T ) .le. T_min )
             endif
 
-            call sheath_current_row( u0, Ti0, Te0, rho0, zj0, Btot, direction, sj_T_frozen, &
-                                     sj_res, sj_c_u, sj_c_T, sj_c_Te, sj_c_Ti, sj_c_rho, sj_c_zj, &
-                                     sj_scal, sj_xnorm, sj_jratio )
+            call sheath_current_row( u0, Te0, rho0, Vpar0, zj0, sj_Te_frozen,                   &
+                                     sj_res, sj_c_u, sj_c_T, sj_c_Te, sj_c_rho, sj_c_vpar,      &
+                                     sj_c_zj, sj_res_raw, sj_scal, sj_sat, sj_xnorm, sj_jratio )
 
-            ! --- The boundary-derivative row is the SAME coefficient vector applied to the
-            ! --- derivative DOFs. The coefficients are lagged background quantities, so this is
-            ! --- exactly d/db of the value row and the two rows cannot disagree - which is the one
-            ! --- failure mode this construction is built to avoid.
-            sj_dres = sj_c_u * u0_b + sj_c_rho * rho0_b + sj_c_zj * zj0_b
+            ! --- The boundary-derivative row applies the value row's coefficient vector to the
+            ! --- derivative DOFs. The residual contains no geometry, so this is exactly d/dl of
+            ! --- the value condition with no missing term. Its Jacobian omits the value-DOF
+            ! --- columns from differentiating the coefficients: a Picard lag of a gradient term,
+            ! --- not an exact Jacobian.
+            sj_dres = sj_c_u * u0_b + sj_c_rho * rho0_b + sj_c_vpar * Vpar0_b + sj_c_zj * zj0_b
             if ( with_TiTe ) then
-              sj_dres = sj_dres + sj_c_Te * Te0_b + sj_c_Ti * Ti0_b
+              sj_dres = sj_dres + sj_c_Te * Te0_b
             else
-              sj_dres = sj_dres + sj_c_T * T0_b
+              sj_dres = sj_dres + sj_c_T  * T0_b
             endif
 
             ! --- Value row. A variable the model does not have has var_* = 0, and
             ! --- boundary_conditions_add_one_entry returns immediately on that, so the rho and
-            ! --- Ti/Te/T columns need no further guard.
+            ! --- Te/T columns need no further guard.
             call boundary_conditions_add_one_entry(                &
                  index_node, var_u, in, index_node, var_u, in,     &
                  - zbig * sj_c_u, index_min, index_max, a_mat)
@@ -605,15 +608,15 @@ do i=1, n_local_elms !=== do elements
                  index_node, var_u, in, index_node, var_zj, in,    &
                  - zbig * sj_c_zj, index_min, index_max, a_mat)
             call boundary_conditions_add_one_entry(                &
-                 index_node, var_u, in, index_node, var_rho, in,    &
+                 index_node, var_u, in, index_node, var_rho, in,   &
                  - zbig * sj_c_rho, index_min, index_max, a_mat)
+            call boundary_conditions_add_one_entry(                &
+                 index_node, var_u, in, index_node, var_Vpar, in,  &
+                 - zbig * sj_c_vpar, index_min, index_max, a_mat)
             if ( with_TiTe ) then
               call boundary_conditions_add_one_entry(              &
                    index_node, var_u, in, index_node, var_Te, in,  &
                    - zbig * sj_c_Te, index_min, index_max, a_mat)
-              call boundary_conditions_add_one_entry(              &
-                   index_node, var_u, in, index_node, var_Ti, in,  &
-                   - zbig * sj_c_Ti, index_min, index_max, a_mat)
             else
               call boundary_conditions_add_one_entry(              &
                    index_node, var_u, in, index_node, var_T, in,   &
@@ -628,15 +631,15 @@ do i=1, n_local_elms !=== do elements
                  index_node2, var_u, in, index_node2, var_zj, in,   &
                  - zbig * sj_c_zj * element_size_0, index_min, index_max, a_mat)
             call boundary_conditions_add_one_entry(                 &
-                 index_node2, var_u, in, index_node2, var_rho, in,   &
+                 index_node2, var_u, in, index_node2, var_rho, in,  &
                  - zbig * sj_c_rho * element_size_0, index_min, index_max, a_mat)
+            call boundary_conditions_add_one_entry(                 &
+                 index_node2, var_u, in, index_node2, var_Vpar, in, &
+                 - zbig * sj_c_vpar * element_size_0, index_min, index_max, a_mat)
             if ( with_TiTe ) then
               call boundary_conditions_add_one_entry(               &
                    index_node2, var_u, in, index_node2, var_Te, in, &
                    - zbig * sj_c_Te * element_size_0, index_min, index_max, a_mat)
-              call boundary_conditions_add_one_entry(               &
-                   index_node2, var_u, in, index_node2, var_Ti, in, &
-                   - zbig * sj_c_Ti * element_size_0, index_min, index_max, a_mat)
             else
               call boundary_conditions_add_one_entry(               &
                    index_node2, var_u, in, index_node2, var_T, in,  &
@@ -645,6 +648,8 @@ do i=1, n_local_elms !=== do elements
 
             ! --- Residuals enter the n=0 row only: the coefficients are the same for every
             ! --- harmonic because they are evaluated on the n=0 background, exactly as for Mach1.
+            ! --- This is a background linearisation and does not enforce the nonlinear
+            ! --- characteristic on a non-axisymmetric wall state.
             if (in .eq. 1) then
               call boundary_conditions_add_RHS(                          &
                      index_node,  var_u, in, index_min, index_max, RHS_loc, &
@@ -652,7 +657,9 @@ do i=1, n_local_elms !=== do elements
               call boundary_conditions_add_RHS(                          &
                      index_node2, var_u, in, index_min, index_max, RHS_loc, &
                      zbig * sj_dres, a_mat%i_tor_min, a_mat%i_tor_max)
-              call sheath_diag_add(sj_res, sj_scal, sj_xnorm, sj_jratio, BigR, Z, bnd_type)
+              sj_owned = (index_node .ge. index_min) .and. (index_node .le. index_max)
+              call sheath_diag_add(sj_res_raw, sj_sat, sj_xnorm, sj_jratio, &
+                                   BigR, Z, bnd_type, sj_owned)
             else
               call boundary_conditions_add_RHS(                          &
                      index_node,  var_u, in, index_min, index_max, RHS_loc, &
