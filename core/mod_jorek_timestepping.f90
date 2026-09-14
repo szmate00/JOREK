@@ -408,10 +408,10 @@ subroutine do_jorek_timestep(this, sim, ev)
 
   call solve_sparse_system(this%a_mat, this%rhs_vec, this%deltas, this%solver)
 
-  ! --- Admissible update: a solve can succeed and still return a state with rho or T <= 0 somewhere,
-  ! --- which is then written and fed back into every coefficient and boundary condition. Apply the
-  ! --- update tentatively, check the Gauss-point minima, and if any is non-positive undo it, halve
-  ! --- the step, rebuild and solve again. Never a floor: a rejected state is never kept.
+  ! --- Admissible update: a solve can succeed and still return a state with rho or Te <= 0 somewhere,
+  ! --- which is then written and fed back into the potential row and every coefficient. Apply the
+  ! --- update tentatively, check the Gauss-point minima against state_bounds(), and if any is below
+  ! --- undo it, halve the step, rebuild and solve again. Never a floor: a rejected state is never kept.
   update_applied = .false.
   if ( admissible_update .and. this%solver%step_success ) then
     n_halvings = 0
@@ -419,7 +419,7 @@ subroutine do_jorek_timestep(this, sim, ev)
       call update_values(sim%fields%element_list, sim%fields%node_list, this%deltas)
       call state_gauss_minima(sim%my_id, sim%fields%node_list, sim%fields%element_list, state_vars(), state_min, state_at)
       update_applied = .true.
-      if ( all(state_min .gt. 0.d0) ) exit
+      if ( all(state_min .gt. state_bounds()) ) exit
       this%deltas%val(1:this%deltas%n) = -this%deltas%val(1:this%deltas%n)
       call update_values(sim%fields%element_list, sim%fields%node_list, this%deltas)
       update_applied = .false.
@@ -627,6 +627,24 @@ function state_vars() result(v)
   if ( with_TiTe ) v = (/ var_rho, var_Ti, var_Te /)
 #endif
 end function state_vars
+
+!> Lower bounds the Gauss-point minima of state_vars() must exceed. rho and Te are read raw by the
+!! floating-potential row and must stay positive. Ti enters only through corr_neg-corrected
+!! coefficients, whose scale is T_min_neg (or T_1 when T_min_neg is not set): a Ti above minus that
+!! scale is a cold spot the corrections are built to absorb, below it they are hiding a runaway.
+function state_bounds() result(b)
+  use phys_module, only: T_1, T_min_neg
+#if JOREK_MODEL == 600
+  use mod_parameters, only: with_TiTe
+#endif
+  real*8 :: b(3), tscale
+  tscale = T_1
+  if ( T_min_neg .ge. 0.d0 ) tscale = T_min_neg
+  b = 0.d0
+#if JOREK_MODEL == 600
+  if ( with_TiTe ) b(2) = -tscale
+#endif
+end function state_bounds
 
 function get_tstep_n(i) result(dt)
   use phys_module
