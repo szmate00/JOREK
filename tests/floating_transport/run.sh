@@ -18,12 +18,6 @@ $fc $flags \
 
 $fc $flags \
   "$repo_dir/tests/floating_transport/fixtures.f90" \
-  "$repo_dir/core/mod_state_check.f90" \
-  "$repo_dir/tests/floating_transport/test_state_check.f90" -o test_state_check
-./test_state_check
-
-$fc $flags \
-  "$repo_dir/tests/floating_transport/fixtures.f90" \
   "$repo_dir/models/model600/mod_boundary_edges.f90" \
   "$repo_dir/tests/floating_transport/test_boundary_edges.f90" -o test_boundary_edges
 ./test_boundary_edges

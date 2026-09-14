@@ -98,7 +98,6 @@ subroutine preset_parameters
   min_sheath_angle      = 1.d0   ! 1 degree (not in radians)
   sheath_Lambda         = 3.d0   ! floating sheath drop, e*Phi/Te
   sheath_V_wall         = 0.d0   ! wall potential [V]
-  admissible_update     = .false.! diagnostic: reject and halve a step whose rho/Te go non-positive
   floating_u_diag       = .false.! wall diagnostics table each matrix construction
 
   amix                 = 0.d0

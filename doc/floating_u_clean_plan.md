@@ -190,7 +190,7 @@ d. dt halved and mesh refined at the targets: the inflow fraction and the wall f
 | 2 weak Bohm row | done | FD every column, negative controls, B.n sweep |
 | 3 one total flow | done | Ti/Te rows FD, closed wall, kinetic recycling on the same flow; calc_NeTevpar Te fix |
 | 4 inflow closure | done | rho rows FD, absent for outward flow |
-| 5 admissible update | done, OPT-IN diagnostic only (user: must run out of the box on the production ramp) | `mod_state_check`, location in the rejection line |
+| 5 admissible update | REMOVED (user decision): the run must go through the production ramp untouched; positivity is a property of the equations, not of a step policy | commits 8466ca5fb..ab6153da5, removed after |
 | 6 exterior sides | done | connectivity test |
 | 7 diagnostics | done (wall table); boundary postproc expressions not ported | equations untouched |
 | 8 tests | done | `tests/floating_transport/run.sh` |

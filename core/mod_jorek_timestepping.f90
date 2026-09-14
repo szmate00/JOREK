@@ -51,7 +51,6 @@ type, extends(action) :: jorek_timestep_action
   type(type_RHS)                                :: rhs_vec
   type(type_RHS)                                :: deltas
   type(type_SP_SOLVER)                          :: solver
-  real*8                                        :: dt_last = 0.d0 !< step actually taken last time (admissible_update)
   type(type_MHD_SIM)                            :: mhd_sim
   
   logical                                       :: freeboundary
@@ -261,7 +260,6 @@ subroutine do_jorek_timestep(this, sim, ev)
   use mod_clock
   use global_distributed_matrix
   use mod_bootstrap_functions, only: bootstrap_find_minRad, bootstrap_get_q_and_ft_splines
-  use mod_state_check,         only: state_gauss_minima
   use live_data
   use mod_live_data_core,      only: write_live_data_all
   use tr_module,               only: tr_print_memsize, tr_resetfile
@@ -302,28 +300,13 @@ subroutine do_jorek_timestep(this, sim, ev)
   integer        :: i, n_spi_begin
 
   real*8,dimension(n_var) :: varmin,varmax
-  integer        :: n_halvings
-  integer, parameter :: max_halvings = 8
-  logical        :: update_applied
-  real*8         :: state_min(3), state_at(2,3)
-  integer        :: iworst
 
   call init_expr()
   allocate(res(exprs_all_int%n_expr+1))
   res = 0.d0  
 
-  ! Get the timestep size. With admissible_update a rejected step halves it; the next steps then grow
-  ! back geometrically towards the requested value, and tstep_prev is the step actually taken.
+  ! Get the timestep size
   dt_jorek = get_tstep_n(this%istep)
-  if ( admissible_update .and. this%dt_last .gt. 0.d0 ) then
-    dt_jorek = min(dt_jorek, 2.d0*this%dt_last)
-    if ( dt_jorek .lt. get_tstep_n(this%istep) / 2.d0**max_halvings ) then
-      if ( sim%my_id .eq. 0 ) write(*,'(a,es10.3,a)') '>>>>> admissible_update: dt has collapsed to ', dt_jorek, &
-        ' - the state is inadmissible at any step size, not undershooting. ABORTING <<<<<'
-      sim%stop_now = .true.
-      return
-    endif
-  endif
   if (dt_jorek .eq. 0.d0) then
     write(*,*) "Jorek timestep is 0, assuming end of simulation."
     sim%stop_now = .true.
@@ -332,9 +315,7 @@ subroutine do_jorek_timestep(this, sim, ev)
   tstep = dt_jorek !< Update the jorek timestep for use in mod_elt_matrix
   !< Update the jorek previous timestep for use in mod_elt_matrix. 
   !< If ommited, certain models (e.g. 710+) will divide by zero. Not fully tested.
-  if ( admissible_update .and. this%dt_last .gt. 0.d0 ) then
-    tstep_prev = this%dt_last
-  else if ( this%istep -1 > 0) then
+  if ( this%istep -1 > 0) then
     tstep_prev = get_tstep_n(this%istep-1) 
   else
     tstep_prev = tstep
@@ -408,42 +389,6 @@ subroutine do_jorek_timestep(this, sim, ev)
 
   call solve_sparse_system(this%a_mat, this%rhs_vec, this%deltas, this%solver)
 
-  ! --- Admissible update: a solve can succeed and still return a state with rho or Te <= 0 somewhere,
-  ! --- which is then written and fed back into the potential row and every coefficient. Apply the
-  ! --- update tentatively, check the Gauss-point minima against state_bounds(), and if any is below
-  ! --- undo it, halve the step, rebuild and solve again. Never a floor: a rejected state is never kept.
-  update_applied = .false.
-  if ( admissible_update .and. this%solver%step_success ) then
-    n_halvings = 0
-    do
-      call update_values(sim%fields%element_list, sim%fields%node_list, this%deltas)
-      call state_gauss_minima(sim%my_id, sim%fields%node_list, sim%fields%element_list, state_vars(), state_min, state_at)
-      update_applied = .true.
-      if ( all(state_min .gt. state_bounds()) ) exit
-      this%deltas%val(1:this%deltas%n) = -this%deltas%val(1:this%deltas%n)
-      call update_values(sim%fields%element_list, sim%fields%node_list, this%deltas)
-      update_applied = .false.
-      n_halvings = n_halvings + 1
-      if ( n_halvings .gt. max_halvings ) then
-        if ( sim%my_id == 0 ) write(*,'(a,i2,a)') '>>>>> NO ADMISSIBLE UPDATE AFTER ', max_halvings, ' STEP HALVINGS. ABORTING <<<<<'
-        sim%stop_now = .true.
-        return
-      endif
-      if ( sim%my_id == 0 ) then
-        iworst = minloc(state_min, 1)
-        write(*,'(a,es10.3,a,3es10.2,a,2f9.4)') ' admissible_update: rejected, dt -> ', 0.5d0*dt_jorek, &
-            '  min rho,Ti,Te = ', state_min, '  worst at (R,Z) = ', state_at(:,iworst)
-      endif
-      if ( present(ev) ) ev%start = ev%start - 0.5d0*dt
-      dt_jorek = 0.5d0*dt_jorek ; tstep = dt_jorek ; dt = dt_jorek * sim%t_norm
-      this%solver%tstep = tstep
-      call construct_matrix(this%mhd_sim, this%mhd_sim%local_elms, this%mhd_sim%n_local_elms, this%a_mat, this%rhs_vec, harmonic_matrix=.false.)
-      call solve_sparse_system(this%a_mat, this%rhs_vec, this%deltas, this%solver)
-      if ( .not. this%solver%step_success ) exit
-    enddo
-  endif
-  this%dt_last = dt_jorek
-
   call clck_time(t0)
   if (this%solver%step_success) then  
 
@@ -470,8 +415,7 @@ subroutine do_jorek_timestep(this, sim, ev)
     end if
 #endif    
 
-    if ( .not. update_applied ) &
-      call update_values(sim%fields%element_list, sim%fields%node_list, this%deltas)       ! add solution to node values
+    call update_values(sim%fields%element_list, sim%fields%node_list, this%deltas)         ! add solution to node values
     call update_deltas(sim%fields%node_list, this%deltas)
     t_now = t_now + dt_jorek
   else
@@ -614,38 +558,6 @@ end subroutine do_jorek_timestep
 
 
 !> Calculate the timestep size (in jorek units) at step i by looping through the nstep_n array
-!> Variables that must stay positive under admissible_update: rho, Ti, Te (T twice in a
-!! single-temperature build). Model specific; a model without them checks nothing (index 0).
-function state_vars() result(v)
-#if JOREK_MODEL == 600
-  use mod_parameters, only: var_rho, var_Ti, var_Te, var_T, with_TiTe
-#endif
-  integer :: v(3)
-  v = 0
-#if JOREK_MODEL == 600
-  v = (/ var_rho, var_T, var_T /)
-  if ( with_TiTe ) v = (/ var_rho, var_Ti, var_Te /)
-#endif
-end function state_vars
-
-!> Lower bounds the Gauss-point minima of state_vars() must exceed. rho and Te are read raw by the
-!! floating-potential row and must stay positive. Ti enters only through corr_neg-corrected
-!! coefficients, whose scale is T_min_neg (or T_1 when T_min_neg is not set): a Ti above minus that
-!! scale is a cold spot the corrections are built to absorb, below it they are hiding a runaway.
-function state_bounds() result(b)
-  use phys_module, only: T_1, T_min_neg
-#if JOREK_MODEL == 600
-  use mod_parameters, only: with_TiTe
-#endif
-  real*8 :: b(3), tscale
-  tscale = T_1
-  if ( T_min_neg .ge. 0.d0 ) tscale = T_min_neg
-  b = 0.d0
-#if JOREK_MODEL == 600
-  if ( with_TiTe ) b(2) = -tscale
-#endif
-end function state_bounds
-
 function get_tstep_n(i) result(dt)
   use phys_module
   integer, intent(in) :: i

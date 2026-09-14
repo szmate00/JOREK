@@ -65,7 +65,6 @@ module phys_module
   real*8  :: min_sheath_angle     !< For sheath boundary conditions: Minimum incident angle for heat and particle fluxes (in degrees)
   real*8  :: sheath_Lambda        !< Floating sheath potential drop in units of Te/e (model600 bcs%floating_u)
   real*8  :: sheath_V_wall        !< Wall potential in volts (model600 bcs%floating_u)
-  logical :: admissible_update    !< Diagnostic (opt-in): reject a step whose rho or Te is non-positive at any Gauss point, halve dt, re-solve (model600)
   logical :: floating_u_diag      !< Print per-boundary-type wall diagnostics of the weak Bohm row and floating potential (model600)
   integer :: mode(n_tor)          !< Toroidal mode number corresponding to the JOREK modes, e.g., for n_period=8 and n_tor=3, mode(:)=0,8,8
   integer :: mode_coord(n_coord_tor)  !< Toroidal mode number corresponding to the JOREK RZ grid modes

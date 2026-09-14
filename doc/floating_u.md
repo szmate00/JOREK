@@ -49,12 +49,7 @@ as in a develop run. `floating_u_diag = .t.` prints the wall table.
    outward. The temperatures get no term.
 4. **One total normal flow** `max(Vpar*(B_pol.n) + vE.n, 0)` in the sheath energy transmission
    and density reflection rows (exact u, Vpar, psi columns) and in the kinetic recycling flux.
-5. **Admissible update, opt-in diagnostic** (`admissible_update = .t.`, `core/mod_state_check.f90`):
-   a step whose rho or Te is non-positive at any Gauss point (Ti below minus the corr_neg scale)
-   is undone, dt halved and re-solved, up to 8 halvings, with the location printed. Off by
-   default: a production run must not need it, and if it fires the cause is to be fixed, not the
-   step size.
-6. **Exterior sides only** (`mod_boundary_edges.f90`): the open-boundary integral is skipped on
+5. **Exterior sides only** (`mod_boundary_edges.f90`): the open-boundary integral is skipped on
    interior sides with two labelled endpoints; their number is printed once.
 
 ## Conventions
@@ -75,13 +70,13 @@ as in a develop run. `floating_u_diag = .t.` prints the wall table.
 `inflow` is the fraction of that type's wall length with inward total flow (where the inflow
 closure is active). `mom = |sum Bn*res*dl| / sum |Bn|*cs*dl` is what the weak row imposes; the
 pointwise residual at grazing incidence is not controlled by design and is not reported. The
-minima are at the wall Gauss points; the volume minima are what `admissible_update` checks.
+minima are at the wall Gauss points.
 
 ## Tests
 
 `bash tests/floating_transport/run.sh` (gfortran, no MPI) compiles the production assembler
 against fixture modules and checks: the normalisation for both field signs and a wall bias;
-between-node undershoot detection; exterior-side classification; every column of the weak row,
+exterior-side classification; every column of the weak row,
 the inflow term and the energy rows against central finite differences (each verified to fail
 when a column is dropped); the saturated and closed branches; evenness, monotonicity and
 vanishing of the row through B.n = 0; and that the diagnostics change no equation.
