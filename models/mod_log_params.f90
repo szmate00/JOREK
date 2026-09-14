@@ -832,6 +832,11 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,REAL_FMT) 'vpar_smoothing_coef   ', vpar_smoothing_coef(:)
   end if
   write(*,REAL_FMT) 'min_sheath_angle      ', min_sheath_angle     
+  if ( any(bcs(:)%floating_u) ) then
+    write(*,REAL_FMT) 'sheath_Lambda         ', sheath_Lambda
+    write(*,REAL_FMT) 'sheath_V_wall         ', sheath_V_wall
+    write(*,'(1X,A,30I3)') 'floating_u on boundary types:', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%floating_u )
+  end if
 
   write(*,LOGI_FMT) 'bc_natural_open       ', bc_natural_open
   write(*,LOGI_FMT) 'produce_live_data     ', produce_live_data
@@ -864,6 +869,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   write(*,LOGI_FMT) 'equil                 ', equil
   write(*,LOGI_FMT) 'bench_without_plot    ', bench_without_plot
   write(*,LOGI_FMT) 'mach_one_bnd_integral ', mach_one_bnd_integral
+  write(*,LOGI_FMT) 'mach1_weak            ', mach1_weak
   write(*,LOGI_FMT) 'deuterium_adas        ', deuterium_adas       
   write(*,LOGI_FMT) 'old_deuterium_atomic  ', old_deuterium_atomic
   write(*,LOGI_FMT) 'deuterium_adas_1e20   ', deuterium_adas_1e20

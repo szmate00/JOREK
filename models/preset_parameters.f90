@@ -92,9 +92,12 @@ subroutine preset_parameters
   deuterium_adas_1e20   = .false. 
   old_deuterium_atomic  = .false. 
   mach_one_bnd_integral = .false. ! implement Mach one condition as boundary integral
+  mach1_weak            = .false. ! weak Bohm condition on the total normal flow (replaces the nodal Mach rows)
   Vpar_smoothing        = .false. ! smooth the transitions of Vpar positive/negavtive at B.n
   Vpar_smoothing_coef   = (/0.01d0, 0.d0, 0.d0 /) !(/ 0.01d0, 0.016d0, 0.00575446347d0/)
   min_sheath_angle      = 1.d0   ! 1 degree (not in radians)
+  sheath_Lambda         = 3.d0   ! floating sheath drop, e*Phi/Te
+  sheath_V_wall         = 0.d0   ! wall potential [V]
 
   amix                 = 0.d0
   amix_freeb           = 0.85d0
@@ -438,6 +441,9 @@ subroutine preset_parameters
 
   ! --- Mach 1
   bcs(:)%mach1   = .false.
+
+  ! --- Floating potential (model600)
+  bcs(:)%floating_u = .false.
 
   bcs(  1)%mach1 = .true.
   bcs(3:5)%mach1 = .true.

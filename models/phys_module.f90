@@ -59,9 +59,12 @@ module phys_module
                                   !< the fluid model, only recombination coefficients in the kinetic model
   logical :: deuterium_adas_1e20  !< use OPEN ADAS with fixed density=1e20 to calculate ionization, recombination and radiation coeffients for deuterium
   logical :: mach_one_bnd_integral!< use a boundary integral (boundary_matrix_open) to implement Mach=one boundary condition
+  logical :: mach1_weak           !< weak (Galerkin) Bohm condition on the TOTAL normal flow, Vpar*(B.n) >= cs*|b.n| - vE.n (model600)
   logical :: vpar_smoothing       !< apply a smoothing function to smooth jumps in Vpar at B.n=0
   real*8  :: vpar_smoothing_coef(3) !< coefficients for the smoothing profile of the parallel velocity
   real*8  :: min_sheath_angle     !< For sheath boundary conditions: Minimum incident angle for heat and particle fluxes (in degrees)
+  real*8  :: sheath_Lambda        !< Floating sheath potential drop in units of Te/e (model600 bcs%floating_u)
+  real*8  :: sheath_V_wall        !< Wall potential in volts (model600 bcs%floating_u)
   integer :: mode(n_tor)          !< Toroidal mode number corresponding to the JOREK modes, e.g., for n_period=8 and n_tor=3, mode(:)=0,8,8
   integer :: mode_coord(n_coord_tor)  !< Toroidal mode number corresponding to the JOREK RZ grid modes
   integer :: nout                 !< Output a restart file every nout timesteps
@@ -197,6 +200,7 @@ module phys_module
     type (type_dirichlet_bc) :: dirichlet
     type (type_natural_bc)   :: natural
     logical                  :: mach1 
+    logical                  :: floating_u !< floating-potential BC on u: Phi - V_wall = Lambda*Te/e (model600)
   end type type_bcs
 
   type (type_bcs), dimension(max_bnd_types) :: bcs   

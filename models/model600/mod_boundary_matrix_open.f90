@@ -58,6 +58,8 @@ real*8     :: r0, r0_s, r0_t, r0_p, r0_x, r0_y, rho, rho_s, rho_t, rho_x, rho_y
 real*8     :: c_1, c_2, c_3, c_angle, neutral_source
 real*8     :: element_size_ij, element_size_kl, element_size_perp
 real*8     :: grad_t(2), B0_R, B0_Z, factor_cs_bnd_integral
+logical    :: mw_on                                              ! weak Bohm condition (mach1_weak) on this edge
+real*8     :: mw_orient, mw_vEn, mw_Bn, mw_tgt, mw_act, mw_res, mw_w
 logical    :: xpoint2
 integer    :: n_tor_local 
 logical    :: apply_natural_bc(0:n_var)
@@ -138,6 +140,11 @@ do i_var=1, n_var
   if ( (i_var==var_rhon) .and. (bcs(bnd_type1)%natural%rhon .or. bcs(bnd_type2)%natural%rhon))  apply_natural_bc(i_var)=.true.
   if ( (i_var==var_vpar) .and. (bcs(bnd_type1)%natural%vpar .or. bcs(bnd_type2)%natural%vpar))  apply_natural_bc(i_var)=.true.
 enddo
+
+! --- Weak Bohm condition on the total normal flow (mach1_weak). Carried by edges whose BOTH endpoints
+! --- are mach1 types, i.e. a target edge and never a flux-surface edge; scattered through the Vpar rows.
+mw_on = mach1_weak .and. with_vpar .and. bcs(bnd_type1)%mach1 .and. bcs(bnd_type2)%mach1
+if ( mw_on ) apply_natural_bc(var_vpar) = .true.
 
 do i=1,2    ! sum over 2 verices
   
@@ -310,6 +317,25 @@ do ms=1, n_gauss
     normal_sign  = sign(1.d0,bdotn)
     normal_sign3 = sign(1.d0,ps0_s) * normal_sign
 
+    ! --- Weak Bohm condition:  res = (B_pol.n)*Vpar - max( cs*|b.n| - vE.n , 0 )
+    ! --- i.e. the parallel flow supplies whatever outward normal flow the ExB drift does not, and is never
+    ! --- asked to reverse (Bohm is an inequality). The row is weighted by d(res)/d(Vpar) = B_pol.n, so a
+    ! --- grazing point loses authority as (B.n)^2 and the natural Vpar condition takes over continuously.
+    ! --- vE.n = -orient*R*u_s/dl is the outward ExB normal flow for v_E = (-R*u_Z, +R*u_R) and the edge
+    ! --- tangent (x_s, y_s)/dl. Vpar*(B_pol.n) is the parallel normal flow, a velocity since v = Vpar*B.
+    mw_orient = sign(1.d0, y_s(ms)*normal(1) - x_s(ms)*normal(2))
+    mw_vEn    = - mw_orient * BigR * eq_s(mp,var_u,ms) / dl
+    mw_Bn     = bdotn * Btot
+    mw_tgt    = cs0 * abs(bdotn) - mw_vEn
+    mw_act    = 1.d0
+    if ( mw_tgt .le. 0.d0 ) then          ! the drift alone gives sonic outflow or more: nothing to impose
+      mw_tgt = 0.d0
+      mw_act = 0.d0
+    endif
+    mw_res    = mw_Bn * Vpar0 - mw_tgt
+    mw_w      = 0.d0
+    if ( mw_on ) mw_w = Zbig * mw_Bn * dl
+
     c_1 = vpar_smoothing_coef(1); c_2 = vpar_smoothing_coef(2); c_3 = vpar_smoothing_coef(3)
     if (vpar_smoothing) then
       factor = 0.25d0 * ( 1.d0 + tanh( (abs(bdotn) - c_1) / c_2 ) )**2 - c_3
@@ -359,6 +385,9 @@ do ms=1, n_gauss
 
             ! --- Mach=1 through boundary integral penalization method
             rhs_ij(var_vpar) = - v * (vpar0 * Btot * normal_sign - cs0 * factor) * dl * Zbig  * factor_cs_bnd_integral 
+
+            ! --- Weak Bohm condition on the total normal flow (mach1_weak)
+            rhs_ij(var_vpar) = rhs_ij(var_vpar) - v * mw_w * mw_res
 
             ! --- Fluid neutral reflection
             if (with_neutrals) then 
@@ -471,6 +500,19 @@ do ms=1, n_gauss
                   else
                     amat(var_vpar,var_T)  =   v * ( - cs_T)  * factor         * dl * Zbig * factor_cs_bnd_integral
                   endif
+
+                  ! --- Weak Bohm condition on the total normal flow (mach1_weak): exact columns of mw_res
+                  amat(var_vpar,var_vpar) = amat(var_vpar,var_vpar) + v * mw_w * mw_Bn * vpar
+                  if (with_TiTe) then
+                    amat(var_vpar,var_Ti) = amat(var_vpar,var_Ti) - v * mw_w * mw_act * abs(bdotn) * cs_Ti
+                    amat(var_vpar,var_Te) = amat(var_vpar,var_Te) - v * mw_w * mw_act * abs(bdotn) * cs_Te
+                  else
+                    amat(var_vpar,var_T)  = amat(var_vpar,var_T)  - v * mw_w * mw_act * abs(bdotn) * cs_T
+                  endif
+                  amat(var_vpar,var_u)    = - v * mw_w * mw_act * mw_orient * BigR * psi_s / dl
+                  ! --- No psi column: B_pol.n depends on the tangential psi derivative only, which is Dirichlet on
+                  ! --- the wall. |B| also sees the free normal derivative, but this loop only carries the trace
+                  ! --- DOFs, and |B| is F0/R to O(B_pol^2/F0^2) at the wall, so that dependence is lagged.
 
                   ! --- Fluid neutral sources and reflection
                   if (with_neutrals) then
