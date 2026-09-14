@@ -49,6 +49,24 @@ module data_structure
     integer :: vertex(4)=[1,2,3,4], n_sons=0
     real*8  :: size(4,4)=1.d0
   end type
+  type type_node_list
+    integer :: n_nodes=0, n_dof=0
+    type(type_node), allocatable :: node(:)
+  end type
+  type type_element_list
+    integer :: n_elements=0
+    type(type_element) :: element(8)
+  end type
+end module
+module mpi_mod
+  implicit none
+  integer, parameter :: MPI_COMM_WORLD=0
+contains
+  subroutine MPI_ABORT(comm, code, ierr)
+    integer :: comm, code, ierr
+    ierr = code + comm
+    error stop 'MPI_ABORT (fixture)'
+  end subroutine
 end module
 module gauss
   implicit none

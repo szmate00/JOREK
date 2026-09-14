@@ -22,6 +22,9 @@ contains
     use mod_elt_matrix,           only : element_matrix
     use mod_elt_matrix_fft,       only : element_matrix_fft
     use mpi_mod
+#if JOREK_MODEL == 600
+    use mod_boundary_edges,       only : boundary_edges_active, boundary_edge_is_exterior
+#endif
 	
     ! --- Routine parameters
     type (type_element),              intent(inout)  :: element
@@ -100,6 +103,12 @@ contains
         
         ! --- carry on only if on boundary
         if ( (bnd1 .eq. 0) .or. (bnd2 .eq. 0)) cycle
+#if JOREK_MODEL == 600
+        ! --- ... and only if the side is genuinely exterior (mod_boundary_edges, built per matrix construction)
+        if ( boundary_edges_active() ) then
+          if ( .not. boundary_edge_is_exterior(ielm, iv) ) cycle
+        endif
+#endif
         
         call make_deep_copy_node(node_list%node(inode1), nodes(1))
         call make_deep_copy_node(node_list%node(inode2), nodes(2))
@@ -317,6 +326,9 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   use mod_axis_treatment
   use mod_simulation_data, only: type_MHD_SIM
   use global_distributed_matrix, only: global_matrix_structure_vacuum
+#if JOREK_MODEL == 600
+  use mod_boundary_edges, only: boundary_edges_build
+#endif
   
   !$ use omp_lib
   implicit none
@@ -455,6 +467,12 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
 
   call tr_allocate(rhs_local, Int1, a_mat%ng, "rhs_local", CAT_DMATRIX)
   rhs_local  = 0.d0
+
+#if JOREK_MODEL == 600
+  ! --- Exterior-side table for the open-boundary integral: the weak Bohm row and the floating
+  ! --- potential must never be assembled on an interior side with two labelled endpoints.
+  if ( mach1_weak .or. any(bcs(:)%floating_u) ) call boundary_edges_build(element_list, node_list, my_id)
+#endif
 
   if (mhd_sim%freeboundary .and. (mhd_sim%sr_n_tor /= 0 ) ) then
     call global_matrix_structure_vacuum(mhd_sim%node_list, mhd_sim%bnd_node_list, a_mat, i_tor_min=1, i_tor_max=n_tor)
