@@ -72,7 +72,8 @@ term): the measurement of the wall current the plasma delivers under the floatin
  [sheath_j]   type  e-sat    j/jsat min     max    max|j/jsat| at (R,Z)      Phi[V] min      max     Inet/Isat
 ```
 
-per type, over the wall length carrying the rows: fraction of that length with an X bound active; min and
+per type, over the wall length carrying the rows: fraction of that length with an X bound active; fraction
+with |j/j_sat| > 1 (the part of the target the characteristic cannot hold); min and
 max of j/j_sat (negative = electron current, +1 = ion saturation) and where the largest |j/j_sat| sits;
 min and max of the wall potential in volts; net current into the wall over the saturation current
 integrated over the type (Inet = -sum zj*(B_pol.n)*R*dl, Isat = sum |j_sat*(B_pol.n)|*R*dl).
@@ -86,3 +87,12 @@ fails it); the potential row has zj = 0 at floating u as a root, matches FD insi
 only its u column at a bound; the saturation current flows into the wall for both signs of F0; the
 diagnostics change no equation. The nodal side (node incidence, row release) is not compiled by the
 harness; `check_imports.py` covers its only-lists.
+
+## Initialisation
+
+The equilibrium wall current is not a sheath current: it runs +-1.5 j_sat and changes sign along the
+target, and the potential row turns that pattern into 80 V next to 220 V within one step (measured: the
+outer target collapsed in ten steps from the equilibrium). Start the sheath run from a state in which the
+wall current has relaxed under the floating potential: run `sheath_j_float_u = .t.` first (current free by
+its definition, potential floating), then restart from it with `sheath_j_float_u = .f.`. The `|j|>jsat`
+column of the measurement run says when the target interior is within the characteristic.
