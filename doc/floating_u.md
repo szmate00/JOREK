@@ -60,7 +60,7 @@ as in a develop run. `floating_u_diag = .t.` prints the wall table.
    drift form) are exact; the |B| dependence on the free normal psi derivative is lagged.
 3. **Inflow closure** on the density row where the total normal flow is inward:
    `-oint v*min(vn,0)*(rho - 0) dl`, exact columns on rho, u, Vpar. Zero where the flow is
-   outward. The temperatures get no term.
+   outward. The temperatures get no term. `mach1_weak_inflow = .f.` switches it off for A/B.
 4. **One total normal flow** `max(Vpar*(B_pol.n) + vE.n, 0)` in the sheath energy transmission
    and density reflection rows (exact u, Vpar, psi columns) and in the kinetic recycling flux.
 5. **Exterior sides only** (`mod_boundary_edges.f90`): the open-boundary integral is skipped on

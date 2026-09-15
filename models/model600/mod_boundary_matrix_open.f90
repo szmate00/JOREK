@@ -372,7 +372,7 @@ do ms=1, n_gauss
     ! --- incidence. Same edges as that row. The temperatures get no term: with rho_in = 0 nothing enters.
     mw_vn = mw_Bn * Vpar0 + mw_vEn
     mw_in = 0.d0
-    if ( mw_on .and. (mw_vn .lt. 0.d0) ) mw_in = 1.d0
+    if ( mw_on .and. mach1_weak_inflow .and. (mw_vn .lt. 0.d0) ) mw_in = 1.d0
 
     ! --- Normal flow carried by the sheath particle and energy fluxes below: Vpar*(B_pol.n)*R*dl, which is
     ! --- what vpar0*ps0_s*normal_sign3 is. Under mach1_weak it is the TOTAL outgoing flow max(vn,0)*R*dl,

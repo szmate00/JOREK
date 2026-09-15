@@ -64,6 +64,7 @@ module phys_module
   real*8  :: mach1_weak_drift_bound !< bound on the drift-compensating parallel flow in units of cs*|b.n| (SOLPS: 2); 0 = unbounded
   logical :: mach1_weak_drift_cut   !< no drift compensation where |b.n| < sin(min_sheath_angle): the marginal row there
   logical :: mach1_weak_cut         !< no Vpar row at all where |b.n| < sin(min_sheath_angle): natural condition there
+  logical :: mach1_weak_inflow      !< weak inflow closure on the density row where the total normal flow is inward (default on)
   logical :: vpar_smoothing       !< apply a smoothing function to smooth jumps in Vpar at B.n=0
   real*8  :: vpar_smoothing_coef(3) !< coefficients for the smoothing profile of the parallel velocity
   real*8  :: min_sheath_angle     !< For sheath boundary conditions: Minimum incident angle for heat and particle fluxes (in degrees)

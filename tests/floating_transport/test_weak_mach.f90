@@ -301,6 +301,20 @@ program test_weak_mach
   enddo
   nodes = base; call assemble(a0, r0)
   if ( all(r0(pack([(row, row=1,nd)], [(isvar(row,var_rho), row=1,nd)])) == 0.d0) ) error stop 'FAIL: inflow term not assembled'
+  ! switched off: the rho rows with inward flow must equal the mach1_weak-off rows (to roundoff)
+  mach1_weak_inflow = .false.
+  mach1_weak = .false.; nodes = base; call assemble(ap, rp)
+  mach1_weak = .true.;  nodes = base; call assemble(a, r)
+  do row = 1, nd
+    if ( .not. isvar(row, var_rho) ) cycle
+    scale = max(1.d0, maxval(abs(ap(row,:))), abs(rp(row)))
+    if ( abs(r(row)-rp(row)) > 1.d-12*scale ) error stop 'FAIL: mach1_weak_inflow off still changes the rho residual'
+    do col = 1, nd
+      if ( isvar(col, var_u) ) cycle
+      if ( abs(a(row,col)-ap(row,col)) > 1.d-12*scale ) error stop 'FAIL: mach1_weak_inflow off still changes a rho column'
+    enddo
+  enddo
+  mach1_weak_inflow = .true.
   write(*,'(a,es9.2)') ' PASS: inflow closure: inactive for outward flow, every rho-row column matches FD, worst rel err ', worst
 
   ! ---------------------------------------------------------------- 6. energy fluxes on the total flow
