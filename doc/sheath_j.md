@@ -28,7 +28,11 @@ The wall is sorted by incidence with the angle the Bohm row uses:
 | u rows: weak sheath row                               | u rows: floating potential (Dirichlet) |
 | zj rows: current definition + surface term            | zj rows: Dirichlet zj (as develop)   |
 
-The decision is made once per node, over both of its wall edges.
+The decision is made once per node, over both of its wall edges. The surface term is assembled on every
+Gauss point of every edge with a sheath node at either end, with no angle gate: a released node needs it
+over its whole support (measured: gating it per Gauss point left the row as dpsi/dn = 0 weakly over part
+of the support and the wall current absorbed a flux of order R*B_t/h, thousands of j_sat, at the edges
+of the sheath region).
 
 ## Why this form (the five runs of 2026-09-15)
 

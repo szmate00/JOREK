@@ -1,5 +1,5 @@
 !> Serial checks of the sheath current BC (bcs%sheath_j) in the PRODUCTION assembler:
-!!  1. off: no u or zj row; below the grazing angle: none either; on: both present;
+!!  1. off: no u or zj row; below the grazing angle: the surface term but no potential row; on: both;
 !!     sheath_j_float_u: zj row (surface term) present, no u row.
 !!  2. surface term of the current definition: for psi = a*R + b*Z on the R-edge with outward normal -Z the
 !!     value-DOF rows of zj must sum to  - b * int dl/R = - b * ln 2  (partition of unity of the value basis).
@@ -55,7 +55,8 @@ program test_sheath_j
     base(i)%values(1,1,var_psi) = 1.d-4*base(i)%x(1,1,1); base(i)%values(1,2,var_psi) = 1.d-4
   enddo
   nodes = base; call assemble(a, r)
-  if ( anyrow(a, r, var_zj) .or. anyrow(a, r, var_u) ) error stop 'FAIL: sheath rows assembled below the grazing angle'
+  if ( anyrow(a, r, var_u) )        error stop 'FAIL: potential row assembled below the grazing angle'
+  if ( .not. anyrow(a, r, var_zj) ) error stop 'FAIL: surface term missing below the grazing angle (it follows the node, not the angle)'
   do i = 1, 4
     base(i)%values(1,1,var_psi) = 0.08d0*base(i)%x(1,1,1); base(i)%values(1,2,var_psi) = 0.08d0
   enddo
@@ -65,7 +66,7 @@ program test_sheath_j
   if ( anyrow(ap, rp, var_u) )        error stop 'FAIL: sheath_j_float_u assembles a u row'
   if ( .not. anyrow(ap, rp, var_zj) ) error stop 'FAIL: sheath_j_float_u drops the surface term'
   sheath_j_float_u = .false.
-  write(*,'(a)') ' PASS: sheath rows: off/grazing none, on both, float_u only the current surface term'
+  write(*,'(a)') ' PASS: sheath rows: off none, grazing surface term only, on both, float_u surface term only'
 
   ! ---------------------------------------------------------------- 2. surface term value
   ! psi = a*R + b*Z: dpsi/dn = -b on the edge (outward normal -Z); nodal t-derivative DOF = b*dZ/dt = b/3

@@ -63,7 +63,7 @@ real*8     :: grad_t(2), B0_R, B0_Z, factor_cs_bnd_integral
 logical    :: mw_on                                              ! weak Bohm condition (mach1_weak) on this edge
 real*8     :: mw_orient, mw_vEn, mw_Bn, mw_vn, mw_tgt, mw_act, mw_cs, mw_res, mw_w, mw_in, mw_s, mw_x
 real*8     :: fx_n, fx_v, fx_p, fx_u, fx_out                    ! normal-flow measure of the sheath fluxes and its columns
-logical    :: sj_on, sj_here                                     ! sheath current row: on this edge / at this Gauss point
+logical    :: sj_on, sj_here, sj_surf                            ! sheath rows on this edge / at this Gauss point / surface term on this edge
 real*8     :: sj_an, sj_csat, sj_CT, sj_CV, sj_jsat, sj_psin, sj_w, sj_esp, sj_Tt
 real*8     :: so_X, so_Xc, so_g, so_res, so_cu, so_czj, so_crho, so_cTe, so_ccs, so_w   ! Option I potential row
 logical    :: so_capped
@@ -158,10 +158,16 @@ if ( mw_on ) apply_natural_bc(var_vpar) = .true.
 ! --- receive the surface term of the current definition, oint v*(dpsi/dn)/R dl, that the volume form drops
 ! --- (which is why JOREK pins zj); with it zj = Delta*psi holds at the wall and the wall current is the
 ! --- current the interior induction equation drives into the last element.
-sj_on = bcs(bnd_type1)%sheath_j .and. bcs(bnd_type2)%sheath_j
+! --- The surface term follows the NODE: a released node's definition row needs it over the node's whole
+! --- support, so it is assembled at every Gauss point of every edge with a sheath node at either end, with
+! --- no angle gate (pinned nodes have their rows overwritten by Dirichlet anyway). Without this the row is
+! --- the volume form alone over part of the support, i.e. dpsi/dn = 0 weakly, and the wall current absorbs
+! --- a missing flux of order R*B_t/h: thousands of j_sat at the edge of the sheath region (measured).
+sj_surf = bcs(bnd_type1)%sheath_j .or. bcs(bnd_type2)%sheath_j
+sj_on   = bcs(bnd_type1)%sheath_j .and. bcs(bnd_type2)%sheath_j
 sj_an = 0.d0 ; sj_csat = 0.d0 ; sj_CT = 0.d0 ; sj_CV = 0.d0
+if ( sj_surf ) apply_natural_bc(var_zj) = .true.
 if ( sj_on ) then
-  apply_natural_bc(var_zj) = .true.
   if ( .not. sheath_j_float_u ) apply_natural_bc(var_u) = .true.
   call sheath_j_norm(sj_an, sj_csat)
   call floating_u_norm(sj_an, sj_CT, sj_CV)
@@ -415,8 +421,8 @@ do ms=1, n_gauss
     ! --- independent of the sign of F0.
     sj_here = sj_on .and. ( abs(bdotn) .ge. sin(c_angle) )
     sj_jsat = 0.d0 ; sj_psin = 0.d0 ; sj_w = 0.d0
-    if ( sj_here ) then
-      sj_jsat = sj_csat * r0 * normal_sign * cs0 / Btot
+    if ( sj_here ) sj_jsat = sj_csat * r0 * normal_sign * cs0 / Btot
+    if ( sj_surf ) then
       sj_psin = ps0_x * normal(1) + ps0_y * normal(2)     ! dpsi/dn, outward
       sj_w    = dl / BigR                                 ! weight of the surface term
     endif
@@ -710,7 +716,7 @@ do ms=1, n_gauss
           ! --- Surface term of the current definition, columns of the psi normal-derivative DOFs (3 and 4 of
           ! --- both edge nodes). Their trace vanishes, their t-derivative on the edge is what the state loop
           ! --- above uses: size(vertex,direction(l))*H1*HZ*element_size_perp with the same sign rule.
-          if ( sj_here ) then
+          if ( sj_surf ) then
             do k=1,2
               sj_esp = - element%size(vertex(k),direction_perp(1)) * 3.d0
               if ((vertex(1)*vertex(2) .eq. 2)) sj_esp = + element%size(vertex(k),direction_perp(1)) * 3.d0
