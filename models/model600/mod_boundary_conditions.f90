@@ -110,7 +110,8 @@ integer :: node_indices( (n_order+1)/2, (n_order+1)/2 ), index_tmp, kk, ll
 real*8  :: fu_a_n, fu_C_T, fu_C_V, fu_target   ! floating-potential row: u = C_T*Te + C_V*V_wall
 integer :: fu_var_T                            ! temperature trace variable: Te, or T in a single-T build
 logical :: fu_row, sj_above                    ! floating row at this node; sheath model applies (|b.n| >= sin(min_sheath_angle))
-real*8  :: sj_bn                               ! |b.n| at the node
+real*8  :: sj_bn                               ! |b.n| at the node, largest over its wall edges
+integer :: jdir, jv2
 logical, parameter :: include_2nd_derivatives = .false.
 
 RMPspectrum: if (RMP_on .and. (n_tor .ge. 3)) then !*****
@@ -238,9 +239,21 @@ do i=1, n_local_elms !=== do elements
       ! --- Sheath current BC (bcs%sheath_j): the wall is sorted by incidence, as the Bohm row is. Above
       ! --- sin(min_sheath_angle) the u row is the vorticity equation (charge continuity) and the zj row
       ! --- is the weak sheath row in mod_boundary_matrix_open; below it the floating row and Dirichlet zj.
+      ! --- Decided PER NODE, not per visit: a corner node is visited along each of its wall edges, and
+      ! --- its rows must be released if the sheath model applies along any of them, or one visit would
+      ! --- pin what the other released (the frozen-corner defect). Static map: psi is Dirichlet on the wall.
       sj_above = .false.
       if ( bcs(bnd_type)%sheath_j ) then
-        sj_bn    = node_incidence()
+        sj_bn = 0.d0
+        do jdir = 1, 2
+          if ( jdir .eq. 1 ) then
+            jv2 = mod(iv  ,4) + 1
+          else
+            jv2 = mod(iv+2,4) + 1
+          endif
+          if ( node_list%node(element_list%element(ielm)%vertex(jv2))%boundary .eq. 0 ) cycle
+          sj_bn = max( sj_bn, node_incidence(jdir) )
+        enddo
         sj_above = ( sj_bn .ge. sin(min_sheath_angle*PI/180.d0) )
       endif
       fu_row = bcs(bnd_type)%floating_u .or. ( bcs(bnd_type)%sheath_j .and. .not. sj_above )
@@ -799,11 +812,24 @@ return
 
 contains
 
-  !> |b.n| = |B_pol.n|/|B| at the current node, along the current wall direction. B_pol.n depends on
-  !! the tangential psi derivative only, so this is a static map (psi is Dirichlet on the wall).
-  real*8 function node_incidence()
+  !> |b.n| = |B_pol.n|/|B| at the current node along wall direction jdir (1: towards vertex iv+1,
+  !! 2: towards vertex iv-1, as in the direction loop). B_pol.n depends on the tangential psi
+  !! derivative only, so this is a static map (psi is Dirichlet on the wall).
+  real*8 function node_incidence(jdir)
+    integer, intent(in) :: jdir
     real*8 :: Hb(2,n_degrees_1d), Hb_s(2,n_degrees_1d), Hb_ss(2,n_degrees_1d)
-    real*8 :: es_s, es_t, p_s, p_t, r_s_, r_t_, z_s_, z_t_, xj, p_x, p_y, g_b(2), nrm(2), bt, rr
+    real*8 :: es_s, es_t, p_s, p_t, r_s_, r_t_, z_s_, z_t_, xj, p_x, p_y, g_b(2), nrm(2), bt, rr, nd(2)
+    integer :: jv2_, jv3_
+    logical :: s_const
+    if ( jdir .eq. 1 ) then
+      jv2_ = mod(iv  ,4) + 1 ; jv3_ = mod(iv+2,4) + 1
+    else
+      jv2_ = mod(iv+2,4) + 1 ; jv3_ = mod(iv  ,4) + 1
+    endif
+    s_const = ( (iv*jv2_ .eq. 6) .or. (iv*jv2_ .eq. 4) )
+    nd = (/ node_list%node(inode)%x(1,1,1) - node_list%node(element_list%element(ielm)%vertex(jv3_))%x(1,1,1), &
+            node_list%node(inode)%x(1,1,2) - node_list%node(element_list%element(ielm)%vertex(jv3_))%x(1,1,2) /)
+    nd = nd / norm2(nd)
     call basisfunctions1(0.d0, Hb, Hb_s, Hb_ss)
     es_s = element_list%element(ielm)%size(iv,2) * Hb_s(1,2)
     es_t = element_list%element(ielm)%size(iv,3) * Hb_s(1,2)
@@ -817,12 +843,12 @@ contains
     xj   = r_s_*z_t_ - r_t_*z_s_
     p_x  = (   z_t_ * p_s - z_s_ * p_t ) / xj
     p_y  = ( - r_t_ * p_s + r_s_ * p_t ) / xj
-    if ( s_constant_boundary ) then
+    if ( s_const ) then
       g_b = (/  z_t_, -r_t_ /) / xj
     else
       g_b = (/ -z_s_,  r_s_ /) / xj
     endif
-    nrm  = dot_product(g_b, normal_direction) * g_b
+    nrm  = dot_product(g_b, nd) * g_b
     nrm  = nrm / norm2(nrm)
     bt   = sqrt(F0**2 + p_x**2 + p_y**2) / rr
     node_incidence = abs( p_y*nrm(1) - p_x*nrm(2) ) / (rr * bt)
