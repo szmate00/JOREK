@@ -39,7 +39,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass, sheath_V_wall 
 use mod_floating_u, only: floating_u_norm
-use phys_module, only: min_sheath_angle, sheath_j_pin_current, sheath_j_ohm
+use phys_module, only: min_sheath_angle, sheath_j_pin_current, sheath_j_ohm, sheath_j_float_u
 use constants, only: PI
 use tr_module
 use mpi_mod
@@ -256,7 +256,8 @@ do i=1, n_local_elms !=== do elements
         enddo
         sj_above = ( sj_bn .ge. sin(min_sheath_angle*PI/180.d0) )
       endif
-      fu_row = bcs(bnd_type)%floating_u .or. ( bcs(bnd_type)%sheath_j .and. .not. sj_above )
+      fu_row = bcs(bnd_type)%floating_u .or. ( bcs(bnd_type)%sheath_j .and. .not. sj_above ) &
+               .or. ( bcs(bnd_type)%sheath_j .and. sheath_j_ohm .and. sheath_j_float_u )   ! Ohm current under a floating potential
 
       do in=a_mat%i_tor_min, a_mat%i_tor_max  ! === do n_tor
       
@@ -367,7 +368,8 @@ do i=1, n_local_elms !=== do elements
             if ( (k==var_zj   ) .and. (.not. apply_current_BC) )       cycle
             if ( (k==var_zj   ) .and. sj_above .and. (.not. sheath_j_pin_current) ) cycle  ! III: weak sheath row owns zj;
                                                                                           ! I: zj set by the kept induction row
-            if ( (k==var_u    ) .and. sj_above ) cycle                          ! III: vorticity row sets u; I: weak potential row
+            if ( (k==var_u    ) .and. sj_above .and. .not. (sheath_j_ohm .and. sheath_j_float_u) ) cycle  ! III: vorticity row sets u;
+                                                                                                       ! I: weak potential row
 
             ! --- Option I (sheath_j_ohm): JOREK's row swap. The psi Dirichlet condition goes into the zj row,
             ! --- replacing the current definition there (whose surface term is dropped anyway); the psi row keeps

@@ -159,7 +159,7 @@ sj_on = bcs(bnd_type1)%sheath_j .and. bcs(bnd_type2)%sheath_j .and. (.not. sheat
 sj_an = 0.d0 ; sj_csat = 0.d0 ; sj_CT = 0.d0 ; sj_CV = 0.d0
 if ( sj_on ) then
   if ( sheath_j_ohm ) then
-    apply_natural_bc(var_u)  = .true.     ! Option I: the sheath row sits in the u slot
+    if ( .not. sheath_j_float_u ) apply_natural_bc(var_u) = .true.   ! Option I: the sheath row sits in the u slot
   else
     apply_natural_bc(var_zj) = .true.     ! Option III: in the zj slot
   endif
@@ -431,6 +431,7 @@ do ms=1, n_gauss
       sj_jsat  = sj_csat * r0 * normal_sign * cs0 / Btot
       sj_res   = eq_g(mp,var_zj,ms) - sj_jsat * sj_f
       sj_w     = Zbig * dl
+      if ( sheath_j_ohm ) sj_w = 0.d0                 ! Option I: no current row (Ohm's law sets zj)
     endif
 
     ! --- Option I (sheath_j_ohm): the same characteristic solved for the potential,
@@ -442,7 +443,7 @@ do ms=1, n_gauss
     ! --- finite on the ion-saturated branch. Where a bound is active the zj/rho/cs columns vanish.
     so_w = 0.d0 ; so_res = 0.d0 ; so_cu = 0.d0 ; so_czj = 0.d0 ; so_crho = 0.d0 ; so_cTe = 0.d0 ; so_ccs = 0.d0
     so_capped = .false.
-    if ( sj_here .and. sheath_j_ohm ) then
+    if ( sj_here .and. sheath_j_ohm .and. .not. sheath_j_float_u ) then
       so_X  = 1.d0
       if ( sj_jsat .ne. 0.d0 ) so_X = 1.d0 - eq_g(mp,var_zj,ms) / sj_jsat
       so_Xc = min( max( so_X, exp(-sheath_Lambda) ), exp(sheath_Lambda) )
@@ -457,7 +458,6 @@ do ms=1, n_gauss
         so_ccs  =   2.d0*Te0/sj_an * eq_g(mp,var_zj,ms) / (so_Xc * sj_jsat * cs0)         ! through j_sat ~ cs, times cs_T
       endif
       so_w = Zbig * dl
-      sj_w = 0.d0                                                                 ! no current row under Option I
     endif
 
     if ( floating_u_diag .and. sj_here ) &

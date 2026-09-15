@@ -192,6 +192,12 @@ program test_sheath_j
     if ( k == 1 ) write(*,'(a,es9.2)') ' PASS: Option I potential row: every column matches FD inside the bounds, worst rel err ', worst
     if ( k == 3 ) write(*,'(a)')       ' PASS: Option I potential row: at either bound the zj/rho/cs columns vanish, u column stays'
   enddo
+  ! --- Option I with the floating row kept: no sheath row in either slot
+  sheath_j_float_u = .true.
+  nodes = base; call assemble(a, r)
+  if ( anyrow(a, r, var_zj) .or. anyrow(a, r, var_u) ) error stop 'FAIL: sheath_j_float_u still assembles a sheath row'
+  sheath_j_float_u = .false.
+  write(*,'(a)') ' PASS: sheath_j_float_u assembles no sheath row (Ohm current under a floating potential)'
   sheath_j_ohm = .false.
 
 contains

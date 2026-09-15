@@ -67,6 +67,7 @@ module phys_module
   logical :: mach1_weak_inflow      !< weak inflow closure on the density row where the total normal flow is inward (default on)
   logical :: sheath_j_pin_current   !< with bcs%sheath_j: keep zj Dirichlet (no sheath row), only release the u row - stage-1 test
   logical :: sheath_j_ohm           !< Option I: sheath (potential form) in the u slot, psi Dirichlet swapped into the zj row, induction row kept (wall Ohm's law)
+  logical :: sheath_j_float_u       !< with sheath_j_ohm: keep the FLOATING row on u (no sheath row); measures the wall current Ohm's law demands
   logical :: vpar_smoothing       !< apply a smoothing function to smooth jumps in Vpar at B.n=0
   real*8  :: vpar_smoothing_coef(3) !< coefficients for the smoothing profile of the parallel velocity
   real*8  :: min_sheath_angle     !< For sheath boundary conditions: Minimum incident angle for heat and particle fluxes (in degrees)

@@ -53,6 +53,13 @@ twice the floating drop (a model statement) so the row stays finite on the ion-s
 bound is active the zj/rho/cs columns vanish and the u column stays. Same incidence sort, same table
 (e-sat then counts either bound).
 
+`sheath_j_float_u = .t.` with `sheath_j_ohm`: the row swap is done (zj from Ohm's law over the last
+element) but the FLOATING row stays on u. No sheath row anywhere. This measures the wall current the
+induction equation demands under the floating potential: the `[sheath_j]` j/jsat and Inet/Isat columns
+then report Ohm's current against the saturation current. Order one means a current BC is viable;
++-100 means the floating potential along the target is not a flux function to the accuracy Ohm's law
+demands.
+
 ## Reading the log
 
 ```

@@ -100,6 +100,7 @@ subroutine preset_parameters
   mach1_weak_inflow     = .true.  ! inflow closure rho -> 0 at the inflow rate where the total normal flow is inward
   sheath_j_pin_current  = .false. ! stage-1 test of the sheath BC: u row released, zj still Dirichlet
   sheath_j_ohm          = .false. ! .false.: Option III (sheath in the zj slot, u from continuity); .true.: Option I
+  sheath_j_float_u      = .false. ! Option I with the floating row kept on u: Ohm's-law wall current under a floating potential
   Vpar_smoothing        = .false. ! smooth the transitions of Vpar positive/negavtive at B.n
   Vpar_smoothing_coef   = (/0.01d0, 0.d0, 0.d0 /) !(/ 0.01d0, 0.016d0, 0.00575446347d0/)
   min_sheath_angle      = 1.d0   ! 1 degree (not in radians)
