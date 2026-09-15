@@ -183,6 +183,22 @@ program test_weak_mach
   call set_u(1.d-4)
   write(*,'(a)') ' PASS: bounded drift compensation matches FD below, across and beyond the bound'
 
+  ! --- grazing cut: below sin(min_sheath_angle) the drift row must equal the marginal row exactly
+  do i = 1, 4
+    base(i)%values(1,1,var_psi) = 1.d-4*base(i)%x(1,1,1)   ! |b.n| ~ 3e-5 << sin(1 deg)
+    base(i)%values(1,2,var_psi) = 1.d-4
+  enddo
+  mach1_weak_drift = .false.; nodes = base; call assemble(a0, r0)
+  mach1_weak_drift = .true.;  mach1_weak_drift_cut = .true.; nodes = base; call assemble(a, r)
+  if ( any(a /= a0) .or. any(r /= r0) ) error stop 'FAIL: grazing cut does not reduce to the marginal row'
+  mach1_weak_drift_cut = .false.; nodes = base; call assemble(ap, rp)
+  if ( all(ap == a0) ) error stop 'FAIL: grazing cut test state does not exercise the drift term'
+  do i = 1, 4
+    base(i)%values(1,1,var_psi) = 0.08d0*base(i)%x(1,1,1)
+    base(i)%values(1,2,var_psi) = 0.08d0
+  enddo
+  write(*,'(a)') ' PASS: grazing cut reduces the drift row to the marginal row below the angle'
+
   ! ---------------------------------------------------------------- 3. saturated branch
   call set_u(-1.d0)      ! vE.n far beyond sonic outflow: target pinned at zero
   nodes = base; call assemble(a, r)

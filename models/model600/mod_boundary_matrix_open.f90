@@ -330,7 +330,10 @@ do ms=1, n_gauss
     ! --- mach1_weak_drift_bound = c > 0 the compensation of an INWARD drift d = -vE.n > 0 is bounded
     ! --- smoothly at s = c*cs*|b.n| (SOLPS b2stbc_cbc, c = 2): target cs*|b.n| + s*tanh(d/s), whose u
     ! --- column carries sech^2(d/s) and so fades out where the bound takes over, with no branch. The
-    ! --- flow beyond the bound is inward and is handled by the inflow closure below.
+    ! --- flow beyond the bound is inward and is handled by the inflow closure below. With
+    ! --- mach1_weak_drift_cut the compensation is dropped where |b.n| < sin(min_sheath_angle), the angle
+    ! --- below which the sheath particle and heat fluxes are already taken from the c_angle floor model;
+    ! --- the row there is the marginal one. Static map: psi is Dirichlet on the wall.
     ! --- vE.n = -orient*R*u_s/dl is the outward ExB normal flow for v_E = (-R*u_Z, +R*u_R) and the edge
     ! --- tangent (x_s, y_s)/dl. Vpar*(B_pol.n) is the parallel normal flow, a velocity since v = Vpar*B.
     mw_orient = sign(1.d0, y_s(ms)*normal(1) - x_s(ms)*normal(2))
@@ -339,7 +342,7 @@ do ms=1, n_gauss
     mw_tgt    = cs0 * abs(bdotn)
     mw_act    = 0.d0                      ! coefficient of the u column: drift not in the row
     mw_cs     = 1.d0                      ! coefficient of the temperature columns (cs in the target)
-    if ( mach1_weak_drift ) then
+    if ( mach1_weak_drift .and. .not. ( mach1_weak_drift_cut .and. abs(bdotn) .lt. sin(c_angle) ) ) then
       mw_tgt = cs0 * abs(bdotn) - mw_vEn
       mw_act = 1.d0
       if ( mw_tgt .le. 0.d0 ) then        ! the drift alone gives sonic outflow or more: nothing to impose

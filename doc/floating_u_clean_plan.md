@@ -301,3 +301,16 @@ every later run), then 4, then 5, then 3, then 7-9. Ladder step a after 6, step 
 A `mach1_weak` default (marginal); B `mach1_weak_drift = .t.`; C `mach1_weak_drift = .t.`,
 `mach1_weak_drift_bound = 2.d0` (SOLPS b2stbc_cbc). Read `max M` on type 1 (expected ~1 / several / <= 3),
 inflow fraction, min rho and its location, and lifetime on the production ramp.
+
+### A/B/C results (2026-09-15) and arm D
+
+A: 2000 steps to timeout on the production ramp, Mach 1 everywhere, minima parked, drift 450 m/s at the
+strike point (vs 15 km/s in B/C at step ~500: time or condition, A@537 table pending). DONE CRITERION 2 MET.
+B: dead at 537 at the HFS wall (1.055,0.24), b.n~1e-4, wall Mach 14->404; the strike point carried Mach 10.8.
+C (bound 2): dead at 645, 45 steps into dt=10, same HFS wall; actual wall Mach 4.5->583 while the TARGET was
+3: at b.n~1e-4 the (B.n)^2 weight has no grip, the interior sets Vpar, and the Mach-3 layer along the grazing
+wall next to it steepens. The strike point carried Mach 3 to the end. Any compensation along the grazing
+wall is fatal; the compensation at the strike point is not the limiter (537 steps at M 10, 645 at M 3).
+D (`mach1_weak_drift_cut`, supervisor's proposal): no compensation below sin(min_sheath_angle), i.e. the
+grazing wall becomes A and the strike point keeps the full SOLPS demand. Tests whether that demand survives
+the dt=10 phase. Coded 2026-09-15.

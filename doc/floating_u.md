@@ -49,7 +49,10 @@ as in a develop run. `floating_u_diag = .t.` prints the wall table.
    non-marginal form `max(cs*|b.n| - vE.n, 0)` for comparison, and `mach1_weak_drift_bound = 2.d0`
    bounds that compensation smoothly at 2cs|b.n| (SOLPS b2stbc_cbc): target cs|b.n| + s*tanh(d/s)
    with s = 2cs|b.n| and d the inward drift, u column sech^2(d/s), the excess left to the inflow
-   closure. Three forms, one restart: A marginal (default), B drift unbounded, C drift bounded.
+   closure. `mach1_weak_drift_cut = .t.` drops the compensation where |b.n| < sin(min_sheath_angle),
+   the angle below which the sheath fluxes already come from the c_angle floor model, so the row
+   is marginal there and fully compensating elsewhere. Four forms, one restart: A marginal
+   (default), B drift unbounded, C drift bounded, D drift with the grazing cut.
    The nodal Mach rows are not
    assembled and type 3 gets no Dirichlet Vpar row. Columns on Vpar, Ti, Te (and u with the
    drift form) are exact; the |B| dependence on the free normal psi derivative is lagged.
