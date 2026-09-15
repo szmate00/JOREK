@@ -19,7 +19,7 @@ label.
 
 Done means, on the reference case:
 
-1. With j_sat sent to infinity (X = 1 - j/j_sat -> 1) the run reproduces D to solver tolerance.
+1. With the wall current held at zero the run reproduces D (floating) to solver tolerance.
 2. With the current free and both targets at the same temperature, the net wall current per type is
    zero to the accuracy of the row, and the potential is the floating one.
 3. With unequal target temperatures the thermoelectric current flows from the hotter to the colder
@@ -57,53 +57,60 @@ Four fields, four rows. Both definition rows are integrated by parts with the su
 (`mod_elt_matrix_fft.f90` current definition and vorticity definition), so at a boundary test
 function they silently impose a zero normal derivative; that is why JOREK pins zj and w.
 
-| row (test fn)  | equation                          | D as it is                      | Option I (first)                       | Option II (derive in parallel)        |
-|---|---|---|---|---|
-| psi            | induction                          | replaced: Dirichlet psi         | RETAINED = wall Ohm's law, determines zj | retained                              |
-| zj             | zj = Delta* psi (no surface term)  | replaced: Dirichlet zj          | replaced: Dirichlet psi (row swap)     | replaced: Dirichlet psi (row swap)    |
-| u              | vorticity (charge continuity)      | replaced: floating row          | replaced: SHEATH row                   | RETAINED: charge continuity at the wall |
-| w              | w = Delta* u (no surface term)     | replaced: Dirichlet w           | replaced: Dirichlet w                  | replaced: SHEATH row (row swap)       |
+| row (test fn) | equation                          | D as it is                | Option III (FIRST)                        | Option I (alternative)                    | Option II (derive)                  |
+|---|---|---|---|---|---|
+| psi           | induction                          | replaced: Dirichlet psi   | replaced: Dirichlet psi (unchanged)       | RETAINED = wall Ohm's law, sets zj        | retained                            |
+| zj            | zj = Delta* psi (no surface term)  | replaced: Dirichlet zj    | replaced: SHEATH row, zj = j_sat*f(u)     | replaced: Dirichlet psi (row swap)        | replaced: Dirichlet psi (row swap)  |
+| u             | vorticity (charge continuity)      | replaced: floating row    | RETAINED: charge continuity sets u        | replaced: SHEATH row (potential form)     | RETAINED                            |
+| w             | w = Delta* u (no surface term)     | replaced: Dirichlet w     | replaced: Dirichlet w (unchanged)         | replaced: Dirichlet w                     | replaced: SHEATH row (row swap)     |
 
-The row swap is JOREK's own way of freeing zj (and w): the Dirichlet condition of the potential-like
-field goes into the row of its Laplacian, and the evolution equation is kept. With psi frozen at the
-node, the retained induction row is stationary Ohm's law over the last element, eta*j = -grad_par(Phi)
-plus the remaining induction terms; eta*zj enters undifferentiated, so that row is a complete equation
-for the boundary current. No surface integral is needed. Its one dropped surface term is the numerical
-hyper-resistivity (grad v . grad zj), small.
+**Option III (user's proposal, 2026-09-15, minus freeing the induction row):** the sheath in the
+current-definition slot, the vorticity equation retained. This is the electrostatic edge codes' sheath
+condition: nabla.j = 0 with the wall entering through the parallel current, whose wall value is the
+sheath current. Properties:
+- u never loses its row: on the ion-saturated branch f -> 1 and the u column of the sheath row
+  vanishes, but u keeps the vorticity equation. The orphaned-DOF problem disappears structurally.
+- the current form is the right form: res = zj - j_sat*f(u), d(res)/d(zj) = 1, no log, no X, no
+  branch. The 220 kV objection applied to a row that solved for u.
+- no grazing singularity in the row: the characteristic is for j.n = e*n*cs*|b.n|*f; in terms of
+  the parallel current JOREK carries, |b.n| cancels, zj = c_sat*n*cs*f(u). Weight one.
+- the retained vorticity row's dropped surface terms ARE the wanted physics: the polarisation term
+  integrated by parts drops rho*dn(du/dt) (no perpendicular polarisation current into the wall), the
+  viscosity drops dn(w). Wall statement: no perpendicular current, parallel current = sheath current,
+  potential from continuity.
+- psi stays Dirichlet and the induction row stays dropped at the wall exactly as today. Retaining
+  it (psi free at the wall) would let B.n evolve: a leaky wall without a vacuum response. Not a BC.
+- unlike Option I, the wall current does not depend on the last element's eta.
+- electron branch: f = 1 - exp(Lambda - e*Phi/Te) is unbounded for Phi below the wall potential;
+  physically the electron current saturates there, f(Phi_wall) = 1 - e^Lambda (about -19 for D).
+  Capping the exponent at Lambda is electron saturation, a physics statement, not a clamp; it also
+  removes the overflow.
 
-Option I is the smallest step from D: one row changes content (floating -> sheath), one Dirichlet flag
-changes meaning (zj swapped, not pinned). The boundary pair Ohm + sheath is a nonlinear algebraic
-system per node, solved implicitly each step; its Jacobian is well conditioned for finite eta, and in a
-cold SOL eta is large so the current stays small there of its own accord.
+**Option I:** JOREK's row swap frees zj: the psi Dirichlet condition goes into the zj row, the
+induction equation is kept and, with psi frozen, reduces to stationary Ohm's law over the last
+element, which sets the wall current; the sheath (potential form) sits in the u slot. Complete
+without a surface integral (eta*zj enters undifferentiated; the one dropped term is the numerical
+hyper-resistivity). Kept as the alternative if III shows the wall potential from continuity is ill
+conditioned somewhere.
 
-Option II enforces charge continuity at the wall test functions and sets the potential through the w
-slot, as the electrostatic edge codes do with the sheath current as the vorticity boundary flux. In
-JOREK the vorticity row carries no surface flux; the coupling is through the value of zj. The retained
-vorticity row contains int grad v . grad(du/dt) and the viscosity, both integrated by parts with dropped
-surface terms, so its boundary row carries an implicit condition on normal derivatives. Derive before
-trusting. Keep for the case where Option I shows a wall charge-balance violation (measurable: the
-integral of the field-aligned normal current per type in the wall table).
+**Option II:** both swaps, sheath in the w slot, vorticity and induction retained. Derivation
+exercise; not first.
 
 ## The sheath row
 
-- **Weak, per Gauss point**, on the u trace, in the edge loop the Bohm row uses, weight
-  d(res)/du = 1 (no fading: the potential must be set everywhere the sheath model applies). Corners
-  accumulate instead of assign; the characteristic is evaluated per toroidal plane, i.e. on the real
-  3D wall state, which the nodal n=0-only version could not do.
-- **Residual in the potential**, the voltage defect: res = u - (2Te/a_n)*(Lambda - ln X),
-  X = 1 - j/j_sat. Exact columns on u, Te, rho, zj (and Ti, Te through cs in j_sat). The current form
-  asks for 1 - exp(x) steps (220 kV at 100 V off the root); measured on the old branch.
-- **j_sat = c_sat * n * cs * |b.n|** written explicitly, cs from Ti+Te. With the marginal Bohm row
-  there is no drift term to be inconsistent with, and the wall Vpar noise stays out of the potential.
-  |b.n| carries the sign structure; the field-aligned normal current is j*(B.n)/(mu0*F0)-type, so the
-  characteristic must be written for the current INTO the wall, both targets, both signs of F0
-  (self-test, as for floating_u).
-- **Saturation, u never without a row.** Where X <= 0 the characteristic has no voltage root. The row
-  must still constrain u there. Candidate: the potential residual with X replaced by max(X, X_min)
-  where X_min is not a tuning constant but the value at which the potential form's slope equals the
-  current form's, i.e. continuity of the row; to be derived, then the branch is per Gauss point and
-  continuous, like the Bohm inequality. The current limit j <= j_sat is the circuit's business (Ohm's
-  law with rising Phi), not the u row's.
+- **Weak, per Gauss point**, on the zj trace, in the edge loop the Bohm row uses, weight
+  d(res)/d(zj) = 1. Corners accumulate instead of assign; the characteristic is evaluated per
+  toroidal plane, i.e. on the real 3D wall state, which the nodal n=0-only version could not do.
+- **Current form** (Option III): res = zj - c_sat*rho*cs*f(u), f = 1 - exp(min(x, Lambda)),
+  x = Lambda - a_n*u/(2Te). Exact columns on zj, u, rho, Ti, Te (through cs and through x). The u
+  column is -c_sat*rho*cs*exp(x)*a_n/(2Te) on the electron branch and vanishes on the saturated ion
+  branch, where u is carried by the vorticity row alone.
+- **Sign structure**: the characteristic is for the current INTO the wall on both targets and for
+  both signs of F0. Anchor on Artola eqs. (2)-(4) and on mod_expression's Jpol; self-test as for
+  floating_u. The sign of the outflow (direction of Vpar in the marginal Bohm row) is the sign of
+  the ion saturation current.
+- **Potential form** (Option I only): res = u - (2Te/a_n)*(Lambda - ln X), X = 1 - j/j_sat; needs a
+  saturated-branch treatment that keeps a u row.
 - **Below the grazing angle**: floating row and zj Dirichlet, exactly as D keeps the marginal Bohm
   row there. j_sat -> 0 at grazing incidence would otherwise put the whole grazing wall on the
   saturated branch, and no current flows into a wall the field does not reach.
@@ -118,19 +125,21 @@ integral of the field-aligned normal current per type in the wall table).
 0. **Paper.** One page: the four rows per node under D, Option I, Option II, every retained row's
    dropped surface term marked. Sign of the field-aligned normal current for both targets and both F0
    signs, anchored on Artola eqs. (2)-(4) and on mod_expression's Jpol.
-1. **Swap alone.** Implement the psi -> zj row swap (flag), keep the floating row. Run against D from
-   the same restart. Expected: potential identical to D, wall current relaxes to its Ohm's-law value
-   in the first steps; report min/max/integral of j per type in the wall table. This tests the freed
-   current on its own.
-2. **Sheath row** in the u slot (Option I), weak, potential form, with the grazing-angle sort. Harness:
-   FD every column, both branches, both F0 signs, the j_sat -> infinity reduction to the floating row
-   bit-for-bit.
-3. **Ladder** on the cluster: (a) j_sat -> infinity = D; (b) current free, equal targets: zero net
+1. **Vorticity row retained alone.** Release the u Dirichlet/floating row above the grazing angle
+   with zj still pinned, i.e. Option III with the sheath row replaced by Dirichlet zj. This tests the
+   retained vorticity row as an equation for the wall potential on its own, against D from the same
+   restart. Expected: a potential that is no longer Lambda*Te pointwise; report Phi min/max per type.
+   If this is ill conditioned anywhere, Option I becomes first.
+2. **Sheath row** in the zj slot (Option III), weak, current form with electron saturation, with the
+   grazing-angle sort. Harness: FD every column, both branches (electron, ion-saturated), both F0
+   signs, the reduction to the floating potential when the sheath row is made stiff (j_sat -> 0 with
+   zj = 0: x -> 0 exactly, Phi = Lambda*Te), bit-for-bit against D where applicable.
+3. **Ladder** on the cluster: (a) stiff sheath (zj = 0) = D; (b) current free, equal targets: zero net
    current per type; (c) unequal targets (the reference case has them): sign and magnitude of the
    thermoelectric current, potentials on opposite sides of floating; (d) hot phase and dt = 10 phase
    to 2000 steps.
-4. **Option II** only if (b) or (c) show a wall charge-balance violation the u-slot placement cannot
-   fix.
+4. **Option I** if stage 1 shows the continuity-set potential ill conditioned; **Option II** as a
+   derivation exercise only.
 5. Physics refinements, each measured before being built: drop-dependent gamma_e; Lambda(Ti/Te);
    secondary electron emission; the diamagnetic part of the model's own normal current.
 
