@@ -51,8 +51,10 @@ as in a develop run. `floating_u_diag = .t.` prints the wall table.
    with s = 2cs|b.n| and d the inward drift, u column sech^2(d/s), the excess left to the inflow
    closure. `mach1_weak_drift_cut = .t.` drops the compensation where |b.n| < sin(min_sheath_angle),
    the angle below which the sheath fluxes already come from the c_angle floor model, so the row
-   is marginal there and fully compensating elsewhere. Four forms, one restart: A marginal
-   (default), B drift unbounded, C drift bounded, D drift with the grazing cut.
+   is marginal there and fully compensating elsewhere. `mach1_weak_cut = .t.` removes the Vpar row
+   altogether below that angle, leaving the parallel viscosity's natural condition grad(Vpar).n = 0
+   (the inflow closure and total-flow fluxes stay). Forms on one restart: A marginal (default),
+   B drift unbounded, C drift bounded, D drift with the compensation cut, E drift with the row cut.
    The nodal Mach rows are not
    assembled and type 3 gets no Dirichlet Vpar row. Columns on Vpar, Ti, Te (and u with the
    drift form) are exact; the |B| dependence on the free normal psi derivative is lagged.

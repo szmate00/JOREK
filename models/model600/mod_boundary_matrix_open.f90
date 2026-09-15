@@ -358,8 +358,11 @@ do ms=1, n_gauss
       endif
     endif
     mw_res    = mw_Bn * Vpar0 - mw_tgt
+    ! --- mach1_weak_cut: below sin(min_sheath_angle) no Vpar row at all - the parallel viscosity's natural
+    ! --- condition grad(Vpar).n = 0 holds there - while the inflow closure and the total-flow fluxes stay.
     mw_w      = 0.d0
     if ( mw_on ) mw_w = Zbig * mw_Bn * dl
+    if ( mach1_weak_cut .and. abs(bdotn) .lt. sin(c_angle) ) mw_w = 0.d0
 
     ! --- Inflow closure. Where the TOTAL normal flow vn = Vpar*(B_pol.n) + vE.n is inward the density
     ! --- equation, advected with the undifferentiated test function, has no boundary datum. The weak

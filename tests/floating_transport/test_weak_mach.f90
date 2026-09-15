@@ -199,6 +199,33 @@ program test_weak_mach
   enddo
   write(*,'(a)') ' PASS: grazing cut reduces the drift row to the marginal row below the angle'
 
+  ! --- row cut: below the angle no Vpar row at all, the other rows (inflow closure, fluxes) unchanged
+  do i = 1, 4
+    base(i)%values(1,1,var_psi) = 1.d-4*base(i)%x(1,1,1)
+    base(i)%values(1,2,var_psi) = 1.d-4
+  enddo
+  mach1_weak_drift = .false.
+  mach1_weak_cut = .false.; nodes = base; call assemble(a0, r0)
+  mach1_weak_cut = .true.;  nodes = base; call assemble(a, r)
+  worst = 0.d0
+  do row = 1, nd
+    if ( isvar(row, var_vpar) ) then
+      if ( any(a(row,:) /= 0.d0) .or. r(row) /= 0.d0 ) error stop 'FAIL: row cut leaves a Vpar row below the angle'
+      worst = max(worst, maxval(abs(a0(row,:))))
+    else
+      if ( any(a(row,:) /= a0(row,:)) .or. r(row) /= r0(row) ) error stop 'FAIL: row cut changed a non-Vpar row'
+    endif
+  enddo
+  if ( worst <= 0.d0 ) error stop 'FAIL: row cut test state has no Vpar row to remove'
+  mach1_weak_cut = .false.
+  do i = 1, 4
+    base(i)%values(1,1,var_psi) = 0.08d0*base(i)%x(1,1,1)
+    base(i)%values(1,2,var_psi) = 0.08d0
+  enddo
+  mach1_weak_drift = .true.
+  nodes = base; call assemble(a, r)
+  write(*,'(a)') ' PASS: row cut removes the Vpar row below the angle and nothing else'
+
   ! ---------------------------------------------------------------- 3. saturated branch
   call set_u(-1.d0)      ! vE.n far beyond sonic outflow: target pinned at zero
   nodes = base; call assemble(a, r)
