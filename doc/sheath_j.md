@@ -88,7 +88,16 @@ only its u column at a bound; the saturation current flows into the wall for bot
 diagnostics change no equation. The nodal side (node incidence, row release) is not compiled by the
 harness; `check_imports.py` covers its only-lists.
 
-## Initialisation
+## Start-up ramp
+
+The sheath row's current dependence is ramped: u = C_V*V_wall + (2Te/a_n)*(Lambda - alpha(t)*ln X), alpha
+from 0 (the floating row, current free but not yet acted on) to 1 (the full characteristic). By default
+alpha reaches 1 when the timestep ramp ends, i.e. when the last `tstep_n` phase begins; `sheath_j_ramp_time`
+sets the time explicitly, a negative value disables the ramp. This is what lets a run take step 0 with the
+sheath flags on: the equilibrium's residual wall current relaxes under a nearly floating potential while the
+gain grows, as JOREK ramps RMPs.
+
+## Initialisation (alternative)
 
 The equilibrium wall current is not a sheath current: it runs +-1.5 j_sat and changes sign along the
 target, and the potential row turns that pattern into 80 V next to 220 V within one step (measured: the

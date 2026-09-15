@@ -68,7 +68,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 mach_one_bnd_integral, mach1_weak, mach1_weak_drift,&
                 mach1_weak_drift_bound, mach1_weak_drift_cut,       &
                 mach1_weak_cut, mach1_weak_inflow,                  &
-                sheath_j_float_u,                                   &
+                sheath_j_float_u, sheath_j_ramp_time,               &
                 Vpar_smoothing,                                     &
                 Vpar_smoothing_coef,                                &
                 zjz_0, zjz_1, zj_coef,                              &

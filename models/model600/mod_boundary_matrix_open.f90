@@ -18,7 +18,7 @@ use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
 use mod_floating_diag, only: floating_diag_add, sheath_diag_add
-use mod_floating_u,    only: sheath_j_norm, floating_u_norm
+use mod_floating_u,    only: sheath_j_norm, floating_u_norm, sheath_j_ramp
 
 implicit none
 
@@ -65,7 +65,7 @@ real*8     :: mw_orient, mw_vEn, mw_Bn, mw_vn, mw_tgt, mw_act, mw_cs, mw_res, mw
 real*8     :: fx_n, fx_v, fx_p, fx_u, fx_out                    ! normal-flow measure of the sheath fluxes and its columns
 logical    :: sj_on, sj_here, sj_surf                            ! sheath rows on this edge / at this Gauss point / surface term on this edge
 real*8     :: sj_an, sj_csat, sj_CT, sj_CV, sj_jsat, sj_psin, sj_w, sj_esp, sj_Tt
-real*8     :: so_X, so_Xc, so_g, so_res, so_cu, so_czj, so_crho, so_cTe, so_ccs, so_w   ! Option I potential row
+real*8     :: so_X, so_Xc, so_g, so_res, so_cu, so_czj, so_crho, so_cTe, so_ccs, so_w, so_al   ! sheath potential row
 logical    :: so_capped
 logical    :: xpoint2
 integer    :: n_tor_local 
@@ -172,6 +172,7 @@ if ( sj_on ) then
   call sheath_j_norm(sj_an, sj_csat)
   call floating_u_norm(sj_an, sj_CT, sj_CV)
 endif
+so_al = sheath_j_ramp(t_now)     ! ramp factor of the current dependence, 0 (floating) -> 1 (full characteristic)
 
 do i=1,2    ! sum over 2 verices
   
@@ -441,14 +442,14 @@ do ms=1, n_gauss
       if ( sj_jsat .ne. 0.d0 ) so_X = 1.d0 - eq_g(mp,var_zj,ms) / sj_jsat
       so_Xc = min( max( so_X, exp(-sheath_Lambda) ), exp(sheath_Lambda) )
       so_capped = ( so_Xc .ne. so_X ) .or. ( sj_jsat .eq. 0.d0 )
-      so_g   = 2.d0*Te0/sj_an * ( sheath_Lambda - log(so_Xc) )
+      so_g   = 2.d0*Te0/sj_an * ( sheath_Lambda - so_al*log(so_Xc) )
       so_res = eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall - so_g
       so_cu  = 1.d0
-      so_cTe = - 2.d0/sj_an * ( sheath_Lambda - log(so_Xc) )                 ! d(res)/dTe through the prefactor
+      so_cTe = - 2.d0/sj_an * ( sheath_Lambda - so_al*log(so_Xc) )           ! d(res)/dTe through the prefactor
       if ( .not. so_capped ) then
-        so_czj  = - 2.d0*Te0/sj_an / (so_Xc * sj_jsat)                        ! d(res)/dzj
-        so_crho =   2.d0*Te0/sj_an * eq_g(mp,var_zj,ms) / (so_Xc * sj_jsat * r0)          ! through j_sat ~ rho
-        so_ccs  =   2.d0*Te0/sj_an * eq_g(mp,var_zj,ms) / (so_Xc * sj_jsat * cs0)         ! through j_sat ~ cs, times cs_T
+        so_czj  = - so_al * 2.d0*Te0/sj_an / (so_Xc * sj_jsat)                        ! d(res)/dzj
+        so_crho =   so_al * 2.d0*Te0/sj_an * eq_g(mp,var_zj,ms) / (so_Xc * sj_jsat * r0)   ! through j_sat ~ rho
+        so_ccs  =   so_al * 2.d0*Te0/sj_an * eq_g(mp,var_zj,ms) / (so_Xc * sj_jsat * cs0)  ! through j_sat ~ cs, times cs_T
       endif
       so_w = Zbig * dl
     endif

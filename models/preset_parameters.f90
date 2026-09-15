@@ -99,6 +99,7 @@ subroutine preset_parameters
   mach1_weak_cut        = .false. ! no Vpar row at all below the grazing angle (natural condition there)
   mach1_weak_inflow     = .true.  ! inflow closure rho -> 0 at the inflow rate where the total normal flow is inward
   sheath_j_float_u      = .false. ! sheath_j with the floating row kept on u: measures the wall current the plasma delivers
+  sheath_j_ramp_time    = 0.d0    ! ramp of the sheath row's current dependence: 0 = over the timestep ramp, <0 = none
   Vpar_smoothing        = .false. ! smooth the transitions of Vpar positive/negavtive at B.n
   Vpar_smoothing_coef   = (/0.01d0, 0.d0, 0.d0 /) !(/ 0.01d0, 0.016d0, 0.00575446347d0/)
   min_sheath_angle      = 1.d0   ! 1 degree (not in radians)

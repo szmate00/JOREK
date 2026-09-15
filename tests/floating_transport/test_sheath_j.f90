@@ -157,6 +157,32 @@ program test_sheath_j
   enddo
   base(:)%values(1,1,var_zj) = 0.d0
 
+  ! --- ramp: alpha = 0 must reduce the potential row to the floating row (u column only, residual u - ufl),
+  ! --- alpha from the timestep ramp must reach 1 when the last tstep_n phase begins
+  base(:)%values(1,1,var_zj) = 0.5d0 * scale
+  sheath_j_ramp_time = 0.d0 ; t_now = 0.d0
+  tstep_n(1:3) = [1.d-3, 1.d-2, 1.d0] ; nstep_n(1:3) = [100, 100, 1000]
+  nodes = base; call assemble(a, r)
+  do isgn = 1, nd
+    if ( .not. isvar(isgn, var_u) ) cycle
+    do col = 1, nd
+      if ( (isvar(col, var_zj) .or. isvar(col, var_rho)) .and. a(isgn,col) /= 0.d0 ) error stop 'FAIL: alpha = 0 keeps a current column'
+    enddo
+  enddo
+  t_now = 0.55d0 ; nodes = base; call assemble(ap, rp)      ! half way through the ramp (t_end = 1.1)
+  t_now = 1.1d0  ; nodes = base; call assemble(am, rm)      ! ramp end: full characteristic
+  err = 0.d0 ; worst = 0.d0
+  do isgn = 1, nd
+    if ( .not. isvar(isgn, var_u) ) cycle
+    do col = 1, nd
+      if ( .not. isvar(col, var_zj) ) cycle
+      err = max(err, abs(ap(isgn,col) - 0.5d0*am(isgn,col))) ; worst = max(worst, abs(am(isgn,col)))
+    enddo
+  enddo
+  if ( worst <= 0.d0 .or. err > 1.d-12*worst ) error stop 'FAIL: ramp factor is not linear in time / does not reach 1'
+  sheath_j_ramp_time = -1.d0 ; t_now = 0.d0 ; base(:)%values(1,1,var_zj) = 0.d0
+  write(*,'(a)') ' PASS: sheath ramp: alpha = 0 is the floating row, alpha follows the timestep ramp to 1'
+
   ! ---------------------------------------------------------------- 5. sign of the saturation current
   do isgn = 1, 2
     call sheath_j_norm(a_n, c_sat)
