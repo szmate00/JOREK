@@ -15,7 +15,7 @@ module mod_floating_diag
   implicit none
   private
 
-  public :: floating_diag_reset, floating_diag_add, floating_diag_report
+  public :: floating_diag_reset, floating_diag_add, floating_diag_report, sheath_diag_add
 
   integer, parameter :: nt = 30            !< max_bnd_types
   real*8, save :: s_len(nt), s_in(nt), s_mom(nt), s_den(nt)
@@ -23,6 +23,9 @@ module mod_floating_diag
   real*8, save :: n_rho(nt), n_rho_R(nt), n_rho_Z(nt)
   real*8, save :: n_Te(nt),  n_Te_R(nt),  n_Te_Z(nt)
   real*8, save :: x_mach(nt), n_Ti(nt)
+  ! --- sheath current row: wall length carrying it, electron-saturated length, min/max j/j_sat, min/max u,
+  ! --- net current into the wall and the saturation current, both as sum j*(B_pol.n)*dl (JOREK units)
+  real*8, save :: s_slen(nt), s_esat(nt), j_min(nt), j_max(nt), u_min(nt), u_max(nt), s_inet(nt), s_isat(nt)
 
 contains
 
@@ -34,7 +37,30 @@ subroutine floating_diag_reset()
   n_rho =  huge(1.d0) ; n_rho_R = 0.d0 ; n_rho_Z = 0.d0
   n_Te  =  huge(1.d0) ; n_Te_R  = 0.d0 ; n_Te_Z  = 0.d0
   x_mach = 0.d0 ; n_Ti = huge(1.d0)
+  s_slen = 0.d0 ; s_esat = 0.d0 ; j_min = huge(1.d0) ; j_max = -huge(1.d0)
+  u_min = huge(1.d0) ; u_max = -huge(1.d0) ; s_inet = 0.d0 ; s_isat = 0.d0
 end subroutine floating_diag_reset
+
+
+!> One wall Gauss point carrying the sheath current row.
+subroutine sheath_diag_add(bnd_type, dl, zj, jsat, esat, u, Bn, R, Z)
+  implicit none
+  integer, intent(in) :: bnd_type
+  real*8,  intent(in) :: dl, zj, jsat, u, Bn, R, Z
+  logical, intent(in) :: esat
+  if ( bnd_type .lt. 1 .or. bnd_type .gt. nt ) return
+  !$omp critical (sheath_diag)
+  s_slen(bnd_type) = s_slen(bnd_type) + dl
+  if ( esat ) s_esat(bnd_type) = s_esat(bnd_type) + dl
+  if ( jsat .ne. 0.d0 ) then
+    j_min(bnd_type) = min(j_min(bnd_type), zj/jsat) ; j_max(bnd_type) = max(j_max(bnd_type), zj/jsat)
+  endif
+  u_min(bnd_type) = min(u_min(bnd_type), u) ; u_max(bnd_type) = max(u_max(bnd_type), u)
+  s_inet(bnd_type) = s_inet(bnd_type) - zj   * Bn * R * dl     ! current into the wall ~ -zj*(B_pol.n)/F0
+  s_isat(bnd_type) = s_isat(bnd_type) + abs(jsat * Bn) * R * dl
+  !$omp end critical (sheath_diag)
+  if ( R .lt. 0.d0 .and. Z .lt. -huge(1.d0) ) return   ! (R,Z) kept in the interface for a future location report
+end subroutine sheath_diag_add
 
 
 !> One wall Gauss point. Quantities in JOREK units except where noted; dl includes the weight.
@@ -66,13 +92,14 @@ end subroutine floating_diag_add
 subroutine floating_diag_report(my_id)
 
   use constants,   only: MU_ZERO, ATOMIC_MASS_UNIT, EL_CHG
-  use phys_module, only: central_density, central_mass
+  use phys_module, only: central_density, central_mass, F0
   use mpi_mod
 
   implicit none
   integer, intent(in) :: my_id
 
   real*8  :: len(nt), inflow(nt), mom(nt), den(nt), ven(nt), rmin(nt), tmin(nt), mach(nt), timin(nt)
+  real*8  :: slen(nt), esat(nt), jmn(nt), jmx(nt), umn(nt), umx(nt), inet(nt), isat(nt), u_volt
   real*8  :: loc(3,2,nt), loc_g(3,2,nt), v_norm, T_eV
   integer :: it, ierr
 
@@ -85,6 +112,14 @@ subroutine floating_diag_report(my_id)
   call MPI_ALLREDUCE(n_Te,  tmin,   nt, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(x_mach, mach,  nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(n_Ti,  timin,  nt, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(s_slen, slen,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(s_esat, esat,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(j_min,  jmn,   nt, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(j_max,  jmx,   nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(u_min,  umn,   nt, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(u_max,  umx,   nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(s_inet, inet,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(s_isat, isat,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
 
   ! --- Locations: the rank holding each extremum sends its (R,Z), the others send -huge
   loc = -huge(1.d0)
@@ -100,6 +135,7 @@ subroutine floating_diag_report(my_id)
 
   v_norm = 1.d0 / sqrt(MU_ZERO * central_density * 1.d20 * central_mass * ATOMIC_MASS_UNIT)   ! m/s per unit
   T_eV   = 1.d0 / (EL_CHG * MU_ZERO * central_density * 1.d20)                                ! eV per unit
+  u_volt = F0 / sqrt(MU_ZERO * central_density * 1.d20 * central_mass * ATOMIC_MASS_UNIT)     ! volts per unit u
 
   write(*,'(A)') ' [floating_u] type  inflow   max vE.n[m/s]  at (R,Z)             mom      max M    min rho    at (R,Z)           min Ti[eV] min Te[eV]  at (R,Z)'
   do it = 1, nt
@@ -108,6 +144,16 @@ subroutine floating_diag_report(my_id)
       ' [floating_u] ', it, inflow(it)/len(it), ven(it)*v_norm, loc_g(1,:,it), &
       abs(mom(it))/max(den(it), tiny(1.d0)), mach(it), rmin(it), loc_g(2,:,it), timin(it)*T_eV, tmin(it)*T_eV, loc_g(3,:,it)
   enddo
+
+  ! --- sheath current row, where it is carried
+  if ( any(slen .gt. 0.d0) ) then
+    write(*,'(A)') ' [sheath_j]   type  e-sat    j/jsat min     max     Phi[V] min      max     Inet/Isat'
+    do it = 1, nt
+      if ( slen(it) .le. 0.d0 ) cycle
+      write(*,'(A,I4,F9.3,2ES11.2,2F12.3,ES12.3)') ' [sheath_j] ', it, esat(it)/slen(it), jmn(it), jmx(it), &
+        umn(it)*u_volt, umx(it)*u_volt, inet(it)/max(isat(it), tiny(1.d0))
+    enddo
+  endif
 
 end subroutine floating_diag_report
 

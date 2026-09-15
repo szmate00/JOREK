@@ -68,6 +68,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 mach_one_bnd_integral, mach1_weak, mach1_weak_drift,&
                 mach1_weak_drift_bound, mach1_weak_drift_cut,       &
                 mach1_weak_cut, mach1_weak_inflow,                  &
+                sheath_j_pin_current,                               &
                 Vpar_smoothing,                                     &
                 Vpar_smoothing_coef,                                &
                 zjz_0, zjz_1, zj_coef,                              &
@@ -261,6 +262,24 @@ if (my_id .eq. 0) then
   if ( mach1_weak .and. ( mach_one_bnd_integral .or. (.not. with_vpar) ) ) then
     write(*,*) 'ERROR: mach1_weak needs with_vpar and excludes mach_one_bnd_integral, EXITING!'
     stop
+  end if
+  if ( any(bcs(:)%sheath_j) ) then
+    if ( .not. mach1_weak ) then
+      write(*,*) 'ERROR: bcs%sheath_j requires mach1_weak, EXITING!'
+      stop
+    end if
+    if ( any(bcs(:)%sheath_j .and. bcs(:)%floating_u) ) then
+      write(*,*) 'ERROR: bcs%sheath_j and bcs%floating_u on the same boundary type, EXITING!'
+      stop
+    end if
+    if ( any(bcs(:)%sheath_j .and. .not. (bcs(:)%dirichlet%u .and. bcs(:)%dirichlet%zj)) ) then
+      write(*,*) 'ERROR: bcs%sheath_j takes over the u and zj rows, so dirichlet%u and dirichlet%zj must stay .true., EXITING!'
+      stop
+    end if
+    if ( .not. floating_u_selftest(my_id) ) then
+      write(*,*) 'ERROR: floating_u normalisation selftest failed, EXITING!'
+      stop
+    end if
   end if
   if ( any(bcs(:)%floating_u) ) then
     if ( .not. mach1_weak ) then

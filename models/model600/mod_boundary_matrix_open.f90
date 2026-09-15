@@ -17,7 +17,8 @@ use phys_module
 use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
-use mod_floating_diag, only: floating_diag_add
+use mod_floating_diag, only: floating_diag_add, sheath_diag_add
+use mod_floating_u,    only: sheath_j_norm, floating_u_norm
 
 implicit none
 
@@ -62,6 +63,8 @@ real*8     :: grad_t(2), B0_R, B0_Z, factor_cs_bnd_integral
 logical    :: mw_on                                              ! weak Bohm condition (mach1_weak) on this edge
 real*8     :: mw_orient, mw_vEn, mw_Bn, mw_vn, mw_tgt, mw_act, mw_cs, mw_res, mw_w, mw_in, mw_s, mw_x
 real*8     :: fx_n, fx_v, fx_p, fx_u, fx_out                    ! normal-flow measure of the sheath fluxes and its columns
+logical    :: sj_on, sj_here                                     ! sheath current row: on this edge / at this Gauss point
+real*8     :: sj_an, sj_csat, sj_CT, sj_CV, sj_x, sj_ex, sj_f, sj_jsat, sj_res, sj_dfdu, sj_dfdTe, sj_w
 logical    :: xpoint2
 integer    :: n_tor_local 
 logical    :: apply_natural_bc(0:n_var)
@@ -147,6 +150,16 @@ enddo
 ! --- are mach1 types, i.e. a target edge and never a flux-surface edge; scattered through the Vpar rows.
 mw_on = mach1_weak .and. with_vpar .and. bcs(bnd_type1)%mach1 .and. bcs(bnd_type2)%mach1
 if ( mw_on ) apply_natural_bc(var_vpar) = .true.
+
+! --- Sheath current row (bcs%sheath_j): zj = j_sat*f(Phi) in the current-definition slot, one residual per
+! --- wall Gauss point where |b.n| >= sin(min_sheath_angle); u there is set by the vorticity equation.
+sj_on = bcs(bnd_type1)%sheath_j .and. bcs(bnd_type2)%sheath_j .and. (.not. sheath_j_pin_current)
+sj_an = 0.d0 ; sj_csat = 0.d0 ; sj_CT = 0.d0 ; sj_CV = 0.d0
+if ( sj_on ) then
+  apply_natural_bc(var_zj) = .true.
+  call sheath_j_norm(sj_an, sj_csat)
+  call floating_u_norm(sj_an, sj_CT, sj_CV)
+endif
 
 do i=1,2    ! sum over 2 verices
   
@@ -391,6 +404,33 @@ do ms=1, n_gauss
       fx_u = - fx_out * mw_orient * BigR**2
     endif
 
+    ! --- Sheath current row. The ion saturation current in the toroidal-current variable is
+    ! --- j_sat = c_sat*rho*Vpar_Bohm with Vpar_Bohm = sign(B.n)*cs/|B| (Artola eq. 5 with the marginal Bohm
+    ! --- row); the characteristic (Artola eq. 6, Stangeby 2.68) is  zj = j_sat*(1 - exp(x)),
+    ! --- x = Lambda - e*(Phi - V_wall)/(k_B*Te) = Lambda - a_n*(u - C_V*V_wall)/(2*Te). The electron current
+    ! --- saturates where the plasma potential falls below the wall potential, x >= Lambda: the exponent is
+    ! --- capped there (electron saturation, f = 1 - e^Lambda), which also bounds the u column. Written for the
+    ! --- current INTO the wall, -zj*(B_pol.n)/F0 = e*n*cs*|b.n|*f, independent of the sign of F0. Weight one.
+    sj_here = sj_on .and. ( abs(bdotn) .ge. sin(c_angle) )
+    sj_w = 0.d0 ; sj_x = 0.d0 ; sj_ex = 1.d0 ; sj_f = 0.d0 ; sj_dfdu = 0.d0 ; sj_dfdTe = 0.d0 ; sj_jsat = 0.d0 ; sj_res = 0.d0
+    if ( sj_here ) then
+      sj_x     = sheath_Lambda - sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*Te0)
+      sj_ex    = exp( min(sj_x, sheath_Lambda) )
+      sj_f     = 1.d0 - sj_ex
+      sj_dfdu  = 0.d0 ; sj_dfdTe = 0.d0
+      if ( sj_x .lt. sheath_Lambda ) then
+        sj_dfdu  =   sj_ex * sj_an / (2.d0*Te0)                                         ! d f / d u
+        sj_dfdTe = - sj_ex * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*Te0**2)   ! d f / d Te
+      endif
+      sj_jsat  = sj_csat * r0 * normal_sign * cs0 / Btot
+      sj_res   = eq_g(mp,var_zj,ms) - sj_jsat * sj_f
+      sj_w     = Zbig * dl
+    endif
+
+    if ( floating_u_diag .and. sj_here ) &
+      call sheath_diag_add(bnd_type1, ws*dl, eq_g(mp,var_zj,ms), sj_jsat, sj_x .ge. sheath_Lambda, &
+                           eq_g(mp,var_u,ms), mw_Bn, BigR, y_g(ms))
+
     if ( floating_u_diag .and. mw_on ) then
       call floating_diag_add(bnd_type1, ws*dl, mw_vn, mw_vEn, mw_Bn, mw_res, cs0*abs(bdotn), abs(Vpar0)*Btot/cs0, r0, Ti0, Te0, BigR, y_g(ms))
       if ( bnd_type2 .ne. bnd_type1 ) &
@@ -432,6 +472,9 @@ do ms=1, n_gauss
 
             ! --- Weak inflow term (mach1_weak): rho relaxes to rho_in = 0 at the inflow rate |vn|
             rhs_ij(var_rho)   = rhs_ij(var_rho) + v * mw_in * mw_vn * r0 * BigR * dl * tstep
+
+            ! --- Sheath current row (bcs%sheath_j)
+            rhs_ij(var_zj)    = - v * sj_w * sj_res
 
             ! --- Sheath heat flux (c_angle for mininum heat fluxes at grazing angles)
             if (with_TiTe) then
@@ -519,6 +562,17 @@ do ms=1, n_gauss
                   amat(var_rho,var_vpar)  = amat(var_rho,var_vpar) - v * mw_in * mw_Bn * vpar * r0 * BigR * dl * theta * tstep
                   amat(var_rho,var_u)     = - v * density_reflection * r0 * fx_u * psi_s * theta * tstep &
                                             + v * mw_in * mw_orient * BigR**2 * psi_s * r0 * theta * tstep
+
+                  ! --- Sheath current row (bcs%sheath_j): exact columns of zj - j_sat*f
+                  amat(var_zj,var_zj)  =   v * sj_w * psi
+                  amat(var_zj,var_rho) = - v * sj_w * sj_csat * normal_sign * cs0 / Btot * sj_f * rho
+                  amat(var_zj,var_u)   = - v * sj_w * sj_jsat * sj_dfdu * psi
+                  if (with_TiTe) then
+                    amat(var_zj,var_Ti)  = - v * sj_w * sj_csat * r0 * normal_sign / Btot * sj_f * cs_Ti
+                    amat(var_zj,var_Te)  = - v * sj_w * ( sj_csat * r0 * normal_sign / Btot * sj_f * cs_Te + sj_jsat * sj_dfdTe * Te )
+                  else
+                    amat(var_zj,var_T)   = - v * sj_w * ( sj_csat * r0 * normal_sign / Btot * sj_f * cs_T + sj_jsat * sj_dfdTe * 0.5d0 * T )
+                  endif
 
                   ! --- Sheath heat flux
                   if (with_TiTe) then                

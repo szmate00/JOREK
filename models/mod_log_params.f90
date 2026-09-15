@@ -876,6 +876,12 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   write(*,LOGI_FMT) 'mach1_weak_drift_cut  ', mach1_weak_drift_cut
   write(*,LOGI_FMT) 'mach1_weak_cut        ', mach1_weak_cut
   write(*,LOGI_FMT) 'mach1_weak_inflow     ', mach1_weak_inflow
+  if ( any(bcs(:)%sheath_j) ) then
+    write(*,'(1X,A,30I3)') 'sheath_j on boundary types:', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%sheath_j )
+    write(*,REAL_FMT) 'sheath_Lambda         ', sheath_Lambda
+    write(*,REAL_FMT) 'sheath_V_wall         ', sheath_V_wall
+    write(*,LOGI_FMT) 'sheath_j_pin_current  ', sheath_j_pin_current
+  end if
   write(*,LOGI_FMT) 'deuterium_adas        ', deuterium_adas       
   write(*,LOGI_FMT) 'old_deuterium_atomic  ', old_deuterium_atomic
   write(*,LOGI_FMT) 'deuterium_adas_1e20   ', deuterium_adas_1e20

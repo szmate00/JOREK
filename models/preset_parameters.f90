@@ -98,6 +98,7 @@ subroutine preset_parameters
   mach1_weak_drift_cut  = .false. ! no compensation below the grazing angle min_sheath_angle (marginal row there)
   mach1_weak_cut        = .false. ! no Vpar row at all below the grazing angle (natural condition there)
   mach1_weak_inflow     = .true.  ! inflow closure rho -> 0 at the inflow rate where the total normal flow is inward
+  sheath_j_pin_current  = .false. ! stage-1 test of the sheath BC: u row released, zj still Dirichlet
   Vpar_smoothing        = .false. ! smooth the transitions of Vpar positive/negavtive at B.n
   Vpar_smoothing_coef   = (/0.01d0, 0.d0, 0.d0 /) !(/ 0.01d0, 0.016d0, 0.00575446347d0/)
   min_sheath_angle      = 1.d0   ! 1 degree (not in radians)
@@ -448,8 +449,9 @@ subroutine preset_parameters
   ! --- Mach 1
   bcs(:)%mach1   = .false.
 
-  ! --- Floating potential (model600)
+  ! --- Floating potential / sheath current (model600)
   bcs(:)%floating_u = .false.
+  bcs(:)%sheath_j   = .false.
 
   bcs(  1)%mach1 = .true.
   bcs(3:5)%mach1 = .true.

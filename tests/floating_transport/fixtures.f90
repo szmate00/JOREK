@@ -24,7 +24,7 @@ module phys_module
   end type
   type bc_type
     type(natural_type) :: natural
-    logical :: floating_u=.false., mach1=.true.
+    logical :: floating_u=.false., mach1=.true., sheath_j=.false.
   end type
   type(bc_type) :: bcs(0:max_bnd_types)
   real*8  :: time_evol_theta=1.d0, time_evol_zeta=0.5d0, tstep=1.d0, tstep_prev=1.d0
@@ -33,7 +33,7 @@ module phys_module
   real*8  :: central_density=1.d0, central_mass=2.014d0, sheath_Lambda=3.d0, sheath_V_wall=0.d0
   logical :: vpar_smoothing=.false., mach_one_bnd_integral=.false., mach1_weak=.false., mach1_weak_drift=.false., floating_u_diag=.false.
   real*8  :: mach1_weak_drift_bound=0.d0
-  logical :: mach1_weak_drift_cut=.false., mach1_weak_cut=.false., mach1_weak_inflow=.true.
+  logical :: mach1_weak_drift_cut=.false., mach1_weak_cut=.false., mach1_weak_inflow=.true., sheath_j_pin_current=.false.
   real*8  :: vpar_smoothing_coef(3)=[0.02d0,0.016d0,0.005754d0]
   real*8  :: density_reflection=0.d0, neutral_reflection=0.d0, visco_par_heating=0.d0
   real*8  :: gamma_sheath_i=0.6d0, gamma_sheath_e=3.d0, gamma_sheath=3.d0

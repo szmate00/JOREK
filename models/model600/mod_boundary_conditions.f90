@@ -39,6 +39,8 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass, sheath_V_wall 
 use mod_floating_u, only: floating_u_norm
+use phys_module, only: min_sheath_angle, sheath_j_pin_current
+use constants, only: PI
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -107,6 +109,8 @@ real*8  :: d2Mach1BC, d2Mach1BC_v, d2Mach1BC_T, d2Mach1BC_Tb, d2Mach1BC_Tbb
 integer :: node_indices( (n_order+1)/2, (n_order+1)/2 ), index_tmp, kk, ll
 real*8  :: fu_a_n, fu_C_T, fu_C_V, fu_target   ! floating-potential row: u = C_T*Te + C_V*V_wall
 integer :: fu_var_T                            ! temperature trace variable: Te, or T in a single-T build
+logical :: fu_row, sj_above                    ! floating row at this node; sheath model applies (|b.n| >= sin(min_sheath_angle))
+real*8  :: sj_bn                               ! |b.n| at the node
 logical, parameter :: include_2nd_derivatives = .false.
 
 RMPspectrum: if (RMP_on .and. (n_tor .ge. 3)) then !*****
@@ -231,6 +235,16 @@ do i=1, n_local_elms !=== do elements
 
       bnd_type = node_list%node(inode)%boundary
 
+      ! --- Sheath current BC (bcs%sheath_j): the wall is sorted by incidence, as the Bohm row is. Above
+      ! --- sin(min_sheath_angle) the u row is the vorticity equation (charge continuity) and the zj row
+      ! --- is the weak sheath row in mod_boundary_matrix_open; below it the floating row and Dirichlet zj.
+      sj_above = .false.
+      if ( bcs(bnd_type)%sheath_j ) then
+        sj_bn    = node_incidence()
+        sj_above = ( sj_bn .ge. sin(min_sheath_angle*PI/180.d0) )
+      endif
+      fu_row = bcs(bnd_type)%floating_u .or. ( bcs(bnd_type)%sheath_j .and. .not. sj_above )
+
       do in=a_mat%i_tor_min, a_mat%i_tor_max  ! === do n_tor
       
         if (keep_n0_const  .and.  in .eq. 1 ) then
@@ -338,6 +352,8 @@ do i=1, n_local_elms !=== do elements
             ! --- If special conditions apply (e.g. freeboundary, mach1), do not apply Dirichlet even if specified in the namelist
             if ( (k==var_psi  ) .and. (.not. apply_psi_BC    ) )       cycle
             if ( (k==var_zj   ) .and. (.not. apply_current_BC) )       cycle
+            if ( (k==var_zj   ) .and. sj_above .and. (.not. sheath_j_pin_current) ) cycle  ! weak sheath row owns zj
+            if ( (k==var_u    ) .and. sj_above ) cycle                          ! vorticity row sets u (charge continuity)
             if ( (k==var_vpar ) .and.  apply_cs .and. (bnd_type/=3)  ) cycle  ! vpar=cs is a special case (this is done below)
                                                                               ! however bnd_type=3 needs both BCs for different directions
             if ( (k==var_vpar ) .and.  apply_cs .and. mach1_weak     ) cycle  ! weak Bohm row (mod_boundary_matrix_open) owns the
@@ -358,7 +374,7 @@ do i=1, n_local_elms !=== do elements
 
                 ! --- Floating potential: u = C_T*Te + C_V*V_wall on every u trace DOF. The Te
                 ! --- column and the RHS make the row exact; V_wall enters the n=0 value DOF only.
-                if ( (k == var_u) .and. bcs(bnd_type)%floating_u ) then
+                if ( (k == var_u) .and. fu_row ) then
                   fu_target = fu_C_T * node_list%node(inode)%values(in, index_tmp, fu_var_T)
                   if ( (index_tmp .eq. 1) .and. (in .eq. 1) ) fu_target = fu_target + fu_C_V * sheath_V_wall
                   call boundary_conditions_add_one_entry(                        &
@@ -780,6 +796,38 @@ if (RMP_on) then
 endif
 
 return
+
+contains
+
+  !> |b.n| = |B_pol.n|/|B| at the current node, along the current wall direction. B_pol.n depends on
+  !! the tangential psi derivative only, so this is a static map (psi is Dirichlet on the wall).
+  real*8 function node_incidence()
+    real*8 :: Hb(2,n_degrees_1d), Hb_s(2,n_degrees_1d), Hb_ss(2,n_degrees_1d)
+    real*8 :: es_s, es_t, p_s, p_t, r_s_, r_t_, z_s_, z_t_, xj, p_x, p_y, g_b(2), nrm(2), bt, rr
+    call basisfunctions1(0.d0, Hb, Hb_s, Hb_ss)
+    es_s = element_list%element(ielm)%size(iv,2) * Hb_s(1,2)
+    es_t = element_list%element(ielm)%size(iv,3) * Hb_s(1,2)
+    if ((iv .eq. 2) .or. (iv .eq. 3)) es_s = - es_s
+    if ((iv .eq. 3) .or. (iv .eq. 4)) es_t = - es_t
+    p_s  = node_list%node(inode)%values(1,2,var_psi) * es_s
+    p_t  = node_list%node(inode)%values(1,3,var_psi) * es_t
+    rr   = node_list%node(inode)%x(1,1,1)
+    r_s_ = node_list%node(inode)%x(1,2,1) * es_s ; r_t_ = node_list%node(inode)%x(1,3,1) * es_t
+    z_s_ = node_list%node(inode)%x(1,2,2) * es_s ; z_t_ = node_list%node(inode)%x(1,3,2) * es_t
+    xj   = r_s_*z_t_ - r_t_*z_s_
+    p_x  = (   z_t_ * p_s - z_s_ * p_t ) / xj
+    p_y  = ( - r_t_ * p_s + r_s_ * p_t ) / xj
+    if ( s_constant_boundary ) then
+      g_b = (/  z_t_, -r_t_ /) / xj
+    else
+      g_b = (/ -z_s_,  r_s_ /) / xj
+    endif
+    nrm  = dot_product(g_b, normal_direction) * g_b
+    nrm  = nrm / norm2(nrm)
+    bt   = sqrt(F0**2 + p_x**2 + p_y**2) / rr
+    node_incidence = abs( p_y*nrm(1) - p_x*nrm(2) ) / (rr * bt)
+  end function node_incidence
+
 end subroutine boundary_conditions 
 
 end module mod_boundary_conditions
