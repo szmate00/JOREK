@@ -26,6 +26,7 @@ module mod_floating_diag
   ! --- sheath current row: wall length carrying it, electron-saturated length, min/max j/j_sat, min/max u,
   ! --- net current into the wall and the saturation current, both as sum j*(B_pol.n)*dl (JOREK units)
   real*8, save :: s_slen(nt), s_esat(nt), j_min(nt), j_max(nt), u_min(nt), u_max(nt), s_inet(nt), s_isat(nt)
+  real*8, save :: j_abs(nt), j_abs_R(nt), j_abs_Z(nt)   !< largest |j/j_sat| and where
 
 contains
 
@@ -39,6 +40,7 @@ subroutine floating_diag_reset()
   x_mach = 0.d0 ; n_Ti = huge(1.d0)
   s_slen = 0.d0 ; s_esat = 0.d0 ; j_min = huge(1.d0) ; j_max = -huge(1.d0)
   u_min = huge(1.d0) ; u_max = -huge(1.d0) ; s_inet = 0.d0 ; s_isat = 0.d0
+  j_abs = 0.d0 ; j_abs_R = 0.d0 ; j_abs_Z = 0.d0
 end subroutine floating_diag_reset
 
 
@@ -54,12 +56,14 @@ subroutine sheath_diag_add(bnd_type, dl, zj, jsat, esat, u, Bn, R, Z, capped)
   if ( esat .or. capped ) s_esat(bnd_type) = s_esat(bnd_type) + dl
   if ( jsat .ne. 0.d0 ) then
     j_min(bnd_type) = min(j_min(bnd_type), zj/jsat) ; j_max(bnd_type) = max(j_max(bnd_type), zj/jsat)
+    if ( abs(zj/jsat) .gt. j_abs(bnd_type) ) then
+      j_abs(bnd_type) = abs(zj/jsat) ; j_abs_R(bnd_type) = R ; j_abs_Z(bnd_type) = Z
+    endif
   endif
   u_min(bnd_type) = min(u_min(bnd_type), u) ; u_max(bnd_type) = max(u_max(bnd_type), u)
   s_inet(bnd_type) = s_inet(bnd_type) - zj   * Bn * R * dl     ! current into the wall ~ -zj*(B_pol.n)/F0
   s_isat(bnd_type) = s_isat(bnd_type) + abs(jsat * Bn) * R * dl
   !$omp end critical (sheath_diag)
-  if ( R .lt. 0.d0 .and. Z .lt. -huge(1.d0) ) return   ! (R,Z) kept in the interface for a future location report
 end subroutine sheath_diag_add
 
 
@@ -100,6 +104,7 @@ subroutine floating_diag_report(my_id)
 
   real*8  :: len(nt), inflow(nt), mom(nt), den(nt), ven(nt), rmin(nt), tmin(nt), mach(nt), timin(nt)
   real*8  :: slen(nt), esat(nt), jmn(nt), jmx(nt), umn(nt), umx(nt), inet(nt), isat(nt), u_volt
+  real*8  :: jab(nt), jloc(2,nt), jloc_g(2,nt)
   real*8  :: loc(3,2,nt), loc_g(3,2,nt), v_norm, T_eV
   integer :: it, ierr
 
@@ -120,6 +125,12 @@ subroutine floating_diag_report(my_id)
   call MPI_ALLREDUCE(u_max,  umx,   nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(s_inet, inet,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(s_isat, isat,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(j_abs,  jab,   nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
+  jloc = -huge(1.d0)
+  do it = 1, nt
+    if ( j_abs(it) .eq. jab(it) ) jloc(:,it) = (/ j_abs_R(it), j_abs_Z(it) /)
+  enddo
+  call MPI_ALLREDUCE(jloc, jloc_g, 2*nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
 
   ! --- Locations: the rank holding each extremum sends its (R,Z), the others send -huge
   loc = -huge(1.d0)
@@ -147,11 +158,11 @@ subroutine floating_diag_report(my_id)
 
   ! --- sheath current row, where it is carried
   if ( any(slen .gt. 0.d0) ) then
-    write(*,'(A)') ' [sheath_j]   type  e-sat    j/jsat min     max     Phi[V] min      max     Inet/Isat'
+    write(*,'(A)') ' [sheath_j]   type  e-sat    j/jsat min     max    max|j/jsat| at (R,Z)      Phi[V] min      max     Inet/Isat'
     do it = 1, nt
       if ( slen(it) .le. 0.d0 ) cycle
-      write(*,'(A,I4,F9.3,2ES11.2,2F12.3,ES12.3)') ' [sheath_j] ', it, esat(it)/slen(it), jmn(it), jmx(it), &
-        umn(it)*u_volt, umx(it)*u_volt, inet(it)/max(isat(it), tiny(1.d0))
+      write(*,'(A,I4,F9.3,2ES11.2,2F9.4,2F12.3,ES12.3)') ' [sheath_j] ', it, esat(it)/slen(it), jmn(it), jmx(it), &
+        jloc_g(:,it), umn(it)*u_volt, umx(it)*u_volt, inet(it)/max(isat(it), tiny(1.d0))
     enddo
   endif
 
