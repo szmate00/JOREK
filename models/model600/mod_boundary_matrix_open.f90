@@ -65,6 +65,8 @@ real*8     :: mw_orient, mw_vEn, mw_Bn, mw_vn, mw_tgt, mw_act, mw_cs, mw_res, mw
 real*8     :: fx_n, fx_v, fx_p, fx_u, fx_out                    ! normal-flow measure of the sheath fluxes and its columns
 logical    :: sj_on, sj_here                                     ! sheath current row: on this edge / at this Gauss point
 real*8     :: sj_an, sj_csat, sj_CT, sj_CV, sj_x, sj_ex, sj_f, sj_jsat, sj_res, sj_dfdu, sj_dfdTe, sj_w
+real*8     :: so_X, so_Xc, so_g, so_res, so_cu, so_czj, so_crho, so_cTe, so_ccs, so_w   ! Option I potential row
+logical    :: so_capped
 logical    :: xpoint2
 integer    :: n_tor_local 
 logical    :: apply_natural_bc(0:n_var)
@@ -156,7 +158,11 @@ if ( mw_on ) apply_natural_bc(var_vpar) = .true.
 sj_on = bcs(bnd_type1)%sheath_j .and. bcs(bnd_type2)%sheath_j .and. (.not. sheath_j_pin_current)
 sj_an = 0.d0 ; sj_csat = 0.d0 ; sj_CT = 0.d0 ; sj_CV = 0.d0
 if ( sj_on ) then
-  apply_natural_bc(var_zj) = .true.
+  if ( sheath_j_ohm ) then
+    apply_natural_bc(var_u)  = .true.     ! Option I: the sheath row sits in the u slot
+  else
+    apply_natural_bc(var_zj) = .true.     ! Option III: in the zj slot
+  endif
   call sheath_j_norm(sj_an, sj_csat)
   call floating_u_norm(sj_an, sj_CT, sj_CV)
 endif
@@ -427,9 +433,36 @@ do ms=1, n_gauss
       sj_w     = Zbig * dl
     endif
 
+    ! --- Option I (sheath_j_ohm): the same characteristic solved for the potential,
+    ! ---   u = C_V*V_wall + (2Te/a_n)*(Lambda - ln X),   X = 1 - zj/j_sat,
+    ! --- as a weak row on the u trace with weight one: d(res)/du = 1, so the potential is anchored
+    ! --- everywhere, including where the sheath conductance vanishes. X is bounded to [e^-Lambda, e^Lambda]:
+    ! --- the upper bound is electron saturation (potential not below the wall), the lower one says the
+    ! --- characteristic is trusted up to twice the floating drop (a model statement) and keeps the row
+    ! --- finite on the ion-saturated branch. Where a bound is active the zj/rho/cs columns vanish.
+    so_w = 0.d0 ; so_res = 0.d0 ; so_cu = 0.d0 ; so_czj = 0.d0 ; so_crho = 0.d0 ; so_cTe = 0.d0 ; so_ccs = 0.d0
+    so_capped = .false.
+    if ( sj_here .and. sheath_j_ohm ) then
+      so_X  = 1.d0
+      if ( sj_jsat .ne. 0.d0 ) so_X = 1.d0 - eq_g(mp,var_zj,ms) / sj_jsat
+      so_Xc = min( max( so_X, exp(-sheath_Lambda) ), exp(sheath_Lambda) )
+      so_capped = ( so_Xc .ne. so_X ) .or. ( sj_jsat .eq. 0.d0 )
+      so_g   = 2.d0*Te0/sj_an * ( sheath_Lambda - log(so_Xc) )
+      so_res = eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall - so_g
+      so_cu  = 1.d0
+      so_cTe = - 2.d0/sj_an * ( sheath_Lambda - log(so_Xc) )                 ! d(res)/dTe through the prefactor
+      if ( .not. so_capped ) then
+        so_czj  = - 2.d0*Te0/sj_an / (so_Xc * sj_jsat)                        ! d(res)/dzj
+        so_crho =   2.d0*Te0/sj_an * eq_g(mp,var_zj,ms) / (so_Xc * sj_jsat * r0)          ! through j_sat ~ rho
+        so_ccs  =   2.d0*Te0/sj_an * eq_g(mp,var_zj,ms) / (so_Xc * sj_jsat * cs0)         ! through j_sat ~ cs, times cs_T
+      endif
+      so_w = Zbig * dl
+      sj_w = 0.d0                                                                 ! no current row under Option I
+    endif
+
     if ( floating_u_diag .and. sj_here ) &
       call sheath_diag_add(bnd_type1, ws*dl, eq_g(mp,var_zj,ms), sj_jsat, sj_x .ge. sheath_Lambda, &
-                           eq_g(mp,var_u,ms), mw_Bn, BigR, y_g(ms))
+                           eq_g(mp,var_u,ms), mw_Bn, BigR, y_g(ms), so_capped)
 
     if ( floating_u_diag .and. mw_on ) then
       call floating_diag_add(bnd_type1, ws*dl, mw_vn, mw_vEn, mw_Bn, mw_res, cs0*abs(bdotn), abs(Vpar0)*Btot/cs0, r0, Ti0, Te0, BigR, y_g(ms))
@@ -473,8 +506,9 @@ do ms=1, n_gauss
             ! --- Weak inflow term (mach1_weak): rho relaxes to rho_in = 0 at the inflow rate |vn|
             rhs_ij(var_rho)   = rhs_ij(var_rho) + v * mw_in * mw_vn * r0 * BigR * dl * tstep
 
-            ! --- Sheath current row (bcs%sheath_j)
+            ! --- Sheath current row (bcs%sheath_j): Option III in the zj slot, Option I in the u slot
             rhs_ij(var_zj)    = - v * sj_w * sj_res
+            rhs_ij(var_u)     = - v * so_w * so_res
 
             ! --- Sheath heat flux (c_angle for mininum heat fluxes at grazing angles)
             if (with_TiTe) then
@@ -567,6 +601,17 @@ do ms=1, n_gauss
                   amat(var_zj,var_zj)  =   v * sj_w * psi
                   amat(var_zj,var_rho) = - v * sj_w * sj_csat * normal_sign * cs0 / Btot * sj_f * rho
                   amat(var_zj,var_u)   = - v * sj_w * sj_jsat * sj_dfdu * psi
+
+                  ! --- Option I potential row: exact columns of u - C_V*V_wall - (2Te/a_n)*(Lambda - ln X)
+                  amat(var_u,var_u)    =   v * so_w * so_cu  * psi
+                  amat(var_u,var_zj)   =   v * so_w * so_czj * psi
+                  amat(var_u,var_rho)  =   v * so_w * so_crho * rho
+                  if (with_TiTe) then
+                    amat(var_u,var_Ti) =   v * so_w * so_ccs * cs_Ti
+                    amat(var_u,var_Te) =   v * so_w * ( so_cTe * Te + so_ccs * cs_Te )
+                  else
+                    amat(var_u,var_T)  =   v * so_w * ( so_cTe * 0.5d0 * T + so_ccs * cs_T )
+                  endif
                   if (with_TiTe) then
                     amat(var_zj,var_Ti)  = - v * sj_w * sj_csat * r0 * normal_sign / Btot * sj_f * cs_Ti
                     amat(var_zj,var_Te)  = - v * sj_w * ( sj_csat * r0 * normal_sign / Btot * sj_f * cs_Te + sj_jsat * sj_dfdTe * Te )

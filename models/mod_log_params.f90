@@ -881,6 +881,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,REAL_FMT) 'sheath_Lambda         ', sheath_Lambda
     write(*,REAL_FMT) 'sheath_V_wall         ', sheath_V_wall
     write(*,LOGI_FMT) 'sheath_j_pin_current  ', sheath_j_pin_current
+    write(*,LOGI_FMT) 'sheath_j_ohm          ', sheath_j_ohm
   end if
   write(*,LOGI_FMT) 'deuterium_adas        ', deuterium_adas       
   write(*,LOGI_FMT) 'old_deuterium_atomic  ', old_deuterium_atomic

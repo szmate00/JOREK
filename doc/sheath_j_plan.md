@@ -157,3 +157,13 @@ Phi min and max in volts. Same Gauss-point accumulator as the existing table.
   grazing incidence do collect current through the magnetic presheath; out of scope.
 - The vessel is grounded: net current to the wall is allowed. A per-tile floating wall (zero net
   current per segment) is a later scalar constraint, not part of this plan.
+
+### Rung-1 result and Option I (2026-09-15)
+
+Rung 1 (u released, zj pinned) died within 14-19 steps in three configurations (equilibrium start, D@200
+start, drift and marginal rows), always at a type-4/9 corner, the potential kink growing x2-3 per step at
+dt = 6 ns while the Bohm row held at Mach 1.00: the continuity-set potential has no anchor without the
+sheath conductance, and that conductance vanishes on the saturated branch and at low density. III is
+therefore only anchored where the plasma is dense and near the characteristic. Option I coded under
+`sheath_j_ohm` (row swap + weak potential row on u, bounded X); III kept for the rung-2a comparison
+(D@200 start, current free, marginal row) which has not been run.

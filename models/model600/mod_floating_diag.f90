@@ -43,15 +43,15 @@ end subroutine floating_diag_reset
 
 
 !> One wall Gauss point carrying the sheath current row.
-subroutine sheath_diag_add(bnd_type, dl, zj, jsat, esat, u, Bn, R, Z)
+subroutine sheath_diag_add(bnd_type, dl, zj, jsat, esat, u, Bn, R, Z, capped)
   implicit none
   integer, intent(in) :: bnd_type
   real*8,  intent(in) :: dl, zj, jsat, u, Bn, R, Z
-  logical, intent(in) :: esat
+  logical, intent(in) :: esat, capped   !< electron-saturated (III) / X bound active (I)
   if ( bnd_type .lt. 1 .or. bnd_type .gt. nt ) return
   !$omp critical (sheath_diag)
   s_slen(bnd_type) = s_slen(bnd_type) + dl
-  if ( esat ) s_esat(bnd_type) = s_esat(bnd_type) + dl
+  if ( esat .or. capped ) s_esat(bnd_type) = s_esat(bnd_type) + dl
   if ( jsat .ne. 0.d0 ) then
     j_min(bnd_type) = min(j_min(bnd_type), zj/jsat) ; j_max(bnd_type) = max(j_max(bnd_type), zj/jsat)
   endif

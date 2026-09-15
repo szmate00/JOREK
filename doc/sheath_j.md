@@ -40,8 +40,18 @@ floating_u_diag       = .t.
 
 `dirichlet%u` and `dirichlet%zj` stay `.true.` on those types (the condition takes their rows over).
 `sheath_Lambda` (3) and `sheath_V_wall` (0) as for the floating potential.
-`sheath_j_pin_current = .t.` is the stage-1 test: the u row is released but zj stays Dirichlet, so the
-continuity-set wall potential is tested on its own against D.
+`sheath_j_pin_current = .t.` releases the u row but keeps zj Dirichlet (rung 1). MEASURED 2026-09-15:
+unstable within 20 steps in every configuration - a wall potential set by charge continuity with no
+sheath conductance behind it is not anchored where the density is low. Not a valid test of III.
+
+`sheath_j_ohm = .t.` selects **Option I**: the psi Dirichlet condition is swapped into the zj row (the
+induction row is kept, so with psi frozen it is stationary Ohm's law and sets the wall current), and the
+sheath sits in the u slot in the potential form, u = C_V*V_wall + (2Te/a_n)*(Lambda - ln X),
+X = 1 - zj/j_sat, as a weak row with weight one, so the potential is anchored everywhere. X is bounded
+to [e^-Lambda, e^Lambda]: electron saturation above, and below it the characteristic is trusted up to
+twice the floating drop (a model statement) so the row stays finite on the ion-saturated branch; where a
+bound is active the zj/rho/cs columns vanish and the u column stays. Same incidence sort, same table
+(e-sat then counts either bound).
 
 ## Reading the log
 

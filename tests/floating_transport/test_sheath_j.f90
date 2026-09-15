@@ -5,6 +5,9 @@
 !!     branch; on the electron-saturated branch (x >= Lambda) the u and Te-through-x columns vanish.
 !!  4. sign: the ion saturation current flows INTO the wall for both signs of F0.
 !!  5. the diagnostics leave the equations untouched.
+!!  6. Option I (sheath_j_ohm): no zj row but a u row; zj = 0 with u floating is a root; every column
+!!     (u, zj, rho, Ti, Te) matches FD with X inside its bounds; with X beyond either bound the zj, rho
+!!     and cs columns vanish and the u column stays.
 program test_sheath_j
   use mod_parameters
   use phys_module
@@ -136,6 +139,60 @@ program test_sheath_j
   if ( any(a /= ap) .or. any(r /= rp) ) error stop 'FAIL: sheath diagnostics changed the equations'
   call floating_diag_report(0)
   write(*,'(a)') ' PASS: sheath diagnostics leave the equations untouched'
+
+  ! ---------------------------------------------------------------- 6. Option I
+  sheath_j_ohm = .true.
+  base(:)%values(1,1,var_u)  = ufl
+  base(:)%values(1,1,var_zj) = 0.d0
+  nodes = base; call assemble(a, r)
+  if ( anyrow(a, r, var_zj) )        error stop 'FAIL: Option I assembles a zj row'
+  if ( .not. anyrow(a, r, var_u) )   error stop 'FAIL: Option I assembles no u row'
+  worst = 0.d0
+  do row = 1, nd
+    if ( isvar(row, var_u) ) worst = max(worst, abs(r(row)))
+  enddo
+  if ( worst > 1.d-12*maxval(abs(a)) ) error stop 'FAIL: Option I: zj = 0 with u floating is not a root'
+  ! j_sat estimate of the fixture for placing X: c_sat*rho*cs/|B| with B_pol.n > 0
+  call sheath_j_norm(a_n, c_sat)
+  scale = c_sat * 0.2d0 * sqrt(gamma*(0.003d0+0.004d0)) / ( sqrt(F0**2 + 0.08d0**2) / 1.5d0 )   ! ~ j_sat at R = 1.5
+  eps = 1.d-7
+  do k = 1, 3
+    if ( k == 1 ) base(:)%values(1,1,var_zj) =   0.5d0 * scale     ! X ~ 0.5, inside the bounds
+    if ( k == 2 ) base(:)%values(1,1,var_zj) =   5.0d0 * scale     ! X < 0: lower bound active (estimate is approximate)
+    if ( k == 3 ) base(:)%values(1,1,var_zj) = -1.d2  * scale      ! X >> e^3: upper bound active
+    nodes = base; call assemble(a, r)
+    worst = 0.d0
+    do i = 1, size(fd_vars)
+      var = fd_vars(i)
+      do row = 1, 2
+        do dof = 1, 4
+          col = n_var*4*(row-1) + n_var*(dof-1) + var
+          nodes = base; nodes(row)%values(1,dof,var) = nodes(row)%values(1,dof,var) + eps; call assemble(ap, rp)
+          nodes = base; nodes(row)%values(1,dof,var) = nodes(row)%values(1,dof,var) - eps; call assemble(am, rm)
+          do isgn = 1, nd
+            if ( .not. isvar(isgn, var_u) ) cycle
+            err = abs( a(isgn,col) + (rp(isgn)-rm(isgn))/(2*eps) ) / max(1.d0, maxval(abs(a(:,col))))
+            worst = max(worst, err)
+            if ( err > 1.d-6 ) then
+              write(*,'(a,4i5,3es12.3)') ' FAIL: Option I FD case,row,col,var,err,amat,fd', k, isgn, col, var, err, a(isgn,col), -(rp(isgn)-rm(isgn))/(2*eps)
+              error stop 1
+            endif
+          enddo
+        enddo
+      enddo
+    enddo
+    if ( k .ge. 2 ) then
+      do isgn = 1, nd
+        if ( .not. isvar(isgn, var_u) ) cycle
+        do col = 1, nd
+          if ( (isvar(col, var_zj) .or. isvar(col, var_rho)) .and. a(isgn,col) /= 0.d0 ) error stop 'FAIL: Option I bound active but zj/rho column kept'
+        enddo
+      enddo
+    endif
+    if ( k == 1 ) write(*,'(a,es9.2)') ' PASS: Option I potential row: every column matches FD inside the bounds, worst rel err ', worst
+    if ( k == 3 ) write(*,'(a)')       ' PASS: Option I potential row: at either bound the zj/rho/cs columns vanish, u column stays'
+  enddo
+  sheath_j_ohm = .false.
 
 contains
 

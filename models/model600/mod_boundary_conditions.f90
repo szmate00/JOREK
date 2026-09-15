@@ -39,7 +39,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass, sheath_V_wall 
 use mod_floating_u, only: floating_u_norm
-use phys_module, only: min_sheath_angle, sheath_j_pin_current
+use phys_module, only: min_sheath_angle, sheath_j_pin_current, sheath_j_ohm
 use constants, only: PI
 use tr_module
 use mpi_mod
@@ -365,8 +365,27 @@ do i=1, n_local_elms !=== do elements
             ! --- If special conditions apply (e.g. freeboundary, mach1), do not apply Dirichlet even if specified in the namelist
             if ( (k==var_psi  ) .and. (.not. apply_psi_BC    ) )       cycle
             if ( (k==var_zj   ) .and. (.not. apply_current_BC) )       cycle
-            if ( (k==var_zj   ) .and. sj_above .and. (.not. sheath_j_pin_current) ) cycle  ! weak sheath row owns zj
-            if ( (k==var_u    ) .and. sj_above ) cycle                          ! vorticity row sets u (charge continuity)
+            if ( (k==var_zj   ) .and. sj_above .and. (.not. sheath_j_pin_current) ) cycle  ! III: weak sheath row owns zj;
+                                                                                          ! I: zj set by the kept induction row
+            if ( (k==var_u    ) .and. sj_above ) cycle                          ! III: vorticity row sets u; I: weak potential row
+
+            ! --- Option I (sheath_j_ohm): JOREK's row swap. The psi Dirichlet condition goes into the zj row,
+            ! --- replacing the current definition there (whose surface term is dropped anyway); the psi row keeps
+            ! --- the induction equation, which with psi frozen is stationary Ohm's law and sets the wall current.
+            if ( (k==var_psi  ) .and. sj_above .and. sheath_j_ohm .and. (.not. sheath_j_pin_current) ) then
+              do kk = 1,(n_order+1)/2
+                if ( (iv_dir .eq. 3) .and. (kk .gt. 1) ) cycle
+                do ll = 1,(n_order+1)/2
+                  if ( (iv_dir .eq. 2) .and. (ll .gt. 1) ) cycle
+                  index_tmp  = node_indices(kk,ll)
+                  index_node = node_list%node(inode)%index(index_tmp)
+                  call boundary_conditions_add_one_entry(                 &
+                         index_node, var_zj, in, index_node, var_psi, in, &
+                         zbig, index_min, index_max, a_mat)
+                enddo
+              enddo
+              cycle
+            endif
             if ( (k==var_vpar ) .and.  apply_cs .and. (bnd_type/=3)  ) cycle  ! vpar=cs is a special case (this is done below)
                                                                               ! however bnd_type=3 needs both BCs for different directions
             if ( (k==var_vpar ) .and.  apply_cs .and. mach1_weak     ) cycle  ! weak Bohm row (mod_boundary_matrix_open) owns the
