@@ -1,86 +1,84 @@
-# Sheath current boundary condition (model600), Option III
+# Sheath current boundary condition (model600)
 
-Branch `sheath-j-clean` off `floating-u-clean`. Plan and rationale: `doc/sheath_j_plan.md`.
+Branch `sheath-j-clean` off `floating-u-clean`. History and the runs that led here: `doc/sheath_j_plan.md`.
 
 ## What it is
 
-`bcs(i)%sheath_j = .true.` puts the sheath current-voltage characteristic
+`bcs(i)%sheath_j = .true.` imposes the sheath current-voltage characteristic, solved for the potential,
 
-    zj = j_sat * ( 1 - exp(x) ) ,   x = Lambda - e*(Phi - V_wall)/(k_B*Te) ,   j_sat = c_sat*rho*(+-cs/|B|)
+    u = C_V*V_wall + (2Te/a_n) * ( Lambda - ln X ) ,    X = 1 - zj/j_sat ,    j_sat = c_sat*rho*(+-cs/|B|) ,
 
-into the current-definition slot at the wall, and leaves the potential to the vorticity equation
-(charge continuity). The wall then says: no perpendicular current into the wall, parallel current
-equal to the sheath current, potential from continuity. The floating potential is its j -> 0 limit.
+as a weak row on the u trace (one residual per wall Gauss point, weight one, exact columns on u, zj, rho,
+Ti, Te), and lets the wall current be a current: the zj row keeps its definition zj = Delta*psi, completed
+at the wall by the surface term  oint v (dpsi/dn)/R dl  that the volume form drops (which is why JOREK
+pins zj otherwise). psi stays Dirichlet, so the induction row at the wall stays dropped exactly as in every
+fixed-boundary run, and w stays Dirichlet. The wall current is then the current the interior induction
+equation drives into the last element, on its own time scale; the sheath sets the potential from it.
 
-The wall is sorted by incidence with the same angle as the Bohm row:
+X is bounded to [e^-Lambda, e^Lambda]: the upper bound is electron saturation (potential not below the
+wall), the lower one says the characteristic is trusted up to twice the floating drop, a model statement
+that keeps the row finite on the ion-saturated branch. At a bound the zj/rho/cs columns vanish and the
+u column stays, so the potential is anchored everywhere. c_sat carries the sign of F0 like zj, so the
+current into the wall, -zj*(B_pol.n)/F0 = e*n*cs*|b.n|, is independent of the field sign.
 
-| |b.n| >= sin(min_sheath_angle)             | |b.n| < sin(min_sheath_angle)              |
+The wall is sorted by incidence with the angle the Bohm row uses:
+
+| |b.n| >= sin(min_sheath_angle)                       | |b.n| < sin(min_sheath_angle)        |
 |---|---|
-| u row: vorticity equation (retained)        | u row: floating potential (Dirichlet)      |
-| zj row: weak sheath row (Gauss points)      | zj row: Dirichlet zj (as develop)          |
+| u rows: weak sheath row                               | u rows: floating potential (Dirichlet) |
+| zj rows: current definition + surface term            | zj rows: Dirichlet zj (as develop)   |
 
-The electron current saturates where the plasma potential falls below the wall potential
-(x >= Lambda): the exponent is capped there, f = 1 - e^Lambda. That is electron saturation, a physics
-statement; it also bounds the u column. c_sat carries the sign of F0 like zj, so the current INTO the
-wall, -zj*(B_pol.n)/F0, is independent of the field sign (checked in the harness for both signs).
+The decision is made once per node, over both of its wall edges.
+
+## Why this form (the five runs of 2026-09-15)
+
+- A wall potential set by charge continuity, the vorticity row, is not anchored where the density is
+  low (rung 1, three variants; the "current row in the zj slot" variant): the potential must have its own
+  row with itself on the diagonal.
+- Freeing the current by swapping the psi Dirichlet condition into the zj row and keeping the induction
+  row (wall Ohm's law) makes the wall current a slack variable for the last element's parallel field: it
+  reported +-1000 j_sat under the floating potential, steady, dipolar. The current must keep its
+  definition.
+- Corners must be released per node, not per visit; the sheath is never imposed where the field grazes.
 
 ## Switching it on
 
 ```fortran
-bcs(1)%sheath_j = .t.        ! instead of bcs(i)%floating_u, never both on one type
-bcs(3)%sheath_j = .t.
-bcs(4)%sheath_j = .t.
-bcs(5)%sheath_j = .t.
-bcs(9)%sheath_j = .t.
+bcs(1)%sheath_j   = .t.
+bcs(4)%sheath_j   = .t.
+bcs(5)%sheath_j   = .t.
+bcs(9)%sheath_j   = .t.
+bcs(3)%floating_u = .t.      ! the target/outer-boundary corner stays floating with a pinned current
 mach1_weak            = .t.
-mach1_weak_drift      = .t.  ! the D configuration of floating-u-clean
+mach1_weak_drift      = .t.  ! the D configuration of floating-u-clean, unchanged at a restart
 mach1_weak_drift_cut  = .t.
 floating_u_diag       = .t.
 ```
 
-`dirichlet%u` and `dirichlet%zj` stay `.true.` on those types (the condition takes their rows over).
-`sheath_Lambda` (3) and `sheath_V_wall` (0) as for the floating potential.
-`sheath_j_pin_current = .t.` releases the u row but keeps zj Dirichlet (rung 1). MEASURED 2026-09-15:
-unstable within 20 steps in every configuration - a wall potential set by charge continuity with no
-sheath conductance behind it is not anchored where the density is low. Not a valid test of III.
+`dirichlet%u` and `dirichlet%zj` stay `.true.` on the sheath types. `sheath_Lambda` (3) and
+`sheath_V_wall` (0) as for the floating potential.
 
-`sheath_j_ohm = .t.` selects **Option I**: the psi Dirichlet condition is swapped into the zj row (the
-induction row is kept, so with psi frozen it is stationary Ohm's law and sets the wall current), and the
-sheath sits in the u slot in the potential form, u = C_V*V_wall + (2Te/a_n)*(Lambda - ln X),
-X = 1 - zj/j_sat, as a weak row with weight one, so the potential is anchored everywhere. X is bounded
-to [e^-Lambda, e^Lambda]: electron saturation above, and below it the characteristic is trusted up to
-twice the floating drop (a model statement) so the row stays finite on the ion-saturated branch; where a
-bound is active the zj/rho/cs columns vanish and the u column stays. Same incidence sort, same table
-(e-sat then counts either bound).
-
-`sheath_j_float_u = .t.` with `sheath_j_ohm`: the row swap is done (zj from Ohm's law over the last
-element) but the FLOATING row stays on u. No sheath row anywhere. This measures the wall current the
-induction equation demands under the floating potential: the `[sheath_j]` j/jsat and Inet/Isat columns
-then report Ohm's current against the saturation current. Order one means a current BC is viable;
-+-100 means the floating potential along the target is not a flux function to the accuracy Ohm's law
-demands.
+`sheath_j_float_u = .t.` keeps the floating row on u and only frees the current (definition + surface
+term): the measurement of the wall current the plasma delivers under the floating potential, in the
+`[sheath_j]` table. Run it first.
 
 ## Reading the log
 
 ```
- [sheath_j]   type  e-sat    j/jsat min     max     Phi[V] min      max     Inet/Isat
+ [sheath_j]   type  e-sat    j/jsat min     max    max|j/jsat| at (R,Z)      Phi[V] min      max     Inet/Isat
 ```
 
-per type, over the wall length carrying the row: fraction of that length on the electron-saturated
-branch; min and max of j/j_sat (negative = electron current, +1 = ion saturation); min and max of
-the wall potential in volts; and the net current into the wall as a fraction of the saturation current
-integrated over the type (Inet = -sum zj*(B_pol.n)*R*dl, Isat = sum |j_sat*(B_pol.n)|*R*dl). The
-`[floating_u]` table is printed as before.
+per type, over the wall length carrying the rows: fraction of that length with an X bound active; min and
+max of j/j_sat (negative = electron current, +1 = ion saturation) and where the largest |j/j_sat| sits;
+min and max of the wall potential in volts; net current into the wall over the saturation current
+integrated over the type (Inet = -sum zj*(B_pol.n)*R*dl, Isat = sum |j_sat*(B_pol.n)|*R*dl).
 
 ## Tests
 
-`tests/floating_transport/run.sh`, `test_sheath_j`: no zj row when off, pinned, or below the angle;
-zj = 0 with u at the floating value is a root; every column (zj, u, rho, Ti, Te) matches finite
-differences on the electron branch and on the saturated branch, where the u column vanishes; the
-saturation current flows into the wall for both signs of F0; the diagnostics change no equation.
-Dropping the u, Te or rho column makes the FD test fail.
-
-## Not covered
-
-The nodal side (`mod_boundary_conditions.f90`: node incidence, release of the u and zj rows) is not
-compiled by the harness; `check_imports.py` covers its only-lists. No MPI build, no run.
+`tests/floating_transport/run.sh`, `test_sheath_j`: rows present/absent (off, grazing, on, float_u); the
+surface term integrates to -b*ln2 for psi = a*R + b*Z on the fixture edge; every psi column of the zj
+rows, trace and normal-derivative DOFs, matches finite differences (dropping the normal-derivative loop
+fails it); the potential row has zj = 0 at floating u as a root, matches FD inside the bounds, and keeps
+only its u column at a bound; the saturation current flows into the wall for both signs of F0; the
+diagnostics change no equation. The nodal side (node incidence, row release) is not compiled by the
+harness; `check_imports.py` covers its only-lists.

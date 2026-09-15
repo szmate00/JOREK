@@ -64,7 +64,7 @@ logical    :: mw_on                                              ! weak Bohm con
 real*8     :: mw_orient, mw_vEn, mw_Bn, mw_vn, mw_tgt, mw_act, mw_cs, mw_res, mw_w, mw_in, mw_s, mw_x
 real*8     :: fx_n, fx_v, fx_p, fx_u, fx_out                    ! normal-flow measure of the sheath fluxes and its columns
 logical    :: sj_on, sj_here                                     ! sheath current row: on this edge / at this Gauss point
-real*8     :: sj_an, sj_csat, sj_CT, sj_CV, sj_x, sj_ex, sj_f, sj_jsat, sj_res, sj_dfdu, sj_dfdTe, sj_w
+real*8     :: sj_an, sj_csat, sj_CT, sj_CV, sj_jsat, sj_psin, sj_w, sj_esp, sj_Tt
 real*8     :: so_X, so_Xc, so_g, so_res, so_cu, so_czj, so_crho, so_cTe, so_ccs, so_w   ! Option I potential row
 logical    :: so_capped
 logical    :: xpoint2
@@ -153,16 +153,16 @@ enddo
 mw_on = mach1_weak .and. with_vpar .and. bcs(bnd_type1)%mach1 .and. bcs(bnd_type2)%mach1
 if ( mw_on ) apply_natural_bc(var_vpar) = .true.
 
-! --- Sheath current row (bcs%sheath_j): zj = j_sat*f(Phi) in the current-definition slot, one residual per
-! --- wall Gauss point where |b.n| >= sin(min_sheath_angle); u there is set by the vorticity equation.
-sj_on = bcs(bnd_type1)%sheath_j .and. bcs(bnd_type2)%sheath_j .and. (.not. sheath_j_pin_current)
+! --- Sheath current BC (bcs%sheath_j) on edges whose both endpoints are sheath types, where
+! --- |b.n| >= sin(min_sheath_angle): the u rows carry the weak sheath row (potential form) and the zj rows
+! --- receive the surface term of the current definition, oint v*(dpsi/dn)/R dl, that the volume form drops
+! --- (which is why JOREK pins zj); with it zj = Delta*psi holds at the wall and the wall current is the
+! --- current the interior induction equation drives into the last element.
+sj_on = bcs(bnd_type1)%sheath_j .and. bcs(bnd_type2)%sheath_j
 sj_an = 0.d0 ; sj_csat = 0.d0 ; sj_CT = 0.d0 ; sj_CV = 0.d0
 if ( sj_on ) then
-  if ( sheath_j_ohm ) then
-    if ( .not. sheath_j_float_u ) apply_natural_bc(var_u) = .true.   ! Option I: the sheath row sits in the u slot
-  else
-    apply_natural_bc(var_zj) = .true.     ! Option III: in the zj slot
-  endif
+  apply_natural_bc(var_zj) = .true.
+  if ( .not. sheath_j_float_u ) apply_natural_bc(var_u) = .true.
   call sheath_j_norm(sj_an, sj_csat)
   call floating_u_norm(sj_an, sj_CT, sj_CV)
 endif
@@ -410,31 +410,18 @@ do ms=1, n_gauss
       fx_u = - fx_out * mw_orient * BigR**2
     endif
 
-    ! --- Sheath current row. The ion saturation current in the toroidal-current variable is
-    ! --- j_sat = c_sat*rho*Vpar_Bohm with Vpar_Bohm = sign(B.n)*cs/|B| (Artola eq. 5 with the marginal Bohm
-    ! --- row); the characteristic (Artola eq. 6, Stangeby 2.68) is  zj = j_sat*(1 - exp(x)),
-    ! --- x = Lambda - e*(Phi - V_wall)/(k_B*Te) = Lambda - a_n*(u - C_V*V_wall)/(2*Te). The electron current
-    ! --- saturates where the plasma potential falls below the wall potential, x >= Lambda: the exponent is
-    ! --- capped there (electron saturation, f = 1 - e^Lambda), which also bounds the u column. Written for the
-    ! --- current INTO the wall, -zj*(B_pol.n)/F0 = e*n*cs*|b.n|*f, independent of the sign of F0. Weight one.
+    ! --- Sheath BC at this Gauss point. j_sat = c_sat*rho*Vpar_Bohm, Vpar_Bohm = sign(B.n)*cs/|B| (Artola eq. 5
+    ! --- with the marginal Bohm row). Written for the current INTO the wall, -zj*(B_pol.n)/F0 = e*n*cs*|b.n|,
+    ! --- independent of the sign of F0.
     sj_here = sj_on .and. ( abs(bdotn) .ge. sin(c_angle) )
-    sj_w = 0.d0 ; sj_x = 0.d0 ; sj_ex = 1.d0 ; sj_f = 0.d0 ; sj_dfdu = 0.d0 ; sj_dfdTe = 0.d0 ; sj_jsat = 0.d0 ; sj_res = 0.d0
+    sj_jsat = 0.d0 ; sj_psin = 0.d0 ; sj_w = 0.d0
     if ( sj_here ) then
-      sj_x     = sheath_Lambda - sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*Te0)
-      sj_ex    = exp( min(sj_x, sheath_Lambda) )
-      sj_f     = 1.d0 - sj_ex
-      sj_dfdu  = 0.d0 ; sj_dfdTe = 0.d0
-      if ( sj_x .lt. sheath_Lambda ) then
-        sj_dfdu  =   sj_ex * sj_an / (2.d0*Te0)                                         ! d f / d u
-        sj_dfdTe = - sj_ex * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*Te0**2)   ! d f / d Te
-      endif
-      sj_jsat  = sj_csat * r0 * normal_sign * cs0 / Btot
-      sj_res   = eq_g(mp,var_zj,ms) - sj_jsat * sj_f
-      sj_w     = Zbig * dl
-      if ( sheath_j_ohm ) sj_w = 0.d0                 ! Option I: no current row (Ohm's law sets zj)
+      sj_jsat = sj_csat * r0 * normal_sign * cs0 / Btot
+      sj_psin = ps0_x * normal(1) + ps0_y * normal(2)     ! dpsi/dn, outward
+      sj_w    = dl / BigR                                 ! weight of the surface term
     endif
 
-    ! --- Option I (sheath_j_ohm): the same characteristic solved for the potential,
+    ! --- The sheath row: the characteristic solved for the potential,
     ! ---   u = C_V*V_wall + (2Te/a_n)*(Lambda - ln X),   X = 1 - zj/j_sat,
     ! --- as a weak row on the u trace with weight one: d(res)/du = 1, so the potential is anchored
     ! --- everywhere, including where the sheath conductance vanishes. X is bounded to [e^-Lambda, e^Lambda]:
@@ -443,7 +430,7 @@ do ms=1, n_gauss
     ! --- finite on the ion-saturated branch. Where a bound is active the zj/rho/cs columns vanish.
     so_w = 0.d0 ; so_res = 0.d0 ; so_cu = 0.d0 ; so_czj = 0.d0 ; so_crho = 0.d0 ; so_cTe = 0.d0 ; so_ccs = 0.d0
     so_capped = .false.
-    if ( sj_here .and. sheath_j_ohm .and. .not. sheath_j_float_u ) then
+    if ( sj_here .and. .not. sheath_j_float_u ) then
       so_X  = 1.d0
       if ( sj_jsat .ne. 0.d0 ) so_X = 1.d0 - eq_g(mp,var_zj,ms) / sj_jsat
       so_Xc = min( max( so_X, exp(-sheath_Lambda) ), exp(sheath_Lambda) )
@@ -461,7 +448,7 @@ do ms=1, n_gauss
     endif
 
     if ( floating_u_diag .and. sj_here ) &
-      call sheath_diag_add(bnd_type1, ws*dl, eq_g(mp,var_zj,ms), sj_jsat, sj_x .ge. sheath_Lambda, &
+      call sheath_diag_add(bnd_type1, ws*dl, eq_g(mp,var_zj,ms), sj_jsat, so_capped, &
                            eq_g(mp,var_u,ms), mw_Bn, BigR, y_g(ms), so_capped)
 
     if ( floating_u_diag .and. mw_on ) then
@@ -506,8 +493,10 @@ do ms=1, n_gauss
             ! --- Weak inflow term (mach1_weak): rho relaxes to rho_in = 0 at the inflow rate |vn|
             rhs_ij(var_rho)   = rhs_ij(var_rho) + v * mw_in * mw_vn * r0 * BigR * dl * tstep
 
-            ! --- Sheath current row (bcs%sheath_j): Option III in the zj slot, Option I in the u slot
-            rhs_ij(var_zj)    = - v * sj_w * sj_res
+            ! --- Sheath BC (bcs%sheath_j): surface term of the current definition on the zj row, and the
+            ! --- weak potential row on the u row. The volume row is -(grad v . grad psi + v*zj)/R with the
+            ! --- boundary integral + oint v*(dpsi/dn)/R dl dropped; here it is put back.
+            rhs_ij(var_zj)    = + v * sj_w * sj_psin
             rhs_ij(var_u)     = - v * so_w * so_res
 
             ! --- Sheath heat flux (c_angle for mininum heat fluxes at grazing angles)
@@ -597,12 +586,11 @@ do ms=1, n_gauss
                   amat(var_rho,var_u)     = - v * density_reflection * r0 * fx_u * psi_s * theta * tstep &
                                             + v * mw_in * mw_orient * BigR**2 * psi_s * r0 * theta * tstep
 
-                  ! --- Sheath current row (bcs%sheath_j): exact columns of zj - j_sat*f
-                  amat(var_zj,var_zj)  =   v * sj_w * psi
-                  amat(var_zj,var_rho) = - v * sj_w * sj_csat * normal_sign * cs0 / Btot * sj_f * rho
-                  amat(var_zj,var_u)   = - v * sj_w * sj_jsat * sj_dfdu * psi
+                  ! --- Surface term of the current definition: dpsi/dn = [ps0_s*(y_t*n1 - x_t*n2) + ps0_t*(-y_s*n1 + x_s*n2)]/xjac.
+                  ! --- Trace DOFs (psi_s) here; the normal-derivative DOFs (psi_t) in the extra loop below.
+                  amat(var_zj,var_psi) = - v * sj_w * ( y_t(ms)*normal(1) - x_t(ms)*normal(2) ) / xjac * psi_s
 
-                  ! --- Option I potential row: exact columns of u - C_V*V_wall - (2Te/a_n)*(Lambda - ln X)
+                  ! --- Sheath potential row: exact columns of u - C_V*V_wall - (2Te/a_n)*(Lambda - ln X)
                   amat(var_u,var_u)    =   v * so_w * so_cu  * psi
                   amat(var_u,var_zj)   =   v * so_w * so_czj * psi
                   amat(var_u,var_rho)  =   v * so_w * so_crho * rho
@@ -611,12 +599,6 @@ do ms=1, n_gauss
                     amat(var_u,var_Te) =   v * so_w * ( so_cTe * Te + so_ccs * cs_Te )
                   else
                     amat(var_u,var_T)  =   v * so_w * ( so_cTe * 0.5d0 * T + so_ccs * cs_T )
-                  endif
-                  if (with_TiTe) then
-                    amat(var_zj,var_Ti)  = - v * sj_w * sj_csat * r0 * normal_sign / Btot * sj_f * cs_Ti
-                    amat(var_zj,var_Te)  = - v * sj_w * ( sj_csat * r0 * normal_sign / Btot * sj_f * cs_Te + sj_jsat * sj_dfdTe * Te )
-                  else
-                    amat(var_zj,var_T)   = - v * sj_w * ( sj_csat * r0 * normal_sign / Btot * sj_f * cs_T + sj_jsat * sj_dfdTe * 0.5d0 * T )
                   endif
 
                   ! --- Sheath heat flux
@@ -724,6 +706,26 @@ do ms=1, n_gauss
               enddo
             enddo
           enddo
+
+          ! --- Surface term of the current definition, columns of the psi normal-derivative DOFs (3 and 4 of
+          ! --- both edge nodes). Their trace vanishes, their t-derivative on the edge is what the state loop
+          ! --- above uses: size(vertex,direction(l))*H1*HZ*element_size_perp with the same sign rule.
+          if ( sj_here ) then
+            do k=1,2
+              sj_esp = - element%size(vertex(k),direction_perp(1)) * 3.d0
+              if ((vertex(1)*vertex(2) .eq. 2)) sj_esp = + element%size(vertex(k),direction_perp(1)) * 3.d0
+              do l=1,2
+                l3 = direction_perp(l)
+                do in = i_tor_min, i_tor_max
+                  sj_Tt = H1(k,l,ms) * element%size(vertex(k),direction(l)) * HZ(in,mp) * sj_esp
+                  index_kl = n_tor_local*n_var*n_degrees*(vertex(k)-1) + n_tor_local * n_var * (l3-1) + in - i_tor_min +1
+                  ELM(index_ij+(var_zj-1)*(n_tor_local),index_kl+(var_psi-1)*(n_tor_local)) = &
+                  ELM(index_ij+(var_zj-1)*(n_tor_local),index_kl+(var_psi-1)*(n_tor_local))   &
+                    - v * sj_w * ( - y_s(ms)*normal(1) + x_s(ms)*normal(2) ) / xjac * sj_Tt * ws
+                enddo
+              enddo
+            enddo
+          endif
 
         enddo
       enddo

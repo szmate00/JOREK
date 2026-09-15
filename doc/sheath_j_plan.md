@@ -167,3 +167,12 @@ sheath conductance, and that conductance vanishes on the saturated branch and at
 therefore only anchored where the plasma is dense and near the characteristic. Option I coded under
 `sheath_j_ohm` (row swap + weak potential row on u, bounded X); III kept for the rung-2a comparison
 (D@200 start, current free, marginal row) which has not been run.
+
+### Final formulation (2026-09-15, after the Option I measurement)
+
+The wall-Ohm's-law variant reported +-1000 j_sat, steady and dipolar, under the floating potential: with
+the current definition swapped out, the wall zj was the only unknown in the induction row and absorbed the
+last element's parallel-field mismatch at 1/eta. Kept instead: psi Dirichlet in its own row (induction
+row dropped at the wall as always), zj = Delta*psi at the wall with the surface term oint v (dpsi/dn)/R dl
+restored, the weak potential-form sheath row on u. Options III and the row swap removed from the branch.
+Next: the measurement `sheath_j_float_u` (floating u, current by definition), then the sheath row.
