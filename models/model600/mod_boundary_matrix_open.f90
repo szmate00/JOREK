@@ -65,6 +65,7 @@ real*8     :: mw_orient, mw_vEn, mw_Bn, mw_vn, mw_tgt, mw_act, mw_cs, mw_res, mw
 real*8     :: fx_n, fx_v, fx_p, fx_u, fx_out                    ! normal-flow measure of the sheath fluxes and its columns
 logical    :: sj_on, sj_here, sj_surf                            ! sheath rows on this edge / at this Gauss point / surface term on this edge
 real*8     :: sj_an, sj_csat, sj_CT, sj_CV, sj_jsat, sj_psin, sj_w, sj_esp, sj_Tt
+real*8     :: sc_x, sc_ex, sc_f, sc_dfdu, sc_dfdTe, sc_res, sc_w        ! current-slot form (sheath_j_current_row)
 real*8     :: so_X, so_Xc, so_g, so_res, so_cu, so_czj, so_crho, so_cTe, so_ccs, so_w, so_al   ! sheath potential row
 logical    :: so_capped
 logical    :: xpoint2
@@ -163,12 +164,16 @@ if ( mw_on ) apply_natural_bc(var_vpar) = .true.
 ! --- no angle gate (pinned nodes have their rows overwritten by Dirichlet anyway). Without this the row is
 ! --- the volume form alone over part of the support, i.e. dpsi/dn = 0 weakly, and the wall current absorbs
 ! --- a missing flux of order R*B_t/h: thousands of j_sat at the edge of the sheath region (measured).
-sj_surf = bcs(bnd_type1)%sheath_j .or. bcs(bnd_type2)%sheath_j
+sj_surf = ( bcs(bnd_type1)%sheath_j .or. bcs(bnd_type2)%sheath_j ) .and. (.not. sheath_j_current_row)
 sj_on   = bcs(bnd_type1)%sheath_j .and. bcs(bnd_type2)%sheath_j
 sj_an = 0.d0 ; sj_csat = 0.d0 ; sj_CT = 0.d0 ; sj_CV = 0.d0
 if ( sj_surf ) apply_natural_bc(var_zj) = .true.
 if ( sj_on ) then
-  if ( .not. sheath_j_float_u ) apply_natural_bc(var_u) = .true.
+  if ( sheath_j_current_row ) then
+    apply_natural_bc(var_zj) = .true.        ! the characteristic as the zj row; u keeps the vorticity equation
+  else if ( .not. sheath_j_float_u ) then
+    apply_natural_bc(var_u)  = .true.
+  endif
   call sheath_j_norm(sj_an, sj_csat)
   call floating_u_norm(sj_an, sj_CT, sj_CV)
 endif
@@ -437,7 +442,24 @@ do ms=1, n_gauss
     ! --- finite on the ion-saturated branch. Where a bound is active the zj/rho/cs columns vanish.
     so_w = 0.d0 ; so_res = 0.d0 ; so_cu = 0.d0 ; so_czj = 0.d0 ; so_crho = 0.d0 ; so_cTe = 0.d0 ; so_ccs = 0.d0
     so_capped = .false.
-    if ( sj_here .and. .not. sheath_j_float_u ) then
+    ! --- Current-slot form (sheath_j_current_row): zj = j_sat*(1 - exp(x)), x = Lambda - a_n*(u - C_V*V_wall)/(2Te),
+    ! --- electron current saturated at x >= Lambda, weight one, in the zj row; u is then set by the vorticity
+    ! --- equation. The structure of the old weak-trace route that ran ~3900 steps on type 1 alone.
+    sc_w = 0.d0 ; sc_x = 0.d0 ; sc_ex = 1.d0 ; sc_f = 0.d0 ; sc_dfdu = 0.d0 ; sc_dfdTe = 0.d0 ; sc_res = 0.d0
+    if ( sj_here .and. sheath_j_current_row ) then
+      sc_x     = sheath_Lambda - sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*Te0)
+      sc_ex    = exp( min(sc_x, sheath_Lambda) )
+      sc_f     = 1.d0 - sc_ex
+      if ( sc_x .lt. sheath_Lambda ) then
+        sc_dfdu  =   sc_ex * sj_an / (2.d0*Te0)
+        sc_dfdTe = - sc_ex * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*Te0**2)
+      endif
+      sc_res   = eq_g(mp,var_zj,ms) - sj_jsat * sc_f
+      sc_w     = Zbig * dl
+      so_capped = ( sc_x .ge. sheath_Lambda )
+    endif
+
+    if ( sj_here .and. .not. sheath_j_float_u .and. .not. sheath_j_current_row ) then
       so_X  = 1.d0
       if ( sj_jsat .ne. 0.d0 ) so_X = 1.d0 - eq_g(mp,var_zj,ms) / sj_jsat
       so_Xc = min( max( so_X, exp(-sheath_Lambda) ), exp(sheath_Lambda) )
@@ -503,7 +525,7 @@ do ms=1, n_gauss
             ! --- Sheath BC (bcs%sheath_j): surface term of the current definition on the zj row, and the
             ! --- weak potential row on the u row. The volume row is -(grad v . grad psi + v*zj)/R with the
             ! --- boundary integral + oint v*(dpsi/dn)/R dl dropped; here it is put back.
-            rhs_ij(var_zj)    = + v * sj_w * sj_psin
+            rhs_ij(var_zj)    = + v * sj_w * sj_psin - v * sc_w * sc_res
             rhs_ij(var_u)     = - v * so_w * so_res
 
             ! --- Sheath heat flux (c_angle for mininum heat fluxes at grazing angles)
@@ -596,6 +618,17 @@ do ms=1, n_gauss
                   ! --- Surface term of the current definition: dpsi/dn = [ps0_s*(y_t*n1 - x_t*n2) + ps0_t*(-y_s*n1 + x_s*n2)]/xjac.
                   ! --- Trace DOFs (psi_s) here; the normal-derivative DOFs (psi_t) in the extra loop below.
                   amat(var_zj,var_psi) = - v * sj_w * ( y_t(ms)*normal(1) - x_t(ms)*normal(2) ) / xjac * psi_s
+
+                  ! --- Current-slot form: exact columns of zj - j_sat*f
+                  amat(var_zj,var_zj)  =   v * sc_w * psi          ! amat is assigned per (k,l,in), never accumulated
+                  amat(var_zj,var_rho) = - v * sc_w * sj_csat * normal_sign * cs0 / Btot * sc_f * rho
+                  amat(var_zj,var_u)   = - v * sc_w * sj_jsat * sc_dfdu * psi
+                  if (with_TiTe) then
+                    amat(var_zj,var_Ti)  = - v * sc_w * sj_csat * r0 * normal_sign / Btot * sc_f * cs_Ti
+                    amat(var_zj,var_Te)  = - v * sc_w * ( sj_csat * r0 * normal_sign / Btot * sc_f * cs_Te + sj_jsat * sc_dfdTe * Te )
+                  else
+                    amat(var_zj,var_T)   = - v * sc_w * ( sj_csat * r0 * normal_sign / Btot * sc_f * cs_T + sj_jsat * sc_dfdTe * 0.5d0 * T )
+                  endif
 
                   ! --- Sheath potential row: exact columns of u - C_V*V_wall - (2Te/a_n)*(Lambda - ln X)
                   amat(var_u,var_u)    =   v * so_w * so_cu  * psi

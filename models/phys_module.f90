@@ -67,6 +67,7 @@ module phys_module
   logical :: mach1_weak_inflow      !< weak inflow closure on the density row where the total normal flow is inward (default on)
   logical :: sheath_j_float_u       !< with bcs%sheath_j: keep the FLOATING row on u; the wall current is then just measured
   real*8  :: sheath_j_ramp_time     !< time (JOREK units) over which the sheath potential's current dependence ramps from 0 to 1; 0 = until the last tstep_n phase begins, <0 = no ramp
+  logical :: sheath_j_current_row   !< sheath in the CURRENT slot: zj = j_sat*f(u) as the zj row, u from the vorticity equation (the sheath-jsat-vpar-38ab278 structure)
   logical :: vpar_smoothing       !< apply a smoothing function to smooth jumps in Vpar at B.n=0
   real*8  :: vpar_smoothing_coef(3) !< coefficients for the smoothing profile of the parallel velocity
   real*8  :: min_sheath_angle     !< For sheath boundary conditions: Minimum incident angle for heat and particle fluxes (in degrees)

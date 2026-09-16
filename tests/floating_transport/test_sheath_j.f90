@@ -183,6 +183,35 @@ program test_sheath_j
   sheath_j_ramp_time = -1.d0 ; t_now = 0.d0 ; base(:)%values(1,1,var_zj) = 0.d0
   write(*,'(a)') ' PASS: sheath ramp: alpha = 0 is the floating row, alpha follows the timestep ramp to 1'
 
+  ! --- current-slot form: zj row is the characteristic, no u row, no surface term; FD every column
+  sheath_j_current_row = .true.
+  base(:)%values(1,1,var_zj) = 0.01d0 ; base(:)%values(1,1,var_u) = 0.8d0*ufl
+  nodes = base; call assemble(a, r)
+  if ( anyrow(a, r, var_u) )        error stop 'FAIL: current-slot form assembles a u row'
+  if ( .not. anyrow(a, r, var_zj) ) error stop 'FAIL: current-slot form assembles no zj row'
+  worst = 0.d0
+  do i = 1, size(fd_vars)
+    var = fd_vars(i)
+    do row = 1, 2
+      do dof = 1, 4
+        col = n_var*4*(row-1) + n_var*(dof-1) + var
+        nodes = base; nodes(row)%values(1,dof,var) = nodes(row)%values(1,dof,var) + eps; call assemble(ap, rp)
+        nodes = base; nodes(row)%values(1,dof,var) = nodes(row)%values(1,dof,var) - eps; call assemble(am, rm)
+        do isgn = 1, nd
+          if ( .not. isvar(isgn, var_zj) ) cycle
+          err = abs( a(isgn,col) + (rp(isgn)-rm(isgn))/(2*eps) ) / max(1.d0, maxval(abs(a(:,col))))
+          worst = max(worst, err)
+          if ( err > 1.d-6 ) then
+            write(*,'(a,3i5,3es12.3)') ' FAIL: current-slot FD row,col,var,err,amat,fd', isgn, col, var, err, a(isgn,col), -(rp(isgn)-rm(isgn))/(2*eps)
+            error stop 1
+          endif
+        enddo
+      enddo
+    enddo
+  enddo
+  sheath_j_current_row = .false. ; base(:)%values(1,1,var_zj) = 0.d0 ; base(:)%values(1,1,var_u) = ufl
+  write(*,'(a,es9.2)') ' PASS: current-slot form: zj row only, every column matches FD, worst rel err ', worst
+
   ! ---------------------------------------------------------------- 5. sign of the saturation current
   do isgn = 1, 2
     call sheath_j_norm(a_n, c_sat)

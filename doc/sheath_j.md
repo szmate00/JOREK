@@ -105,3 +105,12 @@ outer target collapsed in ten steps from the equilibrium). Start the sheath run 
 wall current has relaxed under the floating potential: run `sheath_j_float_u = .t.` first (current free by
 its definition, potential floating), then restart from it with `sheath_j_float_u = .f.`. The `|j|>jsat`
 column of the measurement run says when the target interior is within the characteristic.
+
+## Current-slot form (`sheath_j_current_row = .t.`)
+
+The structure of the old `sheath-jsat-vpar-38ab278` weak-trace route, which ran ~3900 steps to timeout
+on boundary type 1 alone (converged, I_sheath = I_Ampere to four figures): the characteristic
+zj = j_sat*(1 - exp(x)) IS the zj row at the wall (weight one, electron saturation at x >= Lambda), and u
+is left to the vorticity equation. No surface term, no potential row. Restored 2026-09-16 for the
+type-1-only comparison; the earlier runs of this structure here all included types 4 and 9, which the
+old branch found to fail within 4-8 steps on their own, so it was never tested fairly.
