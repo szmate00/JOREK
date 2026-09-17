@@ -65,7 +65,7 @@ real*8     :: mw_orient, mw_vEn, mw_Bn, mw_vn, mw_tgt, mw_act, mw_cs, mw_res, mw
 real*8     :: fx_n, fx_v, fx_p, fx_u, fx_out                    ! normal-flow measure of the sheath fluxes and its columns
 logical    :: sj_on, sj_here, sj_surf                            ! sheath rows on this edge / at this Gauss point / surface term on this edge
 real*8     :: sj_an, sj_csat, sj_CT, sj_CV, sj_jsat, sj_psin, sj_w, sj_esp, sj_Tt
-real*8     :: sc_x, sc_ex, sc_f, sc_dfdu, sc_dfdTe, sc_res, sc_w        ! current-slot form (sheath_j_current_row)
+real*8     :: sc_x, sc_ex, sc_f, sc_dfdu, sc_dfdTe, sc_res, sc_w, sc_Tc, sc_dTc, sc_drc   ! current-slot form (sheath_j_current_row)
 real*8     :: so_X, so_Xc, so_g, so_res, so_cu, so_czj, so_crho, so_cTe, so_ccs, so_w, so_al   ! sheath potential row
 logical    :: so_capped
 logical    :: xpoint2
@@ -427,7 +427,7 @@ do ms=1, n_gauss
     ! --- independent of the sign of F0.
     sj_here = sj_on .and. ( abs(bdotn) .ge. sin(c_angle) )
     sj_jsat = 0.d0 ; sj_psin = 0.d0 ; sj_w = 0.d0
-    if ( sj_here ) sj_jsat = sj_csat * r0 * normal_sign * cs0 / Btot
+    if ( sj_here ) sj_jsat = sj_csat * r0_corr * normal_sign * cs0 / Btot     ! corr_neg rho: j_sat keeps its sign
     if ( sj_surf ) then
       sj_psin = ps0_x * normal(1) + ps0_y * normal(2)     ! dpsi/dn, outward
       sj_w    = dl / BigR                                 ! weight of the surface term
@@ -445,32 +445,37 @@ do ms=1, n_gauss
     ! --- Current-slot form (sheath_j_current_row): zj = j_sat*(1 - exp(x)), x = Lambda - a_n*(u - C_V*V_wall)/(2Te),
     ! --- electron current saturated at x >= Lambda, weight one, in the zj row; u is then set by the vorticity
     ! --- equation. The structure of the old weak-trace route that ran ~3900 steps on type 1 alone.
-    sc_w = 0.d0 ; sc_x = 0.d0 ; sc_ex = 1.d0 ; sc_f = 0.d0 ; sc_dfdu = 0.d0 ; sc_dfdTe = 0.d0 ; sc_res = 0.d0
+    sc_w = 0.d0 ; sc_x = 0.d0 ; sc_ex = 1.d0 ; sc_f = 0.d0 ; sc_dfdu = 0.d0 ; sc_dfdTe = 0.d0 ; sc_res = 0.d0 ; sc_Tc = 1.d0 ; sc_dTc = 1.d0 ; sc_drc = 1.d0
     if ( sj_here .and. sheath_j_current_row ) then
+      ! --- corr_neg-corrected Te and rho, as in every other natural row: a raw Te <= 0 would flip the sign
+      ! --- of x and a raw rho <= 0 the sign of j_sat. sc_dTc = d(Te_corr)/dTe carries into the Te column.
+      sc_Tc  = Te0_corr
+      sc_dTc = dcorr_neg_temp_dT(Te0)
       ! --- Ion branch (x < 0, Phi above floating): f = 1 - exp(x) - s*x with s = sheath_j_ion_slope, the
       ! --- finite slope of ion saturation (sheath expansion). With s = 0 the characteristic has no voltage
       ! --- root wherever the plasma delivers j >= j_sat, and the vorticity row then drives Phi to infinity
       ! --- there (measured: 234 -> 683 -> 2600 V at the outer target in 178 steps).
-      sc_x     = sheath_Lambda - sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*Te0)
+      sc_x     = sheath_Lambda - sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*sc_Tc)
       sc_ex    = exp( min(sc_x, sheath_Lambda) )
       sc_f     = 1.d0 - sc_ex - sheath_j_ion_slope * min(sc_x, 0.d0)
       if ( sc_x .lt. sheath_Lambda ) then
-        sc_dfdu  =   sc_ex * sj_an / (2.d0*Te0)
-        sc_dfdTe = - sc_ex * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*Te0**2)
+        sc_dfdu  =   sc_ex * sj_an / (2.d0*sc_Tc)
+        sc_dfdTe = - sc_ex * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*sc_Tc**2) * sc_dTc
       endif
       if ( sc_x .lt. 0.d0 ) then                                      ! d(-s*x)/du and /dTe
-        sc_dfdu  = sc_dfdu  + sheath_j_ion_slope * sj_an / (2.d0*Te0)
-        sc_dfdTe = sc_dfdTe - sheath_j_ion_slope * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*Te0**2)
+        sc_dfdu  = sc_dfdu  + sheath_j_ion_slope * sj_an / (2.d0*sc_Tc)
+        sc_dfdTe = sc_dfdTe - sheath_j_ion_slope * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*sc_Tc**2) * sc_dTc
       endif
       ! --- Beyond electron saturation (x > Lambda, Phi below the wall): f = 1 - e^Lambda - s_e*(x - Lambda),
       ! --- so the row keeps a conductance where the plasma pushes more than the thermal electron flux
       ! --- (measured: j/j_sat = -26 against the cap's -19 at the outer target, Phi then unanchored below 0).
       if ( sc_x .gt. sheath_Lambda ) then
         sc_f     = sc_f - sheath_j_e_slope * ( sc_x - sheath_Lambda )
-        sc_dfdu  = sc_dfdu  + sheath_j_e_slope * sj_an / (2.d0*Te0)
-        sc_dfdTe = sc_dfdTe - sheath_j_e_slope * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*Te0**2)
+        sc_dfdu  = sc_dfdu  + sheath_j_e_slope * sj_an / (2.d0*sc_Tc)
+        sc_dfdTe = sc_dfdTe - sheath_j_e_slope * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*sc_Tc**2) * sc_dTc
       endif
       sc_res   = eq_g(mp,var_zj,ms) - sj_jsat * sc_f
+      sc_drc   = dcorr_neg_dens_drho(r0)                       ! d(rho_corr)/d(rho) for the rho column
       sc_w     = Zbig * dl
       so_capped = ( sc_x .ge. sheath_Lambda )
     endif
@@ -486,7 +491,7 @@ do ms=1, n_gauss
       so_cTe = - 2.d0/sj_an * ( sheath_Lambda - so_al*log(so_Xc) )           ! d(res)/dTe through the prefactor
       if ( .not. so_capped ) then
         so_czj  = - so_al * 2.d0*Te0/sj_an / (so_Xc * sj_jsat)                        ! d(res)/dzj
-        so_crho =   so_al * 2.d0*Te0/sj_an * eq_g(mp,var_zj,ms) / (so_Xc * sj_jsat * r0)   ! through j_sat ~ rho
+        so_crho =   so_al * 2.d0*Te0/sj_an * eq_g(mp,var_zj,ms) / (so_Xc * sj_jsat * r0_corr) * dcorr_neg_dens_drho(r0)   ! through j_sat ~ rho_corr
         so_ccs  =   so_al * 2.d0*Te0/sj_an * eq_g(mp,var_zj,ms) / (so_Xc * sj_jsat * cs0)  ! through j_sat ~ cs, times cs_T
       endif
       so_w = Zbig * dl
@@ -637,7 +642,7 @@ do ms=1, n_gauss
 
                   ! --- Current-slot form: exact columns of zj - j_sat*f
                   amat(var_zj,var_zj)  =   v * sc_w * psi          ! amat is assigned per (k,l,in), never accumulated
-                  amat(var_zj,var_rho) = - v * sc_w * sj_csat * normal_sign * cs0 / Btot * sc_f * rho
+                  amat(var_zj,var_rho) = - v * sc_w * sj_csat * normal_sign * cs0 / Btot * sc_f * sc_drc * rho
                   amat(var_zj,var_u)   = - v * sc_w * sj_jsat * sc_dfdu * psi
                   if (with_TiTe) then
                     amat(var_zj,var_Ti)  = - v * sc_w * sj_csat * r0 * normal_sign / Btot * sc_f * cs_Ti

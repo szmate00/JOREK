@@ -145,6 +145,19 @@ contains
     real*8, intent(in) :: t
     c=max(t,1.d-10)
   end function
+  real*8 function dcorr_neg_dens_drho(t) result(c)
+    real*8, intent(in) :: t
+    c=1.d0
+    if (t<1.d-10) c=0.d0
+  end function
+  real*8 function dcorr_neg_temp_dT(t) result(c)
+    use phys_module, only: T_min_neg, corr_neg_temp_coef
+    real*8, intent(in) :: t
+    real*8 :: knee
+    knee=T_min_neg*sum(corr_neg_temp_coef)
+    c=1.d0
+    if (t<knee) c=exp((t-knee)/(T_min_neg*corr_neg_temp_coef(2)))
+  end function
 end module
 module diffusivities
 contains
