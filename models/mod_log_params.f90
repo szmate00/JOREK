@@ -883,6 +883,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,LOGI_FMT) 'sheath_j_float_u      ', sheath_j_float_u
     write(*,REAL_FMT) 'sheath_j_ramp_time    ', sheath_j_ramp_time
     write(*,LOGI_FMT) 'sheath_j_current_row  ', sheath_j_current_row
+    write(*,REAL_FMT) 'sheath_j_ion_slope    ', sheath_j_ion_slope
   end if
   write(*,LOGI_FMT) 'deuterium_adas        ', deuterium_adas       
   write(*,LOGI_FMT) 'old_deuterium_atomic  ', old_deuterium_atomic

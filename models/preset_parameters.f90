@@ -101,6 +101,7 @@ subroutine preset_parameters
   sheath_j_float_u      = .false. ! sheath_j with the floating row kept on u: measures the wall current the plasma delivers
   sheath_j_ramp_time    = 0.d0    ! ramp of the sheath row's current dependence: 0 = over the timestep ramp, <0 = none
   sheath_j_current_row  = .false. ! .true.: zj row = characteristic, u row = vorticity equation (old weak-trace structure)
+  sheath_j_ion_slope    = 0.d0    ! ion-branch slope of the characteristic (the 3900-step run of the old route had 0.03)
   Vpar_smoothing        = .false. ! smooth the transitions of Vpar positive/negavtive at B.n
   Vpar_smoothing_coef   = (/0.01d0, 0.d0, 0.d0 /) !(/ 0.01d0, 0.016d0, 0.00575446347d0/)
   min_sheath_angle      = 1.d0   ! 1 degree (not in radians)

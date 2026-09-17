@@ -114,3 +114,10 @@ zj = j_sat*(1 - exp(x)) IS the zj row at the wall (weight one, electron saturati
 is left to the vorticity equation. No surface term, no potential row. Restored 2026-09-16 for the
 type-1-only comparison; the earlier runs of this structure here all included types 4 and 9, which the
 old branch found to fail within 4-8 steps on their own, so it was never tested fairly.
+
+`sheath_j_ion_slope` (default 0): finite slope of the ion-saturation branch in the current-slot form,
+f = 1 - exp(x) - s*x for x < 0. With a hard saturation the characteristic has no voltage root wherever
+the plasma delivers j >= j_sat, and the vorticity row drives Phi to infinity there (measured, type 1
+alone, no use_sc: Phi max 234 -> 683 -> 2600 V at the outer target over 178 steps while the current
+stayed inside [-7, +1] j_sat). The old route's 3900-step run had sat_slope = 0.03; physically it is the
+sheath-expansion slope of a Langmuir-probe I-V curve in ion saturation.

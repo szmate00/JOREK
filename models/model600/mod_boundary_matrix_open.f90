@@ -447,12 +447,20 @@ do ms=1, n_gauss
     ! --- equation. The structure of the old weak-trace route that ran ~3900 steps on type 1 alone.
     sc_w = 0.d0 ; sc_x = 0.d0 ; sc_ex = 1.d0 ; sc_f = 0.d0 ; sc_dfdu = 0.d0 ; sc_dfdTe = 0.d0 ; sc_res = 0.d0
     if ( sj_here .and. sheath_j_current_row ) then
+      ! --- Ion branch (x < 0, Phi above floating): f = 1 - exp(x) - s*x with s = sheath_j_ion_slope, the
+      ! --- finite slope of ion saturation (sheath expansion). With s = 0 the characteristic has no voltage
+      ! --- root wherever the plasma delivers j >= j_sat, and the vorticity row then drives Phi to infinity
+      ! --- there (measured: 234 -> 683 -> 2600 V at the outer target in 178 steps).
       sc_x     = sheath_Lambda - sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*Te0)
       sc_ex    = exp( min(sc_x, sheath_Lambda) )
-      sc_f     = 1.d0 - sc_ex
+      sc_f     = 1.d0 - sc_ex - sheath_j_ion_slope * min(sc_x, 0.d0)
       if ( sc_x .lt. sheath_Lambda ) then
         sc_dfdu  =   sc_ex * sj_an / (2.d0*Te0)
         sc_dfdTe = - sc_ex * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*Te0**2)
+      endif
+      if ( sc_x .lt. 0.d0 ) then                                      ! d(-s*x)/du and /dTe
+        sc_dfdu  = sc_dfdu  + sheath_j_ion_slope * sj_an / (2.d0*Te0)
+        sc_dfdTe = sc_dfdTe - sheath_j_ion_slope * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*Te0**2)
       endif
       sc_res   = eq_g(mp,var_zj,ms) - sj_jsat * sc_f
       sc_w     = Zbig * dl

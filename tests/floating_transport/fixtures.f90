@@ -36,6 +36,7 @@ module phys_module
   logical :: mach1_weak_drift_cut=.false., mach1_weak_cut=.false., mach1_weak_inflow=.true., sheath_j_float_u=.false.
   real*8  :: sheath_j_ramp_time=-1.d0, t_now=0.d0, tstep_n(7)=0.d0
   logical :: sheath_j_current_row=.false.
+  real*8  :: sheath_j_ion_slope=0.d0
   integer :: nstep_n(7)=0
   real*8  :: vpar_smoothing_coef(3)=[0.02d0,0.016d0,0.005754d0]
   real*8  :: density_reflection=0.d0, neutral_reflection=0.d0, visco_par_heating=0.d0
