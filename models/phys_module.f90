@@ -38,6 +38,8 @@ module phys_module
   real*8  :: Q_bar                !< (model400)
   real*8  :: sigma                !< (model400)
   real*8  :: tauIC                !< Scaling factor for diamagnetic terms (see [[diamag|diamagnetic]])
+  logical :: thermoelectric_ohm   !< Thermal force in Ohm's law: E_par gains -0.71*grad_par(Te)/e (Braginskii, Z = 1), same normalisation as the tauIC electron-pressure term (model600)
+  real*8  :: thermoelectric_coef  !< Coefficient of the thermal force; 0.71 for Z = 1 (Braginskii), 0.9 for Z = 2, 1.5 for Z -> infinity
   real*8  :: tauIC_nominal        !< Nominal scaling factor (considering Ti=Te) for diamagnetic terms (see [[diamag|diamagnetic]])
   real*8  :: eta_spitzer          !< Spitzer resistivity in the core (considering main ion charge Z=1, effective ion charge Zeff=1)
   real*8  :: lnA_center           !< Coulomb logarithm in the core (used for the resistivity function)

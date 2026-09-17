@@ -61,6 +61,7 @@ real*8     :: Bgrad_rho_k_star, Bgrad_T_k_star, Bgrad_Ti_Ti_n, Bgrad_Te_Te_n, Bg
 real*8     :: Bgrad_rhoimp, Bgrad_rhoimp_psi, Bgrad_rhoimp_rhoimp, Bgrad_rhoimp_rhoimp_n
 real*8     :: ZK_par_T, dZK_par_dT, ZKi_par_T, dZKi_par_dT, ZKe_par_T, dZKe_par_dT
 real*8     :: D_prof, D_par_local, ZK_prof, ZKi_prof, ZKe_prof, psi_norm, theta, zeta, delta_u_x, delta_u_y, delta_ps_x, delta_ps_y
+real*8     :: thc              ! thermal-force coefficient in Ohm's law (thermoelectric_ohm), 0 when off
 real*8     :: D_prof_imp, D_par_local_imp
 real*8     :: V_prof_pinch, psi_grad2
 real*8, dimension(0:n_var)         :: rhs_ij, rhs_ij_k
@@ -283,6 +284,13 @@ theta = time_evol_theta
 !zeta  = time_evol_zeta
 ! change zeta for variable dt
 zeta  = time_evol_zeta * 2.0d0 * tstep / (tstep + tstep_prev)
+
+! --- Thermal force in Ohm's law: E_par gains -thc*grad_par(Te)/e. Written as the tauIC electron-pressure
+! --- term with Pe/r0 -> thc*Te, so the operator, normalisation and Jacobian structure are the same and the
+! --- density gradient drops out (Braginskii; thc = 0.71 for Z = 1). Onsager's partner, 0.71*Te*j_par/e in
+! --- the electron heat flux, is NOT included.
+thc = 0.d0
+if ( thermoelectric_ohm ) thc = thermoelectric_coef
 
 ! --- Do we need to use the FFT or non-FFT version?
 if ( (i_tor_min == 1) .and. (i_tor_max == n_tor) ) then
@@ -1555,6 +1563,8 @@ do i=1,n_vertex_max
 
                       - v * tauIC*2./(r0_corr*BB2) * F0**2/BigR**2 * (ps0_s * Pe0_t - ps0_t * Pe0_s) * tstep * factor(var_psi,4) &
                       + v * tauIC*2./(r0_corr*BB2) * F0**3/BigR**3 * Pe0_p                    * xjac * tstep * factor(var_psi,4) &
+                      - v * tauIC*2.*thc/BB2 * F0**2/BigR**2 * (ps0_s * Te0_t - ps0_t * Te0_s)      * tstep * factor(var_psi,4) &
+                      + v * tauIC*2.*thc/BB2 * F0**3/BigR**3 * Te0_p                         * xjac * tstep * factor(var_psi,4) &
 
                       + zeta * v * delta_g(mp,var_psi,ms,mt) / BigR                           * xjac * factor(var_psi,5)         &
 
@@ -2389,7 +2399,10 @@ do i=1,n_vertex_max
                                                                                                                    
                      + v * tauIC*2./(r0_corr*BB2) * F0**2/BigR**2 * (psi_s * Pe0_t - psi_t * Pe0_s)                 * theta * tstep &
                      - v * tauIC*2./(r0_corr*BB2**2) * BB2_psi * F0**2/BigR**2 * (ps0_x*Pe0_y - ps0_y*Pe0_x) * xjac * theta * tstep &
-                     + v * tauIC*2./(r0_corr*BB2**2) * BB2_psi * F0**3/BigR**3 * Pe0_p                       * xjac * theta * tstep
+                     + v * tauIC*2./(r0_corr*BB2**2) * BB2_psi * F0**3/BigR**3 * Pe0_p                       * xjac * theta * tstep &
+                     + v * tauIC*2.*thc/BB2 * F0**2/BigR**2 * (psi_s * Te0_t - psi_t * Te0_s)                       * theta * tstep &
+                     - v * tauIC*2.*thc/BB2**2 * BB2_psi * F0**2/BigR**2 * (ps0_x*Te0_y - ps0_y*Te0_x)       * xjac * theta * tstep &
+                     + v * tauIC*2.*thc/BB2**2 * BB2_psi * F0**3/BigR**3 * Te0_p                             * xjac * theta * tstep
                                                                                                              
                   amat(var_psi,var_u) = -  v * (ps0_s * u_t - ps0_t * u_s)                                          * theta * tstep
                                                                                                                     
@@ -2415,9 +2428,11 @@ do i=1,n_vertex_max
                                    - deta_num_dT * Te * (v_x * zj0_x + v_y * zj0_y)              * xjac          * theta * tstep &
                               + v * tauIC*2./(r0_corr*BB2) * F0**2/BigR**2 * r0 * (ps0_s * Te_t  - ps0_t * Te_s) * theta * tstep &
                               + v * tauIC*2./(r0_corr*BB2) * F0**2/BigR**2 * Te * (ps0_s * r0_t - ps0_t * r0_s)  * theta * tstep &
-                              - v * tauIC*2./(r0_corr*BB2) * F0**3/BigR**3 * Te * r0_p * xjac                    * theta * tstep
+                              - v * tauIC*2./(r0_corr*BB2) * F0**3/BigR**3 * Te * r0_p * xjac                    * theta * tstep &
+                              + v * tauIC*2.*thc/BB2 * F0**2/BigR**2 * (ps0_s * Te_t  - ps0_t * Te_s)             * theta * tstep
 
-                    amat_n(var_psi,var_Te) = - v * tauIC*2./(r0_corr*BB2) * F0**3/BigR**3 * r0 * Te_p     * xjac * theta * tstep
+                    amat_n(var_psi,var_Te) = - v * tauIC*2./(r0_corr*BB2) * F0**3/BigR**3 * r0 * Te_p     * xjac * theta * tstep &
+                                             - v * tauIC*2.*thc/BB2 * F0**3/BigR**3 * Te_p                * xjac * theta * tstep
                   else ! (with_TiTe = .f.), i.e. with single temperature *********************************
                     amat(var_psi,var_T) = - deta_dT * v * T * (zj0-current_source(ms,mt)-Jb-aux_jre_ind)/ BigR    * xjac * theta * tstep & !> aux_jre_ind from rep coupling
 
@@ -2425,9 +2440,11 @@ do i=1,n_vertex_max
 
                               + v * tauIC/(r0_corr*BB2) * F0**2/BigR**2 * r0 * (ps0_s * T_t  - ps0_t * T_s)   * theta * tstep &
                               + v * tauIC/(r0_corr*BB2) * F0**2/BigR**2 * T  * (ps0_s * r0_t - ps0_t * r0_s)  * theta * tstep &
-                              - v * tauIC/(r0_corr*BB2) * F0**3/BigR**3 * T  * r0_p                    * xjac * theta * tstep
+                              - v * tauIC/(r0_corr*BB2) * F0**3/BigR**3 * T  * r0_p                    * xjac * theta * tstep &
+                              + v * tauIC*thc/BB2 * F0**2/BigR**2 * (ps0_s * T_t  - ps0_t * T_s)              * theta * tstep
 
-                    amat_n(var_psi,var_T) = - v * tauIC/(r0_corr*BB2) * F0**3/BigR**3 * r0 * T_p       * xjac * theta * tstep
+                    amat_n(var_psi,var_T) = - v * tauIC/(r0_corr*BB2) * F0**3/BigR**3 * r0 * T_p       * xjac * theta * tstep &
+                                            - v * tauIC*thc/BB2 * F0**3/BigR**3 * T_p                   * xjac * theta * tstep
                   end if ! (with_TiTe) *************************************************************
 
                   if (with_impurities) then
