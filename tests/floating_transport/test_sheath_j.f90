@@ -235,6 +235,31 @@ program test_sheath_j
   enddo
   sheath_j_ion_slope = 0.d0
   write(*,'(a,es9.2)') ' PASS: ion-branch slope: every column matches FD on the ion side, worst rel err ', worst
+  ! --- beyond electron saturation with a finite slope: x > Lambda (u below the wall), FD the u and Te columns
+  sheath_j_e_slope = 0.03d0 ; base(:)%values(1,1,var_u) = -3.d0*ufl
+  nodes = base; call assemble(a, r)
+  worst = 0.d0
+  do i = 1, size(fd_vars)
+    var = fd_vars(i)
+    do row = 1, 2
+      do dof = 1, 4
+        col = n_var*4*(row-1) + n_var*(dof-1) + var
+        nodes = base; nodes(row)%values(1,dof,var) = nodes(row)%values(1,dof,var) + eps; call assemble(ap, rp)
+        nodes = base; nodes(row)%values(1,dof,var) = nodes(row)%values(1,dof,var) - eps; call assemble(am, rm)
+        do isgn = 1, nd
+          if ( .not. isvar(isgn, var_zj) ) cycle
+          err = abs( a(isgn,col) + (rp(isgn)-rm(isgn))/(2*eps) ) / max(1.d0, maxval(abs(a(:,col))))
+          worst = max(worst, err)
+          if ( err > 1.d-6 ) then
+            write(*,'(a,3i5,3es12.3)') ' FAIL: e-slope FD row,col,var,err,amat,fd', isgn, col, var, err, a(isgn,col), -(rp(isgn)-rm(isgn))/(2*eps)
+            error stop 1
+          endif
+        enddo
+      enddo
+    enddo
+  enddo
+  sheath_j_e_slope = 0.d0
+  write(*,'(a,es9.2)') ' PASS: electron-saturation slope: every column matches FD beyond the cap, worst rel err ', worst
   sheath_j_current_row = .false. ; base(:)%values(1,1,var_zj) = 0.d0 ; base(:)%values(1,1,var_u) = ufl
 
   ! ---------------------------------------------------------------- 5. sign of the saturation current

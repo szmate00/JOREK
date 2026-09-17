@@ -121,3 +121,10 @@ the plasma delivers j >= j_sat, and the vorticity row drives Phi to infinity the
 alone, no use_sc: Phi max 234 -> 683 -> 2600 V at the outer target over 178 steps while the current
 stayed inside [-7, +1] j_sat). The old route's 3900-step run had sat_slope = 0.03; physically it is the
 sheath-expansion slope of a Langmuir-probe I-V curve in ion saturation.
+
+`sheath_j_e_slope` (default 0): the same beyond electron saturation, f = 1 - e^Lambda - s_e*(x - Lambda)
+for x > Lambda. Measured (type 1, no use_sc, no slopes): the run converged from its 2600 V transient to
+Phi 73-410 V and Inet/Isat +0.17 at 280, then at the outer target the plasma pushed j/j_sat = -26 against
+the cap's -19, Phi fell below the wall with no root, the ExB reached 6e5 m/s and rho went negative there;
+crash at 438. Both rails of a hard characteristic leave the potential unanchored wherever the plasma
+demands more than the sheath can pass.

@@ -462,6 +462,14 @@ do ms=1, n_gauss
         sc_dfdu  = sc_dfdu  + sheath_j_ion_slope * sj_an / (2.d0*Te0)
         sc_dfdTe = sc_dfdTe - sheath_j_ion_slope * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*Te0**2)
       endif
+      ! --- Beyond electron saturation (x > Lambda, Phi below the wall): f = 1 - e^Lambda - s_e*(x - Lambda),
+      ! --- so the row keeps a conductance where the plasma pushes more than the thermal electron flux
+      ! --- (measured: j/j_sat = -26 against the cap's -19 at the outer target, Phi then unanchored below 0).
+      if ( sc_x .gt. sheath_Lambda ) then
+        sc_f     = sc_f - sheath_j_e_slope * ( sc_x - sheath_Lambda )
+        sc_dfdu  = sc_dfdu  + sheath_j_e_slope * sj_an / (2.d0*Te0)
+        sc_dfdTe = sc_dfdTe - sheath_j_e_slope * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*Te0**2)
+      endif
       sc_res   = eq_g(mp,var_zj,ms) - sj_jsat * sc_f
       sc_w     = Zbig * dl
       so_capped = ( sc_x .ge. sheath_Lambda )
