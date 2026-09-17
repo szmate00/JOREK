@@ -176,3 +176,20 @@ last element's parallel-field mismatch at 1/eta. Kept instead: psi Dirichlet in 
 row dropped at the wall as always), zj = Delta*psi at the wall with the surface term oint v (dpsi/dn)/R dl
 restored, the weak potential-form sheath row on u. Options III and the row swap removed from the branch.
 Next: the measurement `sheath_j_float_u` (floating u, current by definition), then the sheath row.
+
+### Correction (2026-09-17): the current-slot form was eliminated on confounded evidence
+
+`sheath-jsat-vpar-38ab278`'s working route (`sheath_zj_weak`: zj row = Galerkin trace of the
+characteristic, u from the vorticity equation, psi/w Dirichlet, field-aligned weak Mach) is structurally
+the current-slot form. It ran ~3900 steps to timeout on type 1 alone (converged, I_sheath = I_Ampere to
+4 s.f.), 305 on 1+5, and died in 4-8 steps on types 4 and 9 whatever else was set. Every run of that
+form on sheath-j-clean had types 4 and 9 on, so "the continuity-set potential is not anchored" was drawn
+from the 4/9 corners, not from the form. Restored as `sheath_j_current_row`.
+
+Type 1 only, from the equilibrium at t = 0, no use_sc, marginal Bohm row, 10 steps: j/j_sat in
+[-1.9, +0.96] (every earlier attempt: 1e2-1e5), Phi 74-234 V against 3Te ~ 112 V (electron branch where
+the current flows in, above floating where it flows out), e-sat 0, Mach 1.00, D minima. The first sheath
+print of the campaign that is a sheath. Pending: 100/300/600/1200.
+
+Standing differences from the old route: exact trace-row replacement there vs Zbig penalty on the
+definition row here; use_sc = 10 there (this arm: none).
