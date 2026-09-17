@@ -886,6 +886,10 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,REAL_FMT) 'sheath_j_ion_slope    ', sheath_j_ion_slope
     write(*,REAL_FMT) 'sheath_j_e_slope      ', sheath_j_e_slope
   end if
+  write(*,LOGI_FMT) 'thermoelectric_ohm    ', thermoelectric_ohm
+  if ( thermoelectric_ohm ) then
+    write(*,REAL_FMT) 'thermoelectric_coef   ', thermoelectric_coef
+  end if
   write(*,LOGI_FMT) 'deuterium_adas        ', deuterium_adas       
   write(*,LOGI_FMT) 'old_deuterium_atomic  ', old_deuterium_atomic
   write(*,LOGI_FMT) 'deuterium_adas_1e20   ', deuterium_adas_1e20

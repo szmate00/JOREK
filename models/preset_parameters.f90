@@ -526,6 +526,8 @@ subroutine preset_parameters
   U_sheath = .false.
   renormalise = .false.
   tauIC = 0.d0
+  thermoelectric_ohm  = .false.   ! thermal force 0.71*grad_par(Te)/e in Ohm's law
+  thermoelectric_coef = 0.71d0    ! Braginskii, Z = 1
   Wdia  = .false.
 
   zjz_0 =  0.1173d0   

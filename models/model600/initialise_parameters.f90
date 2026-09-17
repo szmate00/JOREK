@@ -70,7 +70,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 mach1_weak_cut, mach1_weak_inflow,                  &
                 sheath_j_float_u, sheath_j_ramp_time,               &
                 sheath_j_current_row, sheath_j_ion_slope,           &
-                sheath_j_e_slope,                                   &
+                sheath_j_e_slope, thermoelectric_ohm, thermoelectric_coef, &
                 Vpar_smoothing,                                     &
                 Vpar_smoothing_coef,                                &
                 zjz_0, zjz_1, zj_coef,                              &
@@ -263,6 +263,10 @@ if (my_id .eq. 0) then
   ! --- Weak Bohm condition and floating-potential BC: validated combinations, not tuned ones
   if ( mach1_weak .and. ( mach_one_bnd_integral .or. (.not. with_vpar) ) ) then
     write(*,*) 'ERROR: mach1_weak needs with_vpar and excludes mach_one_bnd_integral, EXITING!'
+    stop
+  end if
+  if ( thermoelectric_ohm .and. tauIC .eq. 0.d0 ) then
+    write(*,*) 'ERROR: thermoelectric_ohm shares the normalisation of the tauIC electron-pressure term; set tauIC, EXITING!'
     stop
   end if
   if ( any(bcs(:)%sheath_j) ) then
