@@ -67,6 +67,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 density_reflection,                                 &
                 mach_one_bnd_integral, mach1_omit_drift,            &
                 wall_diag, wall_diag_every, wall_diag_profile_every,&
+                thermoelectric_ohm, thermoelectric_coef,          &
                 Vpar_smoothing,                                     &
                 Vpar_smoothing_coef,                                &
                 zjz_0, zjz_1, zj_coef,                              &
@@ -254,6 +255,12 @@ if (my_id .eq. 0) then
   else
     read(5,in1)
   endif
+
+  ! --- Thermal force in Ohm's law
+  if ( thermoelectric_ohm .and. tauIC .eq. 0.d0 ) then
+    write(*,*) 'ERROR: thermoelectric_ohm shares the normalisation of the tauIC electron-pressure term; set tauIC, EXITING!'
+    stop
+  end if
 
   ! --- Floating-potential BC
   if ( any(bcs(:)%floating_u) ) then
