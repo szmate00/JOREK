@@ -128,3 +128,13 @@ Phi 73-410 V and Inet/Isat +0.17 at 280, then at the outer target the plasma pus
 the cap's -19, Phi fell below the wall with no root, the ExB reached 6e5 m/s and rho went negative there;
 crash at 438. Both rails of a hard characteristic leave the potential unanchored wherever the plasma
 demands more than the sheath can pass.
+
+## Corner nodes: release per DOF (2026-09-18)
+
+A wall edge carries the sheath row if both endpoints are sheath types and the incidence along it is
+above the angle. At a node the VALUE DOF is released if any incident edge carries the row (the 4/9-corner
+lesson: a per-visit decision let one edge pin what the other released). A DERIVATIVE DOF is released
+only if an edge in its own direction carries the row; two collinear wall edges share the derivative DOF
+and either may release it. At a target/flux-surface corner (type 3 next to type 2) the flux-surface
+derivative therefore stays pinned to its floating value like the type-2 neighbours. Runs I and J
+(type 3 released wholesale) went to -19 kV at that node in one step; this is the fix.

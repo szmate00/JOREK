@@ -109,9 +109,8 @@ real*8  :: d2Mach1BC, d2Mach1BC_v, d2Mach1BC_T, d2Mach1BC_Tb, d2Mach1BC_Tbb
 integer :: node_indices( (n_order+1)/2, (n_order+1)/2 ), index_tmp, kk, ll
 real*8  :: fu_a_n, fu_C_T, fu_C_V, fu_target   ! floating-potential row: u = C_T*Te + C_V*V_wall
 integer :: fu_var_T                            ! temperature trace variable: Te, or T in a single-T build
-logical :: fu_row, sj_above                    ! floating row at this node; sheath model applies (|b.n| >= sin(min_sheath_angle))
-real*8  :: sj_bn                               ! |b.n| at the node, largest over its wall edges
-integer :: jdir, jv2
+logical :: sj_edge(2), sj_rel_val, sj_rel_der, sj_rel, fu_dof   ! sheath edge per direction; value / this visit's derivative released
+integer :: sj_ivd(2), jdir, jv2, jnb
 logical, parameter :: include_2nd_derivatives = .false.
 
 RMPspectrum: if (RMP_on .and. (n_tor .ge. 3)) then !*****
@@ -240,25 +239,39 @@ do i=1, n_local_elms !=== do elements
       ! --- sin(min_sheath_angle) the u rows carry the weak sheath row (potential form, in
       ! --- mod_boundary_matrix_open) and the zj rows keep the current definition zj = Delta*psi, completed
       ! --- by its surface term there; below it the floating row and Dirichlet zj. psi and w as always.
-      ! --- Decided PER NODE, not per visit: a corner node is visited along each of its wall edges, and
-      ! --- its rows must be released if the sheath model applies along any of them, or one visit would
-      ! --- pin what the other released (the frozen-corner defect). Static map: psi is Dirichlet on the wall.
-      sj_above = .false.
+      ! --- Decided PER DOF. A wall edge in direction jdir carries the sheath row if both its endpoints are
+      ! --- sheath types and the incidence along it is above the angle (sj_edge). The VALUE DOF is shared by
+      ! --- both directions and is released if any incident edge carries the row (or one visit would pin
+      ! --- what the other released: the 4/9-corner defect). A DERIVATIVE DOF belongs to one direction and
+      ! --- is released only if an edge in ITS direction carries the row; at a target/flux-surface corner
+      ! --- the flux-surface derivative therefore stays pinned like its type-2 neighbours (releasing it
+      ! --- left it to a vorticity row that cannot determine it: -19 kV in one step, runs I and J).
+      ! --- Two collinear wall edges share the same derivative DOF and either may release it.
+      ! --- Static map: psi is Dirichlet on the wall.
+      sj_edge = .false. ; sj_ivd = 0
       if ( bcs(bnd_type)%sheath_j ) then
-        sj_bn = 0.d0
         do jdir = 1, 2
           if ( jdir .eq. 1 ) then
             jv2 = mod(iv  ,4) + 1
           else
             jv2 = mod(iv+2,4) + 1
           endif
-          if ( node_list%node(element_list%element(ielm)%vertex(jv2))%boundary .eq. 0 ) cycle
-          sj_bn = max( sj_bn, node_incidence(jdir) )
+          jnb = element_list%element(ielm)%vertex(jv2)
+          if ( node_list%node(jnb)%boundary .eq. 0 ) cycle
+          if ( (iv*jv2 .eq. 2) .or. (iv*jv2 .eq. 12) ) then
+            sj_ivd(jdir) = 2
+          else
+            sj_ivd(jdir) = 3
+          endif
+          sj_edge(jdir) = bcs(node_list%node(jnb)%boundary)%sheath_j .and. &
+                          ( node_incidence(jdir) .ge. sin(min_sheath_angle*PI/180.d0) )
         enddo
-        sj_above = ( sj_bn .ge. sin(min_sheath_angle*PI/180.d0) )
       endif
-      fu_row = bcs(bnd_type)%floating_u .or. ( bcs(bnd_type)%sheath_j .and. .not. sj_above ) &
-               .or. ( bcs(bnd_type)%sheath_j .and. sheath_j_float_u )                   ! measurement: floating u, free current
+      sj_rel_val = any(sj_edge)
+      sj_rel_der = .false.
+      do jdir = 1, 2
+        if ( sj_edge(jdir) .and. (sj_ivd(jdir) .eq. iv_dir) ) sj_rel_der = .true.
+      enddo
 
       do in=a_mat%i_tor_min, a_mat%i_tor_max  ! === do n_tor
       
@@ -367,8 +380,6 @@ do i=1, n_local_elms !=== do elements
             ! --- If special conditions apply (e.g. freeboundary, mach1), do not apply Dirichlet even if specified in the namelist
             if ( (k==var_psi  ) .and. (.not. apply_psi_BC    ) )       cycle
             if ( (k==var_zj   ) .and. (.not. apply_current_BC) )       cycle
-            if ( (k==var_zj   ) .and. sj_above ) cycle                          ! current definition + surface term owns zj
-            if ( (k==var_u    ) .and. sj_above .and. (.not. sheath_j_float_u) ) cycle   ! weak sheath row owns u
 
             if ( (k==var_vpar ) .and.  apply_cs .and. (bnd_type/=3)  ) cycle  ! vpar=cs is a special case (this is done below)
                                                                               ! however bnd_type=3 needs both BCs for different directions
@@ -384,13 +395,29 @@ do i=1, n_local_elms !=== do elements
                 if ( (iv_dir .eq. 2) .and. (ll .gt. 1) ) cycle ! do only s-derivatives and node value
                 index_tmp = node_indices(kk,ll)
                 index_node = node_list%node(inode)%index(index_tmp)
+
+                ! --- Sheath BC: this DOF's u and zj rows are owned by the weak rows / the vorticity equation
+                ! --- if released (value: any sheath edge at the node; derivative: a sheath edge in its direction)
+                sj_rel = .false.
+                if ( index_tmp .eq. 1 ) then
+                  sj_rel = sj_rel_val
+                else
+                  sj_rel = sj_rel_der
+                endif
+                if ( (k == var_zj) .and. sj_rel ) cycle
+                if ( (k == var_u ) .and. sj_rel .and. (.not. sheath_j_float_u) ) cycle
+
                 call boundary_conditions_add_one_entry(                 &
                        index_node, k, in, index_node, k, in,            &
                        zbig, index_min, index_max, a_mat)
 
-                ! --- Floating potential: u = C_T*Te + C_V*V_wall on every u trace DOF. The Te
-                ! --- column and the RHS make the row exact; V_wall enters the n=0 value DOF only.
-                if ( (k == var_u) .and. fu_row ) then
+                ! --- Floating potential: u = C_T*Te + C_V*V_wall on every u trace DOF the floating BC owns,
+                ! --- and on the u DOFs of a sheath type that are NOT released (below the angle, or a
+                ! --- derivative along a non-sheath edge). The Te column and the RHS make the row exact;
+                ! --- V_wall enters the n=0 value DOF only.
+                fu_dof = bcs(bnd_type)%floating_u .or. ( bcs(bnd_type)%sheath_j .and. .not. sj_rel ) &
+                         .or. ( bcs(bnd_type)%sheath_j .and. sheath_j_float_u )
+                if ( (k == var_u) .and. fu_dof ) then
                   fu_target = fu_C_T * node_list%node(inode)%values(in, index_tmp, fu_var_T)
                   if ( (index_tmp .eq. 1) .and. (in .eq. 1) ) fu_target = fu_target + fu_C_V * sheath_V_wall
                   call boundary_conditions_add_one_entry(                        &
