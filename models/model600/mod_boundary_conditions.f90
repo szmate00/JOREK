@@ -37,7 +37,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        RMP_start_time, tstep, RMP_har_cos, RMP_har_sin, T_min,                                             &
        mach_one_bnd_integral, mach1_weak, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,                &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
-       bcs, loop_voltage, central_density, central_mass, sheath_V_wall 
+       bcs, loop_voltage, central_density, central_mass, sheath_V_wall, min_sheath_angle, mach1_drift_cut 
 use mod_floating_u, only: floating_u_norm
 use tr_module
 use mpi_mod
@@ -106,6 +106,7 @@ real*8  :: d2Mach1BC, d2Mach1BC_v, d2Mach1BC_T, d2Mach1BC_Tb, d2Mach1BC_Tbb
 
 integer :: node_indices( (n_order+1)/2, (n_order+1)/2 ), index_tmp, kk, ll
 real*8  :: fu_a_n, fu_C_T, fu_C_V, fu_target   ! floating-potential row: u = C_T*Te + C_V*V_wall
+real*8  :: m1_drift                            ! 1: nodal Mach1 drift term on; 0: cut below the grazing angle (mach1_drift_cut)
 integer :: fu_var_T                            ! temperature trace variable: Te, or T in a single-T build
 logical, parameter :: include_2nd_derivatives = .false.
 
@@ -563,10 +564,15 @@ do i=1, n_local_elms !=== do elements
           cs0_TT   = - 0.25d0 * gamma**2 / cs0**3 
           cs0_TTT  = 3.d0/8.d0* gamma**3 / cs0**5 
 
-          Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0               + factor / Btot * BigR**2 * U0_b/ps0_b 
+          ! --- mach1_drift_cut: the ExB compensation R^2*u_b/psi_b divides by psi_b ~ B.n and is dropped where the
+          ! --- field grazes, |b.n| < sin(min_sheath_angle); Vpar = +-cs/|B| there (nodal analogue of mach1_weak_drift_cut).
+          m1_drift = 1.d0
+          if ( mach1_drift_cut .and. abs(bn) .lt. sin(min_sheath_angle*PI/180.d0) ) m1_drift = 0.d0
+
+          Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0               + m1_drift * factor / Btot * BigR**2 * U0_b/ps0_b 
           Mach1BC_v   = - 1.0
           Mach1BC_T   =           + direction / Btot * factor  * cs0_T 
-          Mach1BC_u   =                                                            + factor / Btot * BigR**2 * element_size_0/ps0_b 
+          Mach1BC_u   =                                                            + m1_drift * factor / Btot * BigR**2 * element_size_0/ps0_b 
           dMach1BC    = - Vpar0_b + direction / Btot * factor  * cs0_T * (Ti0_b+Te0_b)  &
                                   + direction / Btot * Hfact_b * cs0         
           dMach1BC_v  = - element_size_0
@@ -580,8 +586,8 @@ do i=1, n_local_elms !=== do elements
 
 
           if (n_order .ge. 5) then
-            dMach1BC     = dMach1BC + factor / Btot * BigR**2 * U0_bb/ps0_b
-            dMach1BC_ubb = + factor / Btot * BigR**2 * element_size_3/ps0_b
+            dMach1BC     = dMach1BC + m1_drift * factor / Btot * BigR**2 * U0_bb/ps0_b
+            dMach1BC_ubb = + m1_drift * factor / Btot * BigR**2 * element_size_3/ps0_b
             d2Mach1BC    = - Vpar0_bb + direction / Btot * factor   * cs0_TT * (Ti0_b+Te0_b)**2   &
                                       + direction / Btot * factor   * cs0_T  * (Ti0_bb+Te0_bb)   !&
                                       !+ direction / Btot * Hfact_b  * cs0_T  * T0_b *2.0 !&

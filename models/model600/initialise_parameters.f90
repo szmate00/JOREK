@@ -67,7 +67,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 density_reflection,                                 &
                 mach_one_bnd_integral, mach1_weak, mach1_weak_drift,&
                 mach1_weak_drift_bound, mach1_weak_drift_cut,       &
-                mach1_weak_cut, mach1_weak_inflow,                  &
+                mach1_weak_cut, mach1_weak_inflow, mach1_drift_cut, &
                 Vpar_smoothing,                                     &
                 Vpar_smoothing_coef,                                &
                 zjz_0, zjz_1, zj_coef,                              &
@@ -264,8 +264,8 @@ if (my_id .eq. 0) then
   end if
   if ( any(bcs(:)%floating_u) ) then
     if ( .not. mach1_weak ) then
-      write(*,*) 'ERROR: bcs%floating_u requires mach1_weak (the nodal Mach row cannot take a wall potential that varies along the wall), EXITING!'
-      stop
+      write(*,*) 'WARNING: bcs%floating_u with the NODAL Mach1 row: its drift term divides by psi_b and sits in the'
+      write(*,*) '         value row only; mach1_drift_cut removes it below the grazing angle. Test configuration.'
     end if
     if ( any(bcs(:)%floating_u .and. .not. bcs(:)%dirichlet%u) ) then
       write(*,*) 'ERROR: bcs%floating_u replaces the Dirichlet u rows, so dirichlet%u must stay .true. on those types, EXITING!'
