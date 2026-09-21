@@ -7,8 +7,8 @@ Branch `floating-u-clean-pr` into `develop`. One commit, 13 files, +523/-33.
 Adds a floating-potential boundary condition on the electrostatic potential at material walls,
 `Phi - V_wall = Lambda*Te/e`, together with the wall treatment it needs to run out of the box: a weak
 (Galerkin) Bohm condition on the parallel velocity that survives a wall potential varying along the
-target, one consistent total normal flow in the sheath particle and energy fluxes and in the kinetic
-recycling, and an exterior-side filter for the open-boundary integral. Default namelist otherwise;
+target, one consistent total normal flow in the sheath particle and energy fluxes, and an
+exterior-side filter for the open-boundary integral. Default namelist otherwise;
 no stabiliser, no floor, no clip. Everything is off unless `bcs(i)%floating_u` is set; develop runs are
 bit-for-bit unchanged.
 
@@ -42,26 +42,19 @@ with the potential floating on all five wall types, drift-compensating Bohm cond
    value row only, divided by psi_b; it is dormant while u is constant along the wall and cannot take a
    wall potential that varies along it. `floating_u` therefore requires `mach1_weak` (checked at setup).
 
-3. **One total normal flow at the wall** (`mod_boundary_matrix_open.f90`, `mod_particle_wall_interaction.f90`,
-   `mod_fields.f90`). Under `mach1_weak` the sheath energy transmission and the density reflection terms
-   use the total outgoing normal flow `max(Vpar*(B_pol.n) + vE.n, 0)` instead of the parallel part alone,
-   with exact u, Vpar and psi columns; a face the plasma flows away from collects nothing beyond the
-   grazing-incidence floor. The kinetic recycling flux uses the same total flow; `calc_EBpsiU` returns the
-   fluid ExB velocity `R grad(u) x e_phi` as an optional trailing argument (existing callers unchanged).
-   Off the weak route all expressions are unchanged.
+3. **One total normal flow at the wall** (`mod_boundary_matrix_open.f90`). Under `mach1_weak` the sheath
+   energy transmission and the density reflection terms use the total outgoing normal flow
+   `max(Vpar*(B_pol.n) + vE.n, 0)` instead of the parallel part alone, with exact u, Vpar and psi columns;
+   a face the plasma flows away from collects nothing beyond the grazing-incidence floor. Off the weak
+   route all expressions are unchanged. The kinetic recycling flux still uses the parallel part alone:
+   the particle side is left untouched here and will be adapted after PR #32 (which rewrites that call
+   site and the `calc_NeTevpar` temperature normalisation) is merged.
 
 4. **Exterior sides only** (`mod_boundary_edges.f90`, `construct_matrix_mod.f90`). The open-boundary
    integral was applied to every element side whose two endpoints carry a boundary label; such a side can
    be interior. A connectivity table (a side is exterior iff exactly one element owns it, nodes identified
    by their value-DOF index) is built once per matrix construction when `mach1_weak` or a floating type is
    active, and interior sides are skipped. Conforming unrefined meshes only (aborts otherwise).
-
-## Fixes
-
-5. **`calc_NeTevpar` electron temperature** (`mod_fields.f90`). In a two-temperature model600 build the
-   kinetic recycling projection read the ion temperature and applied the single-temperature halving;
-   it now reads Te itself, T/2 in a single-temperature build. Affects only kinetic-neutral runs on
-   model600 with `with_TiTe`.
 
 ## Files
 
@@ -74,8 +67,6 @@ with the potential floating on all five wall types, drift-compensating Bohm cond
 | `matrix/construct_matrix_mod.f90` | build the exterior-side table per construction; skip interior sides in the side loop (model600 only) |
 | `models/model600/initialise_parameters.f90` | namelist entries; setup checks (`mach1_weak` needs `with_vpar`, excludes `mach_one_bnd_integral`; `floating_u` needs `mach1_weak` and `dirichlet%u`); self-test call |
 | `models/phys_module.f90`, `models/preset_parameters.f90`, `models/mod_log_params.f90`, `communication/broadcast_phys.f90` | the five parameters and `bcs%floating_u`: declaration, defaults, log, MPI broadcast |
-| `particles/mod_fields.f90` | optional `v_ExB` output of `calc_EBpsiU`; `calc_NeTevpar` Te fix |
-| `particles/mod_particle_wall_interaction.f90` | recycling flux on the total outgoing normal flow under `mach1_weak` |
 | `doc/floating_u.md` | one-page description, namelist, conventions |
 
 ## Namelist of the reference run
