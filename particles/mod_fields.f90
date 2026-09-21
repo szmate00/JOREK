@@ -85,7 +85,7 @@ module mod_fields
 contains
 !> Calculates the electric and magnetic fields at a specific position
 !> in the jorek element `i_elm` at `st`.
-subroutine calc_EBpsiU(fields, time, i_elm, st, phi, E, B, psi, U)
+subroutine calc_EBpsiU(fields, time, i_elm, st, phi, E, B, psi, U, v_ExB)
   use phys_module, only: F0, mode, central_mass, central_density
   use constants, only: mu_zero, atomic_mass_unit
   use mod_coordinate_transforms, only: transform_derivatives_st_to_RZ
@@ -100,6 +100,9 @@ subroutine calc_EBpsiU(fields, time, i_elm, st, phi, E, B, psi, U)
   real*8, intent(out) :: B(3) !< Magnetic field [T]
   real*8, intent(out) :: psi !< psi in JOREK units
   real*8, intent(out) :: u !< velocity stream function in m/s
+  !> Poloidal ExB velocity the FLUID advects with, v = R grad(u) x e_phi = (-R*u_Z, +R*u_R, 0) [m/s].
+  !> Not E x B/|B|^2: E also carries the inductive part, which the reduced-MHD flow does not.
+  real*8, intent(out), optional :: v_ExB(3)
 
   ! Internal parameters
 #ifdef fullmhd
@@ -194,6 +197,7 @@ subroutine calc_EBpsiU(fields, time, i_elm, st, phi, E, B, psi, U)
   ! See http://jorek.eu/wiki/doku.php?id=u_phi
   E     = [-F0*U_R, -F0*U_Z, -F0*U_phi*R_inv]/t_norm
   E(3)  = E(3) - R_inv*P_time(1) ! because this is not normalized with t_norm
+  if ( present(v_ExB) ) v_ExB = [ -R*U_Z, R*U_R, 0.d0 ] / t_norm
 #endif
 
 #endif
@@ -371,6 +375,9 @@ end subroutine calc_NeTeTi
 
 subroutine calc_NeTevpar(fields, time, i_elm, st, phi, n_e, T_e, vpar, grad_T_e)
   use phys_module, only: central_density, central_mass
+#if (JOREK_MODEL == 600)
+  use mod_parameters, only: var_rho, var_T, var_Te, var_vpar, with_TiTe
+#endif
   use constants
   class(fields_base), intent(in)                    :: fields
   integer, intent(in)                               :: i_elm
@@ -389,6 +396,13 @@ subroutine calc_NeTevpar(fields, time, i_elm, st, phi, n_e, T_e, vpar, grad_T_e)
 #if (JOREK_MODEL == 400)
   ! electron temperature
   call fields%interp_PRZ(time,i_elm,[5,8,7],3,st(1),st(2),phi,P,P_s,P_t,P_phi,P_time,R,R_s,R_t,Z,Z_s,Z_t)
+#elif (JOREK_MODEL == 600)
+  ! electron temperature: Te itself in a two-temperature build, T = Ti + Te otherwise
+  if ( with_TiTe ) then
+    call fields%interp_PRZ(time,i_elm,[var_rho,var_Te,var_vpar],3,st(1),st(2),phi,P,P_s,P_t,P_phi,P_time,R,R_s,R_t,Z,Z_s,Z_t)
+  else
+    call fields%interp_PRZ(time,i_elm,[var_rho,var_T ,var_vpar],3,st(1),st(2),phi,P,P_s,P_t,P_phi,P_time,R,R_s,R_t,Z,Z_s,Z_t)
+  endif
 #else
   ! electron temperature + ion temperature (assumed equal)
   call fields%interp_PRZ(time,i_elm,[5,6,7],3,st(1),st(2),phi,P,P_s,P_t,P_phi,P_time,R,R_s,R_t,Z,Z_s,Z_t)
@@ -398,6 +412,8 @@ subroutine calc_NeTevpar(fields, time, i_elm, st, phi, n_e, T_e, vpar, grad_T_e)
   T_norm = (1.d0/K_BOLTZ/(2.d0*MU_ZERO*central_density*1.d20))
 #if (JOREK_MODEL == 400)
   T_norm = T_norm*2.d0 ! P(1) contains the electron temperature, reverse previous correction
+#elif (JOREK_MODEL == 600)
+  if ( with_TiTe ) T_norm = T_norm*2.d0 ! P(2) is Te itself, not T = Ti + Te
 #endif
   T_e = max(P(2)*T_norm, 1.d0) ! temperature capped against going negative
 

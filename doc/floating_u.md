@@ -50,8 +50,9 @@ sheath_Lambda        = 3.d0
    demands an unbounded parallel flow (Mach 400 measured); a smooth 2cs bound failed at the same wall;
    leaving Vpar free there runs away within tens of steps. All measured on this case.
 3. **One total normal flow** `max(Vpar*(B_pol.n) + vE.n, 0)` in the sheath energy transmission and density
-   reflection rows (exact u, Vpar, psi columns). Off the weak route the expressions are unchanged. The
-   kinetic recycling flux is not changed here (to follow once upstream PR #32 is merged).
+   reflection rows (exact u, Vpar, psi columns) and in the kinetic recycling flux, on the outward normal
+   (`calc_EBpsiU` returns the fluid ExB velocity `R grad(u) x e_phi`). Off the weak route the expressions
+   are unchanged. `calc_NeTevpar` now reads Te itself in a two-temperature model600 build (it read Ti/2).
 4. **Exterior sides only** (`mod_boundary_edges.f90`): the open-boundary integral is skipped on interior
    sides with two labelled endpoints (table from connectivity, once per matrix construction).
 
