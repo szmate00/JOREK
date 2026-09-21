@@ -227,7 +227,7 @@ module postproc_help
         write(*,*) '  namelist input'
         write(*,*) '  set nsub_bnd 2'
         write(*,*) '  for step 20 to 100 do'
-        write(*,*) '    expressions R Z phi theta_geo Psi_N zj ne bnd_type length'
+        write(*,*) '    expressions R Z phi theta_geo Psi_N zj ne bnd_seg bnd_type length'
         write(*,*) '    boundary_quantities 0.d0 3.1415 4'
         write(*,*) '  done'
         write(*,*) ''

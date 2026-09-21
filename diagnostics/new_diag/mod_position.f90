@@ -55,6 +55,7 @@ module mod_position
     real*8             :: bnd_normal(2) = 0.d0 !< Normal vector to the computational boundary (pointing outside)
     real*8             :: dl = 0.d0  !< Poloidal distance represented by this poloidal position (m)
     integer            :: bnd_type = 0 !< JOREK boundary-type label of the nearer node of this boundary side
+    integer            :: bnd_seg  = 0 !< connected boundary segment (walk) this point belongs to
   end type t_pol_pos
   
   !> Data structure for a list of poloidal positions
@@ -455,34 +456,99 @@ module mod_position
     integer,                      intent(in)    :: n_elm_pts
 
     ! --- Local variables
-    integer                  :: i_bnd, m_bndelem, mv1, m_elm, m_pt, iv_a, iv_b
-    real*8                   :: acc_length
-    real*8                   :: s_or_t, s, t
+    integer                  :: i_bnd, m_bndelem, mv1, m_elm, m_pt, k, nb, tail, head, iseg, iw, nf, nbk
+    integer, allocatable     :: n0(:), n1(:), walk(:), segf(:), segb(:)
+    logical, allocatable     :: flip(:), done(:), flf(:), flb(:)
+    real*8                   :: s_or_t, s, t, acc_length, R_prev, Z_prev
     real*8                   :: R, R_s, R_t, Z, Z_s, Z_t
     real*8                   :: vec_out(2)
-    logical                  :: s_const
+    logical                  :: s_const, found, newseg
     type(t_pol_pos), pointer :: pos
 
-    i_bnd = 0  ! index for bnd point
-    acc_length = 0.d0
-  
-    ! --- alllocate position list
-    call alloc_pol_pos(pos_list, (/1, n_elm_pts * bnd_elm_list%n_bnd_elements /))
+    nb = bnd_elm_list%n_bnd_elements
+    call alloc_pol_pos(pos_list, (/1, n_elm_pts * nb /))
+    allocate( n0(nb), n1(nb), walk(nb), flip(nb), done(nb) )
 
-    ! --- For every boundary element do 
-    do m_bndelem = 1, bnd_elm_list%n_bnd_elements
+    ! --- End nodes of every boundary side in PARAMETRIC order: the side parameter s_or_t runs from vertex
+    ! --- mv1 to vertex mv1+1 on sides 1 and 2, and from vertex mv1+1 to vertex mv1 on sides 3 and 4 (s runs
+    ! --- 0 -> 1 on the t = 1 side, t runs 0 -> 1 on the s = 0 side). Nodes are identified by the global
+    ! --- index of their value DOF, so coincident node records at one corner count as the same vertex.
+    do k = 1, nb
+      mv1   = bnd_elm_list%bnd_element(k)%side
+      m_elm = bnd_elm_list%bnd_element(k)%element
+      if ( mv1 .le. 2 ) then
+        n0(k) = node_list%node(element_list%element(m_elm)%vertex(mv1))%index(1)
+        n1(k) = node_list%node(element_list%element(m_elm)%vertex(mod(mv1,4)+1))%index(1)
+      else
+        n0(k) = node_list%node(element_list%element(m_elm)%vertex(mod(mv1,4)+1))%index(1)
+        n1(k) = node_list%node(element_list%element(m_elm)%vertex(mv1))%index(1)
+      endif
+    enddo
 
+    ! --- Chain the sides into connected walks. Starting from any unvisited side, grow forward from its tail
+    ! --- node and then backward from its head node, each next side traversed forward (flip = .false.) or
+    ! --- backward; the chain is the segment. A disjoint boundary loop (e.g. the outer flux surface) becomes
+    ! --- its own segment. Sides are matched on the global value-DOF index of their end nodes.
+    done = .false. ; iw = 0
+    allocate( segf(nb), segb(nb) ) ; allocate( flf(nb), flb(nb) )
+    do while ( iw .lt. nb )
+      do k = 1, nb
+        if ( .not. done(k) ) exit
+      enddo
+      nf = 1 ; segf(1) = k ; flf(1) = .false. ; done(k) = .true. ; tail = n1(k) ; head = n0(k)
+      found = .true.
+      do while ( found )                                   ! forward from the tail
+        found = .false.
+        do k = 1, nb
+          if ( done(k) ) cycle
+          if ( n0(k) .eq. tail ) then
+            nf = nf + 1 ; segf(nf) = k ; flf(nf) = .false. ; done(k) = .true. ; tail = n1(k) ; found = .true. ; exit
+          elseif ( n1(k) .eq. tail ) then
+            nf = nf + 1 ; segf(nf) = k ; flf(nf) = .true.  ; done(k) = .true. ; tail = n0(k) ; found = .true. ; exit
+          endif
+        enddo
+      enddo
+      nbk = 0 ; found = .true.
+      do while ( found )                                   ! backward from the head
+        found = .false.
+        do k = 1, nb
+          if ( done(k) ) cycle
+          if ( n1(k) .eq. head ) then
+            nbk = nbk + 1 ; segb(nbk) = k ; flb(nbk) = .false. ; done(k) = .true. ; head = n0(k) ; found = .true. ; exit
+          elseif ( n0(k) .eq. head ) then
+            nbk = nbk + 1 ; segb(nbk) = k ; flb(nbk) = .true.  ; done(k) = .true. ; head = n1(k) ; found = .true. ; exit
+          endif
+        enddo
+      enddo
+      do k = nbk, 1, -1                                    ! backward part first, in walk order
+        iw = iw + 1 ; walk(iw) = segb(k) ; flip(iw) = flb(k)
+      enddo
+      do k = 1, nf
+        iw = iw + 1 ; walk(iw) = segf(k) ; flip(iw) = flf(k)
+      enddo
+    enddo
+    deallocate( segf, segb, flf, flb )
+
+    ! --- Fill the positions in walk order. Each side contributes n_elm_pts points on the half-open range
+    ! --- [start, end) in the walk direction, so a shared vertex appears once. length is the geometric
+    ! --- arclength from the first point of the segment; it restarts at every segment (bnd_seg).
+    i_bnd = 0 ; iseg = 0 ; tail = -1 ; acc_length = 0.d0 ; R_prev = 0.d0 ; Z_prev = 0.d0
+    do iw = 1, nb
+      m_bndelem = walk(iw)
       mv1     = bnd_elm_list%bnd_element(m_bndelem)%side
       m_elm   = bnd_elm_list%bnd_element(m_bndelem)%element
+      ! --- A new segment starts where this side does not continue from the previous tail node
+      newseg = ( iw .eq. 1 )
+      if ( .not. newseg ) newseg = ( merge(n1(m_bndelem), n0(m_bndelem), flip(iw)) .ne. tail )
+      if ( newseg ) iseg = iseg + 1
+      tail = merge(n0(m_bndelem), n1(m_bndelem), flip(iw))
 
-      ! --- For every point in the element do
       do m_pt = 1, n_elm_pts
 
         i_bnd  = i_bnd + 1 
         s_or_t = float(m_pt-1)/float(n_elm_pts)
+        if ( flip(iw) ) s_or_t = 1.d0 - s_or_t
 
-        ! --- Which s and t values correspond to the current point and is the
-        !     boundary element an s=const or t=const side of the 2D element?
         select case (mv1)
         case (1)
           s = s_or_t;  t = 0.d0;    s_const = .false.
@@ -494,14 +560,13 @@ module mod_position
           s = 0.d0;    t = s_or_t;  s_const = .true.
         end select
 
-        ! --- Fill in positions
         pos   => pos_list%pos(1,i_bnd)
         pos%ielm = m_elm
         pos%s    = s
         pos%t    = t
         call fill_pol_pos(pos, node_list, element_list)
 
-        ! --- Normal vector to the boundary
+        ! --- Normal vector to the boundary and the length this point represents
         if ( s_const ) then
           pos%bnd_normal = (/ -pos%Z_t, pos%R_t /) / sqrt(pos%R_t**2.d0 + pos%Z_t**2.d0)  
           pos%dl         = sqrt(pos%R_t**2.d0 + pos%Z_t**2.d0)/float(n_elm_pts)  
@@ -510,31 +575,42 @@ module mod_position
           pos%dl         = sqrt(pos%R_s**2.d0 + pos%Z_s**2.d0)/float(n_elm_pts) 
         end if
 
-        ! --- Arclength along the boundary walk (bnd_elm_list order) and the boundary type of the nearer node
-        pos%length = acc_length
-        acc_length = acc_length + pos%dl
-        iv_a = mv1
-        iv_b = mod(mv1,4) + 1
-        if ( s_or_t .lt. 0.5d0 ) then
-          pos%bnd_type = pos%nodes(iv_a)%boundary
+        ! --- Arclength from the segment start: geometric distance between consecutive points of the walk
+        if ( m_pt .eq. 1 .and. newseg ) then
+          acc_length = 0.d0
         else
-          pos%bnd_type = pos%nodes(iv_b)%boundary
+          acc_length = acc_length + sqrt( (pos%R - R_prev)**2 + (pos%Z - Z_prev)**2 )
+        endif
+        pos%length  = acc_length
+        pos%bnd_seg = iseg
+        R_prev = pos%R ; Z_prev = pos%Z
+        if ( s_or_t .lt. 0.5d0 ) then
+          if ( mv1 .le. 2 ) then
+            pos%bnd_type = pos%nodes(mv1)%boundary
+          else
+            pos%bnd_type = pos%nodes(mod(mv1,4)+1)%boundary
+          endif
+        else
+          if ( mv1 .le. 2 ) then
+            pos%bnd_type = pos%nodes(mod(mv1,4)+1)%boundary
+          else
+            pos%bnd_type = pos%nodes(mv1)%boundary
+          endif
         endif
 
         ! --- Correct normal direction to point outwards 
-        ! --- Get point inside the element
         if ( s_const ) then
           call interp_RZ(node_list, element_list, m_elm, 0.5d0,     t, R, R_s, R_t, Z, Z_s, Z_t)
         else
           call interp_RZ(node_list, element_list, m_elm,     s, 0.5d0, R, R_s, R_t, Z, Z_s, Z_t)
         endif
         vec_out = (/  pos%R - R, pos%Z  - Z/)    ! vector pointing outside the domain
-
         pos%bnd_normal = pos%bnd_normal*sign(1.d0, vec_out(1)*pos%bnd_normal(1)+vec_out(2)*pos%bnd_normal(2))
 
       enddo
-
     enddo 
+
+    deallocate( n0, n1, walk, flip, done )
    
   end function bnd_pos
   

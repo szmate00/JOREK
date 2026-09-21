@@ -231,6 +231,7 @@ module mod_expression
     call add(exprs_all, 'j_over_jsat ', 'Jn_wall / jsat_wall (+1 ion saturation, <0 electron)  ', 'boundary    ')
     call add(exprs_all, 'bnd_type    ', 'JOREK boundary-type label of the nearer node          ', 'boundary    ')
     call add(exprs_all, 'bnd_dl      ', 'Poloidal length represented by this boundary point    ', 'boundary    ')
+    call add(exprs_all, 'bnd_seg     ', 'Connected boundary segment; length restarts per segment', 'boundary    ')
     call add(exprs_all, 'heatF_sheath', 'Sheath theory heatflux (gamma_sh nT vpar dot n)       ', 'boundary    ')
     call add(exprs_all, 'heatF_par_cd', 'Conductive parallel heat flux (normal to the boundary)', 'boundary    ')
     call add(exprs_all, 'heatF_prp_cd', 'Conductive perpend  heat flux (normal to the boundary)', 'boundary    ')
@@ -2128,6 +2129,9 @@ module mod_expression
 
               case ( 'bnd_dl' )
                 res = pol_pos%dl
+
+              case ( 'bnd_seg' )
+                res = dble(pol_pos%bnd_seg)
 
               case ( 'heatF_sheath' )
                 res = gamma_stangeby*r0*Te0*vpar0*Bnorm*fact_flux
