@@ -94,17 +94,12 @@ subroutine preset_parameters
   mach_one_bnd_integral = .false. ! implement Mach one condition as boundary integral
   mach1_weak            = .false. ! weak Bohm condition Vpar = +-cs/|B| (replaces the nodal Mach rows)
   mach1_weak_drift      = .false. ! compensate the ExB drift by parallel flow (SOLPS non-marginal form)
-  mach1_weak_drift_bound= 0.d0    ! smooth bound on that compensation, in cs*|b.n| (SOLPS b2stbc_cbc: 2); 0 = none
   mach1_weak_drift_cut  = .false. ! no compensation below the grazing angle min_sheath_angle (marginal row there)
-  mach1_weak_cut        = .false. ! no Vpar row at all below the grazing angle (natural condition there)
-  mach1_drift_cut       = .false. ! nodal Mach1: no drift term below the grazing angle
-  mach1_weak_inflow     = .true.  ! inflow closure rho -> 0 at the inflow rate where the total normal flow is inward
   Vpar_smoothing        = .false. ! smooth the transitions of Vpar positive/negavtive at B.n
   Vpar_smoothing_coef   = (/0.01d0, 0.d0, 0.d0 /) !(/ 0.01d0, 0.016d0, 0.00575446347d0/)
   min_sheath_angle      = 1.d0   ! 1 degree (not in radians)
   sheath_Lambda         = 3.d0   ! floating sheath drop, e*Phi/Te
   sheath_V_wall         = 0.d0   ! wall potential [V]
-  floating_u_diag       = .false.! wall diagnostics table each matrix construction
 
   amix                 = 0.d0
   amix_freeb           = 0.85d0

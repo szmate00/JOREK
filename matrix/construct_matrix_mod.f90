@@ -328,7 +328,6 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   use global_distributed_matrix, only: global_matrix_structure_vacuum
 #if JOREK_MODEL == 600
   use mod_boundary_edges, only: boundary_edges_build
-  use mod_floating_diag,  only: floating_diag_reset, floating_diag_report
 #endif
   
   !$ use omp_lib
@@ -470,10 +469,8 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   rhs_local  = 0.d0
 
 #if JOREK_MODEL == 600
-  ! --- Exterior-side table for the open-boundary integral: the weak Bohm row and the floating
-  ! --- potential must never be assembled on an interior side with two labelled endpoints.
+  ! --- Exterior-side table: the open-boundary integral must not land on an interior side with two labelled endpoints
   if ( mach1_weak .or. any(bcs(:)%floating_u) ) call boundary_edges_build(element_list, node_list, my_id)
-  if ( floating_u_diag ) call floating_diag_reset()
 #endif
 
   if (mhd_sim%freeboundary .and. (mhd_sim%sr_n_tor /= 0 ) ) then
@@ -766,7 +763,6 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   !$omp end parallel
 
 #if JOREK_MODEL == 600
-  if ( floating_u_diag .and. .not. harmonic_matrix ) call floating_diag_report(my_id)
 #endif
  
   ! --- Memory tracking

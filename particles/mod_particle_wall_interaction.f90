@@ -1768,9 +1768,8 @@ subroutine project_sputter_vars_on_edge(this, sim)
       Z = this%fluid_Z
       m = atomic_weights(Z) * ATOMIC_MASS_UNIT
       
-      ! --- Incident ion flux. Under mach1_weak the fluid loses n*(v_par.n + v_ExB.n) through the wall,
-      ! --- so recycle the TOTAL outgoing normal flow (signed: a face the plasma flows away from gets
-      ! --- only the grazing-incidence floor); the parallel part alone otherwise, as before.
+      ! --- Incident ion flux: under mach1_weak the total outgoing normal flow (what the fluid loses through
+      ! --- the wall), the parallel part alone otherwise
       if ( mach1_weak ) then
         v_n_tot = vpar * dot_product(B, vector_normal) + dot_product(v_ExB, vector_normal)
         Gamma_d = n_e * max(v_n_tot, 0.d0) + n_e * c_s * c_angle

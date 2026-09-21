@@ -61,17 +61,12 @@ module phys_module
   logical :: mach_one_bnd_integral!< use a boundary integral (boundary_matrix_open) to implement Mach=one boundary condition
   logical :: mach1_weak           !< weak (Galerkin) Bohm condition Vpar*(B_pol.n) = cs*|b.n| on the wall (model600)
   logical :: mach1_weak_drift     !< mach1_weak on the TOTAL normal flow, Vpar*(B_pol.n) >= cs*|b.n| - vE.n (SOLPS non-marginal form)
-  real*8  :: mach1_weak_drift_bound !< bound on the drift-compensating parallel flow in units of cs*|b.n| (SOLPS: 2); 0 = unbounded
   logical :: mach1_weak_drift_cut   !< no drift compensation where |b.n| < sin(min_sheath_angle): the marginal row there
-  logical :: mach1_weak_cut         !< no Vpar row at all where |b.n| < sin(min_sheath_angle): natural condition there
-  logical :: mach1_drift_cut        !< NODAL Mach1 row: drop its ExB drift term where |b.n| < sin(min_sheath_angle), i.e. Vpar = +-cs/|B| there (the nodal analogue of mach1_weak_drift_cut)
-  logical :: mach1_weak_inflow      !< weak inflow closure on the density row where the total normal flow is inward (default on)
   logical :: vpar_smoothing       !< apply a smoothing function to smooth jumps in Vpar at B.n=0
   real*8  :: vpar_smoothing_coef(3) !< coefficients for the smoothing profile of the parallel velocity
   real*8  :: min_sheath_angle     !< For sheath boundary conditions: Minimum incident angle for heat and particle fluxes (in degrees)
   real*8  :: sheath_Lambda        !< Floating sheath potential drop in units of Te/e (model600 bcs%floating_u)
   real*8  :: sheath_V_wall        !< Wall potential in volts (model600 bcs%floating_u)
-  logical :: floating_u_diag      !< Print per-boundary-type wall diagnostics of the weak Bohm row and floating potential (model600)
   integer :: mode(n_tor)          !< Toroidal mode number corresponding to the JOREK modes, e.g., for n_period=8 and n_tor=3, mode(:)=0,8,8
   integer :: mode_coord(n_coord_tor)  !< Toroidal mode number corresponding to the JOREK RZ grid modes
   integer :: nout                 !< Output a restart file every nout timesteps

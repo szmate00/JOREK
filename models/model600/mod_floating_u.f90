@@ -73,7 +73,7 @@ end function floating_u_volts
 
 
 !> Self-test of the normalisation at the current namelist values. Checks that a_n carries the sign
-!! of F0 and that Te = 1 eV reconstructs to exactly Lambda volts above the wall. Prints on rank 0.
+!! of F0 and that Te = 1 eV reconstructs to exactly Lambda volts above the wall.
 logical function floating_u_selftest(my_id)
 
   use constants,          only: MU_ZERO, EL_CHG
@@ -96,14 +96,8 @@ logical function floating_u_selftest(my_id)
   floating_u_selftest = ( a_n * F0 .gt. 0.d0 ) .and. &
                         ( abs(volts - sheath_Lambda) .le. tol * max(abs(sheath_Lambda), 1.d0) )
 
-  if ( my_id .eq. 0 ) then
-    write(*,'(A)')          ' --- floating_u normalisation ---'
-    write(*,'(A,es22.14)')  '   a_n                      = ', a_n
-    write(*,'(A,es22.14)')  '   C_T  (u per unit Te)     = ', C_T
-    write(*,'(A,es22.14)')  '   C_V  (u per volt V_wall) = ', C_V
-    write(*,'(A,f18.12,A)') '   Te = 1 eV reconstructs to ', volts, ' V above the wall'
-    if ( .not. floating_u_selftest ) write(*,'(A)') '   ERROR: floating_u selftest FAILED'
-  endif
+  if ( my_id .eq. 0 .and. .not. floating_u_selftest ) &
+    write(*,'(A,2es14.6)') ' ERROR: floating_u normalisation selftest failed (a_n, volts at 1 eV):', a_n, volts
 
 end function floating_u_selftest
 

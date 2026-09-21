@@ -835,7 +835,6 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   if ( any(bcs(:)%floating_u) ) then
     write(*,REAL_FMT) 'sheath_Lambda         ', sheath_Lambda
     write(*,REAL_FMT) 'sheath_V_wall         ', sheath_V_wall
-    write(*,LOGI_FMT) 'floating_u_diag       ', floating_u_diag
     write(*,'(1X,A,30I3)') 'floating_u on boundary types:', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%floating_u )
   end if
 
@@ -872,11 +871,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   write(*,LOGI_FMT) 'mach_one_bnd_integral ', mach_one_bnd_integral
   write(*,LOGI_FMT) 'mach1_weak            ', mach1_weak
   write(*,LOGI_FMT) 'mach1_weak_drift      ', mach1_weak_drift
-  write(*,REAL_FMT) 'mach1_weak_drift_bound', mach1_weak_drift_bound
   write(*,LOGI_FMT) 'mach1_weak_drift_cut  ', mach1_weak_drift_cut
-  write(*,LOGI_FMT) 'mach1_weak_cut        ', mach1_weak_cut
-  write(*,LOGI_FMT) 'mach1_weak_inflow     ', mach1_weak_inflow
-  write(*,LOGI_FMT) 'mach1_drift_cut       ', mach1_drift_cut
   write(*,LOGI_FMT) 'deuterium_adas        ', deuterium_adas       
   write(*,LOGI_FMT) 'old_deuterium_atomic  ', old_deuterium_atomic
   write(*,LOGI_FMT) 'deuterium_adas_1e20   ', deuterium_adas_1e20

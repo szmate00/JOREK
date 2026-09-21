@@ -3,9 +3,8 @@
 !! The open-boundary integral (mod_boundary_matrix_open) is applied by construct_matrix to every
 !! element side whose two endpoint nodes carry a boundary label. A side can satisfy that and still
 !! be interior, e.g. across a region one element wide between two wall segments. A boundary
-!! integral on such a side is wrong for every natural condition and, with the weak Bohm row and
-!! the floating potential, harmful. This module identifies the sides that are genuinely exterior:
-!! a side is exterior if and only if exactly one element owns it.
+!! integral on such a side is wrong. This module identifies the genuinely exterior sides: a side is
+!! exterior if and only if exactly one element owns it.
 !!
 !! Nodes are identified by the global index of their value DOF, so coincident node records (two
 !! records at one geometric vertex) count as the same vertex. A side whose two endpoints coincide
@@ -18,14 +17,12 @@ module mod_boundary_edges
   public :: boundary_edges_build, boundary_edges_active, boundary_edge_is_exterior
 
   logical, allocatable, save :: exterior(:,:)   !< exterior(side, element)
-  integer, save :: n_interior_labelled = -1     !< interior sides with both endpoints labelled, last build
 
 contains
 
 
 !> Build the exterior-side table. Called once per matrix construction; cheap (one pass over the
-!! local element list). Prints, on rank 0 and on the first build only, how many labelled sides are
-!! interior. Zero is the expected answer on a healthy grid.
+!! local element list).
 subroutine boundary_edges_build(element_list, node_list, my_id)
 
   use data_structure, only: type_element_list, type_node_list
@@ -37,7 +34,7 @@ subroutine boundary_edges_build(element_list, node_list, my_id)
   integer,                 intent(in) :: my_id
 
   integer, allocatable :: first(:), hi(:), elm(:), sid(:)
-  integer :: ne, nid, e, s, a, b, lo, up, i, j, ierr, n_dup, nlab_before
+  integer :: ne, nid, e, s, lo, up, i, j, ierr, n_dup
 
   ne  = element_list%n_elements
   nid = node_list%n_dof
@@ -87,20 +84,6 @@ subroutine boundary_edges_build(element_list, node_list, my_id)
       endif
     enddo
   enddo
-
-  ! --- Labelled-but-interior sides: what the boundary integral would have been applied to
-  nlab_before = n_interior_labelled
-  n_interior_labelled = 0
-  do e = 1, ne
-    do s = 1, 4
-      a = element_list%element(e)%vertex(s)
-      b = element_list%element(e)%vertex(mod(s,4)+1)
-      if ( node_list%node(a)%boundary .ne. 0 .and. node_list%node(b)%boundary .ne. 0 &
-           .and. .not. exterior(s,e) ) n_interior_labelled = n_interior_labelled + 1
-    enddo
-  enddo
-  if ( my_id .eq. 0 .and. nlab_before .lt. 0 ) &
-    write(*,'(A,I8)') ' boundary_edges: interior sides with both endpoints on a boundary (skipped): ', n_interior_labelled
 
   deallocate( first, hi, elm, sid )
 

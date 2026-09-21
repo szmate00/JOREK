@@ -17,7 +17,6 @@ use phys_module
 use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
-use mod_floating_diag, only: floating_diag_add
 
 implicit none
 
@@ -60,7 +59,7 @@ real*8     :: c_1, c_2, c_3, c_angle, neutral_source
 real*8     :: element_size_ij, element_size_kl, element_size_perp
 real*8     :: grad_t(2), B0_R, B0_Z, factor_cs_bnd_integral
 logical    :: mw_on                                              ! weak Bohm condition (mach1_weak) on this edge
-real*8     :: mw_orient, mw_vEn, mw_Bn, mw_vn, mw_tgt, mw_act, mw_cs, mw_res, mw_w, mw_in, mw_s, mw_x
+real*8     :: mw_orient, mw_vEn, mw_Bn, mw_vn, mw_tgt, mw_act, mw_cs, mw_res, mw_w
 real*8     :: fx_n, fx_v, fx_p, fx_u, fx_out                    ! normal-flow measure of the sheath fluxes and its columns
 logical    :: xpoint2
 integer    :: n_tor_local 
@@ -143,8 +142,7 @@ do i_var=1, n_var
   if ( (i_var==var_vpar) .and. (bcs(bnd_type1)%natural%vpar .or. bcs(bnd_type2)%natural%vpar))  apply_natural_bc(i_var)=.true.
 enddo
 
-! --- Weak Bohm condition on the total normal flow (mach1_weak). Carried by edges whose BOTH endpoints
-! --- are mach1 types, i.e. a target edge and never a flux-surface edge; scattered through the Vpar rows.
+! --- Weak Bohm condition (mach1_weak): on edges whose both endpoints are mach1 types, into the Vpar rows
 mw_on = mach1_weak .and. with_vpar .and. bcs(bnd_type1)%mach1 .and. bcs(bnd_type2)%mach1
 if ( mw_on ) apply_natural_bc(var_vpar) = .true.
 
@@ -319,65 +317,39 @@ do ms=1, n_gauss
     normal_sign  = sign(1.d0,bdotn)
     normal_sign3 = sign(1.d0,ps0_s) * normal_sign
 
-    ! --- Weak Bohm condition (marginal form):  res = (B_pol.n)*Vpar - cs*|b.n|,  i.e. Vpar = +-cs/|B|,
-    ! --- weighted by d(res)/d(Vpar) = B_pol.n so that a grazing point loses authority as (B.n)^2 and the
-    ! --- natural Vpar condition takes over continuously. The ExB drift is NOT compensated by the parallel
-    ! --- flow: compensating an inward drift of 10 km/s at a few percent incidence would demand a
-    ! --- several-times-sonic parallel flow in the last element, whose divergence must then cancel the
-    ! --- ExB inflow term to O(1) within that element - the dispersive density dipole at the strike
-    ! --- point. Where the total flow is inward the inflow closure below supplies the density datum.
-    ! --- mach1_weak_drift restores the SOLPS non-marginal form, target max(cs*|b.n| - vE.n, 0). With
-    ! --- mach1_weak_drift_bound = c > 0 the compensation of an INWARD drift d = -vE.n > 0 is bounded
-    ! --- smoothly at s = c*cs*|b.n| (SOLPS b2stbc_cbc, c = 2): target cs*|b.n| + s*tanh(d/s), whose u
-    ! --- column carries sech^2(d/s) and so fades out where the bound takes over, with no branch. The
-    ! --- flow beyond the bound is inward and is handled by the inflow closure below. With
-    ! --- mach1_weak_drift_cut the compensation is dropped where |b.n| < sin(min_sheath_angle), the angle
-    ! --- below which the sheath particle and heat fluxes are already taken from the c_angle floor model;
-    ! --- the row there is the marginal one. Static map: psi is Dirichlet on the wall.
-    ! --- vE.n = -orient*R*u_s/dl is the outward ExB normal flow for v_E = (-R*u_Z, +R*u_R) and the edge
-    ! --- tangent (x_s, y_s)/dl. Vpar*(B_pol.n) is the parallel normal flow, a velocity since v = Vpar*B.
+    ! --- Weak Bohm condition (mach1_weak), one residual per Gauss point on the Vpar trace:
+    ! ---   res = (B_pol.n)*Vpar - target,   weight d(res)/d(Vpar) = B_pol.n
+    ! --- so the row fades as (B.n)^2 at grazing incidence and the natural Vpar condition takes over.
+    ! --- target = cs*|b.n|                        (marginal Bohm, Vpar = +-cs/|B|)
+    ! ---        = max(cs*|b.n| - vE.n, 0)          with mach1_weak_drift: the parallel flow supplies the
+    ! ---                                           outward normal flow the ExB drift does not (SOLPS
+    ! ---                                           non-marginal form); with mach1_weak_drift_cut only
+    ! ---                                           where |b.n| >= sin(min_sheath_angle)
+    ! --- vE.n = -orient*R*u_s/dl is the outward ExB normal speed (v_E = (-R*u_Z, +R*u_R)), Vpar*(B_pol.n)
+    ! --- the parallel normal speed (v = Vpar*B). mw_act is the u column's switch, mw_cs the cs column's.
     mw_orient = sign(1.d0, y_s(ms)*normal(1) - x_s(ms)*normal(2))
     mw_vEn    = - mw_orient * BigR * eq_s(mp,var_u,ms) / dl
     mw_Bn     = bdotn * Btot
     mw_tgt    = cs0 * abs(bdotn)
-    mw_act    = 0.d0                      ! coefficient of the u column: drift not in the row
-    mw_cs     = 1.d0                      ! coefficient of the temperature columns (cs in the target)
+    mw_act    = 0.d0
+    mw_cs     = 1.d0
     if ( mach1_weak_drift .and. .not. ( mach1_weak_drift_cut .and. abs(bdotn) .lt. sin(c_angle) ) ) then
       mw_tgt = cs0 * abs(bdotn) - mw_vEn
       mw_act = 1.d0
-      if ( mw_tgt .le. 0.d0 ) then        ! the drift alone gives sonic outflow or more: nothing to impose
+      if ( mw_tgt .le. 0.d0 ) then        ! drift alone already sonic: nothing to impose
         mw_tgt = 0.d0
         mw_act = 0.d0
         mw_cs  = 0.d0
-      elseif ( mach1_weak_drift_bound .gt. 0.d0 .and. mw_vEn .lt. 0.d0 ) then
-        mw_s   = mach1_weak_drift_bound * cs0 * abs(bdotn)
-        mw_x   = - mw_vEn / mw_s
-        mw_tgt = cs0 * abs(bdotn) + mw_s * tanh(mw_x)
-        mw_act = 1.d0 / cosh(mw_x)**2
-        mw_cs  = 1.d0 + mach1_weak_drift_bound * ( tanh(mw_x) - mw_x / cosh(mw_x)**2 )   ! d(target)/d(cs) / |b.n|
       endif
     endif
-    mw_res    = mw_Bn * Vpar0 - mw_tgt
-    ! --- mach1_weak_cut: below sin(min_sheath_angle) no Vpar row at all - the parallel viscosity's natural
-    ! --- condition grad(Vpar).n = 0 holds there - while the inflow closure and the total-flow fluxes stay.
-    mw_w      = 0.d0
+    mw_res = mw_Bn * Vpar0 - mw_tgt
+    mw_w   = 0.d0
     if ( mw_on ) mw_w = Zbig * mw_Bn * dl
-    if ( mach1_weak_cut .and. abs(bdotn) .lt. sin(c_angle) ) mw_w = 0.d0
+    mw_vn  = mw_Bn * Vpar0 + mw_vEn       ! total normal speed, outward positive
 
-    ! --- Inflow closure. Where the TOTAL normal flow vn = Vpar*(B_pol.n) + vE.n is inward the density
-    ! --- equation, advected with the undifferentiated test function, has no boundary datum. The weak
-    ! --- inflow term  -oint v*min(vn,0)*(rho - rho_in) dl  with rho_in = 0 (no plasma enters from a wall)
-    ! --- supplies it: its coefficient is the physical inflow rate, it vanishes identically where the flow
-    ! --- is outward, and it is what takes over where the weak Bohm row above loses authority at grazing
-    ! --- incidence. Same edges as that row. The temperatures get no term: with rho_in = 0 nothing enters.
-    mw_vn = mw_Bn * Vpar0 + mw_vEn
-    mw_in = 0.d0
-    if ( mw_on .and. mach1_weak_inflow .and. (mw_vn .lt. 0.d0) ) mw_in = 1.d0
-
-    ! --- Normal flow carried by the sheath particle and energy fluxes below: Vpar*(B_pol.n)*R*dl, which is
-    ! --- what vpar0*ps0_s*normal_sign3 is. Under mach1_weak it is the TOTAL outgoing flow max(vn,0)*R*dl,
-    ! --- so the momentum, particle, energy and kinetic recycling channels all see one and the same flow.
-    ! --- fx_v, fx_p, fx_u are the coefficients of the trial Vpar, psi_s and psi_s(u) in its columns.
+    ! --- Normal flow in the sheath particle and energy fluxes: vpar0*ps0_s*normal_sign3 = Vpar*(B_pol.n)*R*dl.
+    ! --- Under mach1_weak it is the total outgoing flow max(vn,0)*R*dl, the same flow the Bohm row and the
+    ! --- kinetic recycling see. fx_v, fx_p, fx_u: coefficients of the trial Vpar, psi_s and u_s columns.
     fx_n = vpar0 * ps0_s * normal_sign3
     fx_v =         ps0_s * normal_sign3
     fx_p = vpar0         * normal_sign3
@@ -391,11 +363,6 @@ do ms=1, n_gauss
       fx_u = - fx_out * mw_orient * BigR**2
     endif
 
-    if ( floating_u_diag .and. mw_on ) then
-      call floating_diag_add(bnd_type1, ws*dl, mw_vn, mw_vEn, mw_Bn, mw_res, cs0*abs(bdotn), abs(Vpar0)*Btot/cs0, r0, Ti0, Te0, BigR, y_g(ms))
-      if ( bnd_type2 .ne. bnd_type1 ) &
-        call floating_diag_add(bnd_type2, ws*dl, mw_vn, mw_vEn, mw_Bn, mw_res, cs0*abs(bdotn), abs(Vpar0)*Btot/cs0, r0, Ti0, Te0, BigR, y_g(ms))
-    endif
 
     c_1 = vpar_smoothing_coef(1); c_2 = vpar_smoothing_coef(2); c_3 = vpar_smoothing_coef(3)
     if (vpar_smoothing) then
@@ -430,8 +397,6 @@ do ms=1, n_gauss
             rhs_ij(var_rho)   = + v * density_reflection * r0      * fx_n * tstep     &
                                 - v * r0      * cs0 * BigR * dl * c_angle * tstep     ! particle flux at 1 degree angle  
 
-            ! --- Weak inflow term (mach1_weak): rho relaxes to rho_in = 0 at the inflow rate |vn|
-            rhs_ij(var_rho)   = rhs_ij(var_rho) + v * mw_in * mw_vn * r0 * BigR * dl * tstep
 
             ! --- Sheath heat flux (c_angle for mininum heat fluxes at grazing angles)
             if (with_TiTe) then
@@ -450,7 +415,7 @@ do ms=1, n_gauss
             ! --- Mach=1 through boundary integral penalization method
             rhs_ij(var_vpar) = - v * (vpar0 * Btot * normal_sign - cs0 * factor) * dl * Zbig  * factor_cs_bnd_integral 
 
-            ! --- Weak Bohm condition on the total normal flow (mach1_weak)
+            ! --- Weak Bohm condition (mach1_weak)
             rhs_ij(var_vpar) = rhs_ij(var_vpar) - v * mw_w * mw_res
 
             ! --- Fluid neutral reflection
@@ -514,11 +479,7 @@ do ms=1, n_gauss
                                             + v                      * rho * cs0   * BigR * dl * c_angle  * theta * tstep 
                   amat(var_rho,var_vpar)  = - v * density_reflection * r0  * vpar * fx_v * theta * tstep 
 
-                  ! --- Weak inflow term (mach1_weak): exact columns of vn*rho, vn = Vpar*(B_pol.n) - orient*R*u_s/dl
-                  amat(var_rho,var_rho)   = amat(var_rho,var_rho)  - v * mw_in * mw_vn * rho  * BigR * dl * theta * tstep
-                  amat(var_rho,var_vpar)  = amat(var_rho,var_vpar) - v * mw_in * mw_Bn * vpar * r0 * BigR * dl * theta * tstep
-                  amat(var_rho,var_u)     = - v * density_reflection * r0 * fx_u * psi_s * theta * tstep &
-                                            + v * mw_in * mw_orient * BigR**2 * psi_s * r0 * theta * tstep
+                  amat(var_rho,var_u)     = - v * density_reflection * r0 * fx_u * psi_s * theta * tstep
 
                   ! --- Sheath heat flux
                   if (with_TiTe) then                
@@ -574,7 +535,7 @@ do ms=1, n_gauss
                     amat(var_vpar,var_T)  =   v * ( - cs_T)  * factor         * dl * Zbig * factor_cs_bnd_integral
                   endif
 
-                  ! --- Weak Bohm condition on the total normal flow (mach1_weak): exact columns of mw_res
+                  ! --- Weak Bohm condition (mach1_weak): columns of mw_res
                   amat(var_vpar,var_vpar) = amat(var_vpar,var_vpar) + v * mw_w * mw_Bn * vpar
                   if (with_TiTe) then
                     amat(var_vpar,var_Ti) = amat(var_vpar,var_Ti) - v * mw_w * mw_cs * abs(bdotn) * cs_Ti
@@ -583,9 +544,8 @@ do ms=1, n_gauss
                     amat(var_vpar,var_T)  = amat(var_vpar,var_T)  - v * mw_w * mw_cs * abs(bdotn) * cs_T
                   endif
                   amat(var_vpar,var_u)    = - v * mw_w * mw_act * mw_orient * BigR * psi_s / dl
-                  ! --- No psi column: B_pol.n depends on the tangential psi derivative only, which is Dirichlet on
-                  ! --- the wall. |B| also sees the free normal derivative, but this loop only carries the trace
-                  ! --- DOFs, and |B| is F0/R to O(B_pol^2/F0^2) at the wall, so that dependence is lagged.
+                  ! --- No psi column: B_pol.n uses the Dirichlet trace of psi; the |B| dependence on its free
+                  ! --- normal derivative is lagged (this loop carries trace DOFs only).
 
                   ! --- Fluid neutral sources and reflection
                   if (with_neutrals) then
