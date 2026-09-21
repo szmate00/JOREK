@@ -219,6 +219,9 @@ module mod_expression
     call add(exprs_all, 'vsound      ', 'Sound speed sqrt(gamma*(Ti+Te))                       ', 'boundary    ')
     call add(exprs_all, 'mach_par    ', 'Parallel Mach number, positive towards the wall       ', 'boundary    ')
     call add(exprs_all, 'bn_unit     ', 'Field incidence b.n = B.n/|B| (signed)                ', 'boundary    ')
+    call add(exprs_all, 'mach_norm   ', 'Total normal flow over sonic normal flow cs*|b.n|     ', 'boundary    ')
+    call add(exprs_all, 'bohm_target ', 'Parallel normal speed the weak Bohm row imposes (m/s) ', 'boundary    ')
+    call add(exprs_all, 'bohm_resid  ', 'Vpar*B.n - bohm_target (m/s); 0 where the row holds   ', 'boundary    ')
     call add(exprs_all, 'dTe_dl      ', 'Wall-tangential dTe/dl, tangent t = (n_Z,-n_R)        ', 'boundary    ')
     call add(exprs_all, 'dPhi_dl     ', 'Wall-tangential dPhi/dl; vE.n = R*dPhi/dl/F0          ', 'boundary    ')
     call add(exprs_all, 'Phi_float   ', 'Floating potential Lambda*Te/e + V_wall (SI units only)', 'boundary    ')
@@ -2080,6 +2083,22 @@ module mod_expression
 
               case ( 'bn_unit' )
                 res = Bnorm / max(sqrt(BB2), tiny(1.d0))
+
+              ! --- Checks of the weak Bohm row (mach1_weak). bohm_target follows the active form: cs*|b.n|
+              ! --- (marginal), or max(cs*|b.n| - vE.n, 0) with mach1_weak_drift where |b.n| >= sin(min_sheath_angle)
+              ! --- if mach1_weak_drift_cut. mach_norm is the total normal flow in units of the sonic normal flow:
+              ! --- 1 where the drift-compensating row holds, 1 + vE.n/(cs*|b.n|) under the marginal row.
+              case ( 'mach_norm' )
+                res = ( vpar0*Bnorm - R*u0_Z*nmlR + R*u0_R*nmlZ )                                          &
+                    / max( sqrt(gamma*(Ti0+Te0)) * abs(Bnorm) / max(sqrt(BB2), tiny(1.d0)), tiny(1.d0) )
+
+              case ( 'bohm_target', 'bohm_resid' )
+                res = sqrt(gamma*(Ti0+Te0)) * abs(Bnorm) / max(sqrt(BB2), tiny(1.d0))
+                if ( mach1_weak_drift .and. .not. ( mach1_weak_drift_cut .and.                              &
+                     abs(Bnorm)/max(sqrt(BB2),tiny(1.d0)) .lt. sin(min_sheath_angle*PI/180.d0) ) )         &
+                  res = max( res - ( -R*u0_Z*nmlR + R*u0_R*nmlZ ), 0.d0 )
+                if ( trim(expr_list%expr(iexpr)%name) .eq. 'bohm_resid' ) res = vpar0*Bnorm - res
+                res = res / fact_time
 
               case ( 'dTe_dl' )
                 res = ( Te0_R*nmlZ - Te0_Z*nmlR ) * fact_T
