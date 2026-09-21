@@ -227,7 +227,7 @@ module postproc_help
         write(*,*) '  namelist input'
         write(*,*) '  set nsub_bnd 2'
         write(*,*) '  for step 20 to 100 do'
-        write(*,*) '    expressions R Z phi theta_geo Psi_N zj ne'
+        write(*,*) '    expressions R Z phi theta_geo Psi_N zj ne bnd_type length'
         write(*,*) '    boundary_quantities 0.d0 3.1415 4'
         write(*,*) '  done'
         write(*,*) ''
@@ -235,7 +235,8 @@ module postproc_help
         write(*,*) '  namelist input'
         write(*,*) '  set nsub_bnd 2'
         write(*,*) '  for step 100 do'
-        write(*,*) '    expressions theta_geo Bnorm Jnorm heatF_total'
+        write(*,*) '    expressions length bnd_type Psi_N Te Phi Phi_float x_sheath Jn_wall jsat_wall j_over_jsat'
+        write(*,*) '    expressions vpar_phys vsound mach_par bn_unit vu_norm vtot_norm dTe_dl dPhi_dl'
         write(*,*) '    boundary_quantities'
         write(*,*) '  done'
       case ( 'fluxsurfaces' ) 

@@ -215,6 +215,19 @@ module mod_expression
     call add(exprs_all, 'vpar_norm   ', 'Perpendicular velocity to the boundary (vpar contrib) ', 'boundary    ')
     call add(exprs_all, 'vu_norm     ', 'Perpendicular velocity to the boundary (u contrib)    ', 'boundary    ')
     call add(exprs_all, 'vtot_norm   ', 'Total perpendicular velocity to the JOREKs boundary   ', 'boundary    ')
+    call add(exprs_all, 'vpar_phys   ', 'Parallel speed Vpar*|B|, positive towards the wall    ', 'boundary    ')
+    call add(exprs_all, 'vsound      ', 'Sound speed sqrt(gamma*(Ti+Te))                       ', 'boundary    ')
+    call add(exprs_all, 'mach_par    ', 'Parallel Mach number, positive towards the wall       ', 'boundary    ')
+    call add(exprs_all, 'bn_unit     ', 'Field incidence b.n = B.n/|B| (signed)                ', 'boundary    ')
+    call add(exprs_all, 'dTe_dl      ', 'Wall-tangential dTe/dl, tangent t = (n_Z,-n_R)        ', 'boundary    ')
+    call add(exprs_all, 'dPhi_dl     ', 'Wall-tangential dPhi/dl; vE.n = R*dPhi/dl/F0          ', 'boundary    ')
+    call add(exprs_all, 'Phi_float   ', 'Floating potential Lambda*Te/e + V_wall (SI units only)', 'boundary    ')
+    call add(exprs_all, 'x_sheath    ', 'Lambda - e*(Phi-V_wall)/(k*Te); 0 floating (SI only)  ', 'boundary    ')
+    call add(exprs_all, 'jsat_wall   ', 'Ion saturation current e*n*cs*|b.n| into the wall     ', 'boundary    ')
+    call add(exprs_all, 'Jn_wall     ', 'Field-aligned current into the wall, -zj*B.n/(mu0*F0) ', 'boundary    ')
+    call add(exprs_all, 'j_over_jsat ', 'Jn_wall / jsat_wall (+1 ion saturation, <0 electron)  ', 'boundary    ')
+    call add(exprs_all, 'bnd_type    ', 'JOREK boundary-type label of the nearer node          ', 'boundary    ')
+    call add(exprs_all, 'bnd_dl      ', 'Poloidal length represented by this boundary point    ', 'boundary    ')
     call add(exprs_all, 'heatF_sheath', 'Sheath theory heatflux (gamma_sh nT vpar dot n)       ', 'boundary    ')
     call add(exprs_all, 'heatF_par_cd', 'Conductive parallel heat flux (normal to the boundary)', 'boundary    ')
     call add(exprs_all, 'heatF_prp_cd', 'Conductive perpend  heat flux (normal to the boundary)', 'boundary    ')
@@ -231,6 +244,8 @@ module mod_expression
     call add(exprs_all, 'partF_prp_cd', 'Conductive perpend  particle flux (normal to the bnd) ', 'boundary    ')
     call add(exprs_all, 'partF_par_cv', 'Convective parallel particle flux (normal to the bnd) ', 'boundary    ')
     call add(exprs_all, 'partF_prp_cv', 'Convective perpend  particle flux (normal to the bnd) ', 'boundary    ')
+    call add(exprs_all, 'partF_vpar  ', 'Convective Vpar particle flux, positive outward       ', 'boundary    ')
+    call add(exprs_all, 'partF_ExB   ', 'Convective ExB particle flux, positive outward        ', 'boundary    ')
     call add(exprs_all, 'partF_total ', 'Total particle flux (normal to the boundary)          ', 'boundary    ')
     call add(exprs_all, 'npartF_total', 'Total neutral particle flux (normal to the boundary)  ', 'boundary    ')
     call add(exprs_all, 'ExB_norm    ', 'EM energy flux, Poynting vector (normal to boundary)  ', 'boundary    ')
@@ -2050,6 +2065,51 @@ module mod_expression
               case ( 'vtot_norm'   )
                 res = (VR*nmlR + VZ*nmlZ) / fact_time
 
+              ! --- Wall diagnostics for the floating-potential / sheath BCs. Outward-positive normals; the
+              ! --- tangent t = (n_Z, -n_R) is the direction along which vE.n = R*du/dl. Vpar is the
+              ! --- coefficient of B, so Vpar*|B| is the parallel speed; sign(B.n) makes it positive towards
+              ! --- the wall on both targets.
+              case ( 'vpar_phys' )
+                res = vpar0 * sqrt(BB2) * sign(1.d0, Bnorm) / fact_time
+
+              case ( 'vsound' )
+                res = sqrt(gamma*(Ti0+Te0)) / fact_time
+
+              case ( 'mach_par' )
+                res = vpar0 * sqrt(BB2) * sign(1.d0, Bnorm) / max(sqrt(gamma*(Ti0+Te0)), tiny(1.d0))
+
+              case ( 'bn_unit' )
+                res = Bnorm / max(sqrt(BB2), tiny(1.d0))
+
+              case ( 'dTe_dl' )
+                res = ( Te0_R*nmlZ - Te0_Z*nmlR ) * fact_T
+
+              case ( 'dPhi_dl' )
+                res = ( u0_R*nmlZ - u0_Z*nmlR ) * F0 / fact_time
+
+              ! --- Sheath quantities (SI units): Phi = F0*u/sqrt(mu0*rho0) volts, k*Te in eV = Te*fact_T.
+              case ( 'Phi_float' )
+                res = sheath_Lambda * Te0 * fact_T + sheath_V_wall
+
+              case ( 'x_sheath' )
+                res = sheath_Lambda - ( u0*F0/fact_time - sheath_V_wall ) / max( Te0*fact_T, tiny(1.d0) )
+
+              case ( 'jsat_wall' )
+                res = EL_CHG * r0*fact_ne * sqrt(gamma*(Ti0+Te0))/fact_time * abs(Bnorm) / max(sqrt(BB2), tiny(1.d0))
+
+              case ( 'Jn_wall' )
+                res = - zj0 * Bnorm / ( fact_mu_zero * F0 )
+
+              case ( 'j_over_jsat' )
+                res = ( - zj0 * Bnorm / ( fact_mu_zero * F0 ) )                                          &
+                    / max( EL_CHG * r0*fact_ne * sqrt(gamma*(Ti0+Te0))/fact_time * abs(Bnorm) / max(sqrt(BB2), tiny(1.d0)), tiny(1.d0) )
+
+              case ( 'bnd_type' )
+                res = dble(pol_pos%bnd_type)
+
+              case ( 'bnd_dl' )
+                res = pol_pos%dl
+
               case ( 'heatF_sheath' )
                 res = gamma_stangeby*r0*Te0*vpar0*Bnorm*fact_flux
 
@@ -2097,6 +2157,12 @@ module mod_expression
 
               case ( 'partF_prp_cv' )
                 res = (partF_cnv_tot_norm - partF_cnv_par_norm) * fact_ne / fact_time
+
+              case ( 'partF_vpar' )
+                res = r0 * vpar0 * Bnorm * fact_ne / fact_time
+
+              case ( 'partF_ExB' )
+                res = r0 * (-R*u0_Z*nmlR + R*u0_R*nmlZ) * fact_ne / fact_time
 
               case ( 'partF_total'  )
                 res = partF_cnv_tot_norm * fact_ne / fact_time

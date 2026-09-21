@@ -54,6 +54,7 @@ module mod_position
     ! --- Quantities related to boundary elements
     real*8             :: bnd_normal(2) = 0.d0 !< Normal vector to the computational boundary (pointing outside)
     real*8             :: dl = 0.d0  !< Poloidal distance represented by this poloidal position (m)
+    integer            :: bnd_type = 0 !< JOREK boundary-type label of the nearer node of this boundary side
   end type t_pol_pos
   
   !> Data structure for a list of poloidal positions
@@ -454,7 +455,8 @@ module mod_position
     integer,                      intent(in)    :: n_elm_pts
 
     ! --- Local variables
-    integer                  :: i_bnd, m_bndelem, mv1, m_elm, m_pt
+    integer                  :: i_bnd, m_bndelem, mv1, m_elm, m_pt, iv_a, iv_b
+    real*8                   :: acc_length
     real*8                   :: s_or_t, s, t
     real*8                   :: R, R_s, R_t, Z, Z_s, Z_t
     real*8                   :: vec_out(2)
@@ -462,6 +464,7 @@ module mod_position
     type(t_pol_pos), pointer :: pos
 
     i_bnd = 0  ! index for bnd point
+    acc_length = 0.d0
   
     ! --- alllocate position list
     call alloc_pol_pos(pos_list, (/1, n_elm_pts * bnd_elm_list%n_bnd_elements /))
@@ -506,6 +509,17 @@ module mod_position
           pos%bnd_normal = (/ -pos%Z_s, pos%R_s /) / sqrt(pos%R_s**2.d0 + pos%Z_s**2.d0)
           pos%dl         = sqrt(pos%R_s**2.d0 + pos%Z_s**2.d0)/float(n_elm_pts) 
         end if
+
+        ! --- Arclength along the boundary walk (bnd_elm_list order) and the boundary type of the nearer node
+        pos%length = acc_length
+        acc_length = acc_length + pos%dl
+        iv_a = mv1
+        iv_b = mod(mv1,4) + 1
+        if ( s_or_t .lt. 0.5d0 ) then
+          pos%bnd_type = pos%nodes(iv_a)%boundary
+        else
+          pos%bnd_type = pos%nodes(iv_b)%boundary
+        endif
 
         ! --- Correct normal direction to point outwards 
         ! --- Get point inside the element
