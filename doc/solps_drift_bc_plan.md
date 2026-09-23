@@ -42,9 +42,10 @@ Notation as in `mod_boundary_matrix_open.f90`: `Bn = B_pol.n`, `b_n = bdotn`, `c
    fallback)**: target `T = cs|b_n| - vE_r` (parallel normal speed, may be negative down to
    `-cs|b_n|`, as in the wide-grid branch). Residual `res = Bn*Vpar - T`, imposed only where `res < 0` (the flow is
    slower than drift-compatible Bohm); where `res >= 0` the row is inactive and Vpar follows its own equation. Weight
-   and assembly as the present weak row. The active set is decided on the state at the start of the step (same
-   convention as the other branches) and differentiated exactly on the branch taken. Replaces both the equality and
-   the `Vpar = 0` pin of the present code.
+   and assembly as the present weak row. The active set is decided per node from the node's own state (OR over its
+   wall edges), collected during one matrix construction and used in the next (a one-step lag; all nodes active
+   before the first collection), and differentiated exactly on the branch taken. Replaces both the equality and the
+   `Vpar = 0` pin of the present code.
 3. **Wall fluxes**: `Gamma = n * max(vn, cs|b_n|)`, energy `gamma_sh * T * Gamma`: the present sheath-set flux with
    floor `cs|b_n|` at every point (full `vE_n` in `vn`, as in SOLPS BCCON=14). No change of form, only the cut
    dependence goes.
