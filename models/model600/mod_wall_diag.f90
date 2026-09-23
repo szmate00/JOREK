@@ -14,8 +14,8 @@
 !!              Phi     wall potential range [V]
 !! [wall flow]  per type: min/max of Vpar*Bn, vE.n, vn and cs|b.n|, min |b.n|, max |dPhi/ds| [V/m]
 !! [wall min]   per type: min rho [1e20 m^-3], min Ti, min Te [eV], each with (R,Z)
-!! [wall pt]    full local state at the wall point with the lowest rho, the lowest Te, the largest |vE.n| and the
-!!              largest excess-sink density, over all types and ranks
+!! [wall pt]    full local state at the wall point with the lowest rho, the lowest Te, the largest |vE.n|, the
+!!              largest excess-sink density and the largest Mach number |Vpar*B|/cs, over all types and ranks
 !! [wall prof]  the full wall profile, one line per wall Gauss point (printed by every rank for its own points),
 !!              every wall_diag_profile_every steps (0: never) and automatically on the step where the wall minimum
 !!              of rho or Te is non-positive or has fallen below half its value at the previous report
@@ -31,14 +31,14 @@ module mod_wall_diag
 
   integer, parameter :: nt   = 30                !< max_bnd_types
   integer, parameter :: ns   = 15                !< state vector length
-  integer, parameter :: npt  = 4                 !< [wall pt] entries
+  integer, parameter :: npt  = 5                 !< [wall pt] entries
   integer, parameter :: ncap = 50000             !< wall Gauss points kept per rank for [wall prof]
   real*8, save :: s_len(nt), s_in(nt), s_sub(nt), s_flux(nt), s_sink(nt), s_mom(nt), s_den(nt)
   real*8, save :: x_veo(nt), x_vei(nt), x_mach(nt), x_phi(nt), n_phi(nt)
   real*8, save :: f_min(5,nt), f_max(5,nt)       !< Vpar*Bn, vE.n, vn, cs|b.n|, |b.n| (min) / |dPhi/ds| (max)
   real*8, save :: n_rho(nt), n_Ti(nt), n_Te(nt)
   real*8, save :: l_rho(2,nt), l_Ti(2,nt), l_Te(2,nt), l_veo(2,nt), l_vei(2,nt)
-  real*8, save :: p_st(ns,npt), p_key(npt)       !< states and keys (min rho, min Te, max |vE.n|, max sink)
+  real*8, save :: p_st(ns,npt), p_key(npt)       !< states and keys (min rho, min Te, max |vE.n|, max sink, max M)
   real*8, save, allocatable :: buf(:,:)
   integer, save :: nbuf = 0
   real*8, save :: prev_rho = huge(1.d0), prev_Te = huge(1.d0)
@@ -63,7 +63,7 @@ subroutine wall_diag_reset()
   f_min = huge(1.d0) ; f_max = -huge(1.d0)
   n_rho = huge(1.d0) ; n_Ti = huge(1.d0) ; n_Te = huge(1.d0)
   l_rho = 0.d0 ; l_Ti = 0.d0 ; l_Te = 0.d0 ; l_veo = 0.d0 ; l_vei = 0.d0
-  p_st = 0.d0 ; p_key = (/ huge(1.d0), huge(1.d0), -huge(1.d0), -huge(1.d0) /)
+  p_st = 0.d0 ; p_key = (/ huge(1.d0), huge(1.d0), -huge(1.d0), -huge(1.d0), -huge(1.d0) /)
   if ( active .and. .not. allocated(buf) ) allocate(buf(ns,ncap))
   nbuf = 0
 end subroutine wall_diag_reset
@@ -108,6 +108,7 @@ subroutine wall_diag_add(bnd_type, w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vE
   if ( Te        .lt. p_key(2) ) then ; p_key(2) = Te        ; p_st(:,2) = st ; endif
   if ( abs(vEn)  .gt. p_key(3) ) then ; p_key(3) = abs(vEn)  ; p_st(:,3) = st ; endif
   if ( sink      .gt. p_key(4) ) then ; p_key(4) = sink      ; p_st(:,4) = st ; endif
+  if ( mach      .gt. p_key(5) ) then ; p_key(5) = mach      ; p_st(:,5) = st ; endif
   if ( nbuf .lt. ncap ) then
     nbuf = nbuf + 1
     buf(:,nbuf) = st
@@ -131,13 +132,13 @@ subroutine wall_diag_report(my_id, node_list)
   real*8  :: g_len(nt), g_in(nt), g_sub(nt), g_flux(nt), g_sink(nt), g_mom(nt), g_den(nt)
   real*8  :: g_veo(nt), g_vei(nt), g_mach(nt), g_phi(nt), m_phi(nt), g_rho(nt), g_Ti(nt), g_Te(nt)
   real*8  :: gf_min(5,nt), gf_max(5,nt)
-  real*8  :: loc(2,5,nt), loc_g(2,5,nt), pt(ns,npt), pt_g(ns,npt), kmin(2), kmax(2)
+  real*8  :: loc(2,5,nt), loc_g(2,5,nt), pt(ns,npt), pt_g(ns,npt), kmin(2), kmax(3)
   real*8  :: v_norm, T_eV, n_20, phi_V, wall_rho, wall_Te
   real*8  :: nr, nti, nte, xte, val
   real*8  :: lr(3), lti(3), lte(3), lxte(3)
   integer :: it, ierr, inode, k
   logical :: prof
-  character(len=8) :: tag(npt) = (/ 'minrho  ', 'minTe   ', 'max|vE| ', 'maxsink ' /)
+  character(len=8) :: tag(npt) = (/ 'minrho  ', 'minTe   ', 'max|vE| ', 'maxsink ', 'maxMach ' /)
 
   if ( .not. active ) return
 
@@ -170,10 +171,12 @@ subroutine wall_diag_report(my_id, node_list)
   enddo
   call MPI_ALLREDUCE(loc, loc_g, 10*nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(p_key(1:2), kmin, 2, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, ierr)
-  call MPI_ALLREDUCE(p_key(3:4), kmax, 2, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(p_key(3:5), kmax, 3, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
   pt = -huge(1.d0)
   do k = 1, 2
     if ( p_key(k)   .eq. kmin(k) ) pt(:,k)   = p_st(:,k)
+  enddo
+  do k = 1, 3
     if ( p_key(k+2) .eq. kmax(k) ) pt(:,k+2) = p_st(:,k+2)
   enddo
   call MPI_ALLREDUCE(pt, pt_g, ns*npt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
