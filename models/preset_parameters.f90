@@ -95,7 +95,9 @@ subroutine preset_parameters
   wall_diag             = .true.  ! [wall]/[volume] diagnostics tables in the log (only under mach1_weak)
   wall_diag_every       = 1
   wall_diag_profile_every = 0
-  mach1_weak            = .false. ! drift-compatible Bohm condition on the total normal flow (replaces the nodal Mach rows)
+  mach1_weak            = .false. ! weak Bohm condition Vpar = +-cs/|B| (replaces the nodal Mach rows)
+  mach1_weak_drift      = .false. ! compensate the ExB drift by parallel flow (SOLPS non-marginal form)
+  mach1_weak_drift_cut  = .false. ! no compensation below the grazing angle min_sheath_angle (marginal row there)
   Vpar_smoothing        = .false. ! smooth the transitions of Vpar positive/negavtive at B.n
   Vpar_smoothing_coef   = (/0.01d0, 0.d0, 0.d0 /) !(/ 0.01d0, 0.016d0, 0.00575446347d0/)
   min_sheath_angle      = 1.d0   ! 1 degree (not in radians)

@@ -60,9 +60,10 @@ real*8     :: c_1, c_2, c_3, c_angle, neutral_source
 real*8     :: element_size_ij, element_size_kl, element_size_perp
 real*8     :: grad_t(2), B0_R, B0_Z, factor_cs_bnd_integral
 logical    :: mw_on                                              ! weak Bohm condition (mach1_weak) on this edge
+logical    :: mw_dc                                              ! the row compensates the ExB drift at this Gauss point
 real*8     :: mw_orient, mw_vEn, mw_Bn, mw_vn, mw_tgt, mw_act, mw_cs, mw_res, mw_w
 real*8     :: fx_n, fx_v, fx_p, fx_u, fx_T                      ! normal-flow measure of the sheath fluxes and its columns
-real*8     :: ex_n, ex_v, ex_p, ex_u, ex_T, sf_cb               ! excess sink of the sheath-set wall flux and its columns
+real*8     :: ex_n, ex_v, ex_p, ex_u, ex_T, sf_cb, sf_f         ! excess sink of the sheath-set wall flux and its columns
 logical    :: xpoint2
 integer    :: n_tor_local 
 logical    :: apply_natural_bc(0:n_var)
@@ -319,62 +320,72 @@ do ms=1, n_gauss
     normal_sign  = sign(1.d0,bdotn)
     normal_sign3 = sign(1.d0,ps0_s) * normal_sign
 
-    ! --- Drift-compatible Bohm condition (mach1_weak): the total normal flow into the sheath,
-    ! ---   vn = Vpar*(B_pol.n) + vE.n  >=  cs*|b.n| ,
-    ! --- imposed in the same form on every wall Gauss point, with no angle gate, by two consistent parts:
-    ! --- 1. Vpar row, one weighted residual per Gauss point on the Vpar trace (SOLPS non-marginal form):
-    ! ---      res = (B_pol.n)*Vpar - max(cs*|b.n| - vE.n, 0),   weight d(res)/d(Vpar) = B_pol.n
-    ! ---    the parallel flow supplies the outward normal flow the ExB drift does not and is never asked to
-    ! ---    reverse; where the drift alone exceeds cs*|b.n| the target is 0.
-    ! --- 2. Wall fluxes: the volume advection of rho and p is not integrated by parts, so it carries an implicit
-    ! ---    wall flux q*vn*R*dl in both directions, with no inflow datum where vn < 0. The same condition is
-    ! ---    imposed on the flux, pointwise:  Gamma = n*max(vn, cs*|b.n|),  energy gamma_sh*T*Gamma,  i.e. the
-    ! ---    sheath rows on fx_n = max(vn, cs*|b.n|)*R*dl plus the excess sink -q*ex_n,
-    ! ---    ex_n = max(cs*|b.n| - vn, 0)*R*dl (q = rho, rho*Ti, rho*Te), which replaces the implicit q*vn by
-    ! ---    q*max(vn, cs*|b.n|). Zero wherever the row holds; a sink proportional to q where it does not
-    ! ---    pointwise (the row fixes moments), so the wall never supplies plasma.
-    ! --- The kinetic recycling uses the same Gamma (mod_particle_wall_interaction). vE.n = -orient*R*u_s/dl
-    ! --- (v_E = (-R*u_Z, +R*u_R)); Vpar*(B_pol.n) is the parallel normal speed (v = Vpar*B).
-    ! --- mw_act is the u column's switch, mw_cs the cs column's. fx_v, fx_p, fx_u, fx_T: coefficients of the
-    ! --- trial Vpar, psi_s, u_s and cs(T) columns. On the Bohm branch |b.n|*R*dl = |ps0_s|/Btot; the Btot
-    ! --- dependence on the normal psi derivative is lagged.
+    ! --- Weak Bohm condition (mach1_weak), one residual per Gauss point on the Vpar trace:
+    ! ---   res = (B_pol.n)*Vpar - target,   weight d(res)/d(Vpar) = B_pol.n
+    ! --- so the row fades as (B.n)^2 at grazing incidence.
+    ! --- target = cs*|b.n|                        (marginal Bohm, Vpar = +-cs/|B|)
+    ! ---        = max(cs*|b.n| - vE.n, 0)          with mach1_weak_drift: the parallel flow supplies the
+    ! ---                                           outward normal flow the ExB drift does not (SOLPS
+    ! ---                                           non-marginal form); with mach1_weak_drift_cut only
+    ! ---                                           where |b.n| >= sin(min_sheath_angle)
+    ! --- vE.n = -orient*R*u_s/dl is the outward ExB normal speed (v_E = (-R*u_Z, +R*u_R)), Vpar*(B_pol.n)
+    ! --- the parallel normal speed (v = Vpar*B). mw_act is the u column's switch, mw_cs the cs column's.
+    ! --- mw_dc: the row compensates the drift at this point.
     mw_orient = sign(1.d0, y_s(ms)*normal(1) - x_s(ms)*normal(2))
     mw_vEn    = - mw_orient * BigR * eq_s(mp,var_u,ms) / dl
     mw_Bn     = bdotn * Btot
-    mw_tgt    = cs0 * abs(bdotn) - mw_vEn
-    mw_act    = 1.d0
+    mw_dc     = mach1_weak_drift .and. .not. ( mach1_weak_drift_cut .and. abs(bdotn) .lt. sin(c_angle) )
+    mw_tgt    = cs0 * abs(bdotn)
+    mw_act    = 0.d0
     mw_cs     = 1.d0
-    if ( mw_tgt .le. 0.d0 ) then          ! drift alone already sonic: the parallel flow is not asked to reverse
-      mw_tgt = 0.d0
-      mw_act = 0.d0
-      mw_cs  = 0.d0
+    if ( mw_dc ) then
+      mw_tgt = cs0 * abs(bdotn) - mw_vEn
+      mw_act = 1.d0
+      if ( mw_tgt .le. 0.d0 ) then        ! drift alone already sonic: the parallel flow is not asked to reverse
+        mw_tgt = 0.d0
+        mw_act = 0.d0
+        mw_cs  = 0.d0
+      endif
     endif
     mw_res = mw_Bn * Vpar0 - mw_tgt
     mw_w   = 0.d0
     if ( mw_on ) mw_w = Zbig * mw_Bn * dl
     mw_vn  = mw_Bn * Vpar0 + mw_vEn       ! total normal speed, outward positive
 
-    ! --- Normal flow in the sheath particle and energy fluxes: develop's parallel measure
-    ! --- vpar0*ps0_s*normal_sign3 = Vpar*(B_pol.n)*R*dl off the weak route, the sheath-set flux on it.
+    ! --- Wall fluxes under mach1_weak, the same condition as the row at every point. The volume advection of
+    ! --- rho and p is not integrated by parts, so it carries an implicit wall flux q*vn*R*dl in both directions,
+    ! --- with no inflow datum where vn < 0. It is replaced by the sheath flux
+    ! ---   Gamma = n*max(vn, v_fl),   energy gamma_sh*T*Gamma,
+    ! --- v_fl = cs*|b.n| where the row compensates the drift (the drift-compatible Bohm minimum: Gamma is the
+    ! --- Bohm flux wherever the row holds), v_fl = 0 where it does not (grazing cut, marginal row): there the
+    ! --- wall removes what flows out and supplies nothing where the flow is inward. In the rows:
+    ! --- fx_n = max(vn, v_fl)*R*dl and the excess sink -q*ex_n, ex_n = max(v_fl - vn, 0)*R*dl (q = rho,
+    ! --- rho*Ti, rho*Te), a sink proportional to q; boundary energy term oint q^2 (vn/2 - max(vn, v_fl)) <= 0.
+    ! --- The kinetic recycling uses the same Gamma (mod_particle_wall_interaction).
+    ! --- fx_v, fx_p, fx_u, fx_T: coefficients of the trial Vpar, psi_s, u_s and cs(T) columns. On the Bohm branch
+    ! --- |b.n|*R*dl = |ps0_s|/Btot; the Btot dependence on the normal psi derivative is lagged.
+    ! --- Off the weak route: develop's parallel measure vpar0*ps0_s*normal_sign3 = Vpar*(B_pol.n)*R*dl.
     fx_n = vpar0 * ps0_s * normal_sign3
     fx_v =         ps0_s * normal_sign3
     fx_p = vpar0         * normal_sign3
     fx_u = 0.d0
     fx_T = 0.d0
     ex_n = 0.d0; ex_v = 0.d0; ex_p = 0.d0; ex_u = 0.d0; ex_T = 0.d0
+    sf_f  = 0.d0
+    if ( mw_dc ) sf_f = 1.d0
+    sf_cb = sf_f * cs0 * abs(bdotn)
     if ( mw_on ) then
-      sf_cb = cs0 * abs(bdotn)
       if ( mw_vn .ge. sf_cb ) then          ! flow satisfies the condition: Gamma = n*vn
         fx_n = mw_vn * BigR * dl
         fx_v = mw_Bn * BigR * dl
         fx_p = vpar0 * normal_sign3
         fx_u = - mw_orient * BigR**2
-      else                                  ! Bohm branch: Gamma = n*cs*|b.n|, excess sink n*(cs*|b.n| - vn)
+      else                                  ! Gamma = n*v_fl, excess sink n*(v_fl - vn)
         fx_n = sf_cb * BigR * dl
         fx_v = 0.d0
-        fx_p = cs0 * sign(1.d0, ps0_s) / Btot
+        fx_p = sf_f * cs0 * sign(1.d0, ps0_s) / Btot
         fx_u = 0.d0
-        fx_T = abs(bdotn) * BigR * dl
+        fx_T = sf_f * abs(bdotn) * BigR * dl
         ex_n = ( sf_cb - mw_vn ) * BigR * dl
         ex_v = - mw_Bn * BigR * dl
         ex_p = fx_p - vpar0 * normal_sign3
@@ -386,10 +397,10 @@ do ms=1, n_gauss
     ! --- Wall diagnostics (wall_diag): first toroidal plane, attributed to the types of both edge endpoints
     if ( mw_on .and. mp .eq. 1 ) then
       call wall_diag_add(bnd_type1, ws*dl, BigR, y_g(ms), r0, Ti0, Te0, Vpar0, Btot, mw_Bn, bdotn, mw_vEn, cs0, &
-                         mw_res, eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl)
+                         mw_res, eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl, sf_cb)
       if ( bnd_type2 .ne. bnd_type1 ) &
         call wall_diag_add(bnd_type2, ws*dl, BigR, y_g(ms), r0, Ti0, Te0, Vpar0, Btot, mw_Bn, bdotn, mw_vEn, cs0, &
-                           mw_res, eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl)
+                           mw_res, eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl, sf_cb)
     endif
 
 

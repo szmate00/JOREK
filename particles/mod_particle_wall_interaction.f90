@@ -1683,7 +1683,8 @@ end function fluid_sputtering_yield
 !> Assume that the impact angle of all particles is 0
 subroutine project_sputter_vars_on_edge(this, sim)
   use mod_atomic_elements, only: atomic_weights
-  use phys_module, only: central_mass, xpoint, xcase, min_sheath_angle, gamma, mach1_weak, bcs
+  use phys_module, only: central_mass, xpoint, xcase, min_sheath_angle, gamma, mach1_weak, mach1_weak_drift, &
+                         mach1_weak_drift_cut, bcs
   
   type(wall_action),  intent(inout) :: this
   type(particle_sim), intent(in)    :: sim
@@ -1697,6 +1698,7 @@ subroutine project_sputter_vars_on_edge(this, sim)
   real*8 :: v_ExB(3), v_n_tot !< fluid ExB velocity and total outgoing normal flow at the wall [m/s]
   real*8 :: n_e_tmp, T_e_tmp, T_i_b, c_s_b !< fluid Ti and sound speed sqrt(gamma*(Ti+Te)) for the Bohm flux
   logical :: mw_edge                       !< the fluid assembles the Bohm row and the sheath-set flux on this edge
+  logical :: mw_dc                         !< ... and its row compensates the ExB drift at this point
   integer :: i_side, iv1, iv2              !< element side of the wall point and its two vertices
 
   real*8 :: psi_axis, R_axis, Z_axis, s_axis, t_axis, psi_xpoint(2), psi_limit, R_xpoint(2), Z_xpoint(2), s_xpoint(2), t_xpoint(2)
@@ -1737,10 +1739,10 @@ subroutine project_sputter_vars_on_edge(this, sim)
 #else
     !$omp parallel do default(none) &
     !$omp shared(this, sim, gamma, &
-    !$omp i_patch, central_mass, psi_axis, psi_limit, c_angle, mach1_weak, bcs) &
+    !$omp i_patch, central_mass, psi_axis, psi_limit, c_angle, mach1_weak, mach1_weak_drift, mach1_weak_drift_cut, bcs) &
 #endif
     !$omp private(i, n_e, T_e, vpar, E, B, psi, U, vector_normal, B_hat, cos_alpha, q, T_i, mass_ion, c_s, m, Gamma_d, &
-    !$omp         yield, Z, v_ExB, v_n_tot, n_e_tmp, T_e_tmp, T_i_b, c_s_b, mw_edge, i_side, iv1, iv2) schedule(static)
+    !$omp         yield, Z, v_ExB, v_n_tot, n_e_tmp, T_e_tmp, T_i_b, c_s_b, mw_edge, mw_dc, i_side, iv1, iv2) schedule(static)
     do i = 1, size(this%fluid_yield_integral%patch(i_patch)%xyz, 2) !< over all nodes
       call sim%fields%calc_NeTevpar(sim%time, this%fluid_yield_integral%patch(i_patch)%i_elm_jorek_edge(i), this%fluid_yield_integral%patch(i_patch)%st(:,i), &
         real(this%fluid_yield_integral%patch(i_patch)%xyz(3,i), 8), n_e, T_e, vpar)
@@ -1772,9 +1774,9 @@ subroutine project_sputter_vars_on_edge(this, sim)
       m = atomic_weights(Z) * ATOMIC_MASS_UNIT
       
       ! --- Incident ion flux: under mach1_weak exactly what the fluid loses through this wall point
-      ! --- (mod_boundary_matrix_open): on edges whose both endpoints are mach1 types the drift-compatible
-      ! --- sheath flux n*max(vn, cs*|b.n|), elsewhere the outgoing part of the total flow n*max(vn, 0), plus
-      ! --- the c_angle floor with the fluid's sound speed sqrt(gamma*(Ti+Te)) in both.
+      ! --- (mod_boundary_matrix_open): n*max(vn, cs*|b.n|) where the fluid's Bohm row compensates the drift
+      ! --- (edge with both endpoints mach1 types, mach1_weak_drift, and not below the grazing cut), otherwise
+      ! --- n*max(vn, 0), plus the c_angle floor with the fluid's sound speed sqrt(gamma*(Ti+Te)).
       ! --- vn = Vpar*(B.n) + vE.n on the outward normal (wall_normal_vector points inward, hence the minus).
       ! --- The develop parallel-flow form otherwise.
       if ( mach1_weak ) then
@@ -1792,7 +1794,8 @@ subroutine project_sputter_vars_on_edge(this, sim)
                     this%fluid_yield_integral%patch(i_patch)%i_elm_jorek_edge(i) )%vertex(mod(i_side,4)+1) )%boundary
         mw_edge = .false.
         if ( iv1 .ge. 1 .and. iv2 .ge. 1 ) mw_edge = bcs(iv1)%mach1 .and. bcs(iv2)%mach1
-        if ( mw_edge ) then
+        mw_dc   = mw_edge .and. mach1_weak_drift .and. .not. ( mach1_weak_drift_cut .and. cos_alpha .lt. sin(c_angle) )
+        if ( mw_dc ) then
           Gamma_d = n_e * max(v_n_tot, c_s_b * cos_alpha) + n_e * c_s_b * c_angle
         else
           Gamma_d = n_e * max(v_n_tot, 0.d0)            + n_e * c_s_b * c_angle

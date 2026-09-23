@@ -6,8 +6,9 @@
 !! [wall]       per boundary type
 !!              len     wall length carrying the sheath rows [m]
 !!              in      fraction of that length with vn < 0 (net inflow)
-!!              sub     fraction with vn < cs*|b.n| (sheath-set excess sink active)
-!!              sink    int rho*(cs|b.n| - vn)^+ R dl / int rho*max(vn, cs|b.n|) R dl
+!!              sub     fraction with vn < v_fl (sheath-set excess sink active; v_fl = cs|b.n| where the row
+!!                      compensates the drift, 0 below the grazing cut)
+!!              sink    int rho*(v_fl - vn)^+ R dl / int rho*max(vn, v_fl) R dl
 !!              mom     |sum Bn*res*dl| / sum |Bn|*cs|b.n|*dl, the moment of the Bohm row
 !!              vE.n    largest outward and largest inward ExB normal speed, with (R,Z)
 !!              M       largest |Vpar*B|/cs
@@ -70,24 +71,25 @@ end subroutine wall_diag_reset
 
 
 !> One wall Gauss point, JOREK units; w = Gauss weight * dl. u is the potential variable, Te_s and u_s the
-!! tangential derivatives per unit length.
-subroutine wall_diag_add(bnd_type, w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vEn, cs, res, u, Te_s, u_s)
+!! tangential derivatives per unit length, vfl the flux floor the sheath rows apply here (cs*|b.n| where the Bohm
+!! row compensates the drift, 0 below the grazing cut or with the marginal row).
+subroutine wall_diag_add(bnd_type, w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vEn, cs, res, u, Te_s, u_s, vfl)
   implicit none
   integer, intent(in) :: bnd_type
-  real*8,  intent(in) :: w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vEn, cs, res, u, Te_s, u_s
+  real*8,  intent(in) :: w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vEn, cs, res, u, Te_s, u_s, vfl
   real*8 :: vn, cb, gam, sink, mach, st(ns)
   if ( .not. active ) return
   if ( bnd_type .lt. 1 .or. bnd_type .gt. nt ) return
   vn   = Bn * Vpar + vEn
   cb   = cs * abs(b_n)
-  gam  = rho * max(vn, cb) * R
-  sink = rho * max(cb - vn, 0.d0)
+  gam  = rho * max(vn, vfl) * R
+  sink = rho * max(vfl - vn, 0.d0)
   mach = abs(Vpar) * Btot / max(cs, tiny(1.d0))
   st   = (/ dble(bnd_type), R, Z, rho, Ti, Te, u, Bn*Vpar, vEn, cb, vn, b_n, mach, Te_s, u_s /)
   !$omp critical (wall_diag)
   s_len(bnd_type)  = s_len(bnd_type)  + w
   if ( vn .lt. 0.d0 ) s_in(bnd_type)  = s_in(bnd_type)  + w
-  if ( vn .lt. cb )   s_sub(bnd_type) = s_sub(bnd_type) + w
+  if ( vn .lt. vfl )  s_sub(bnd_type) = s_sub(bnd_type) + w
   s_flux(bnd_type) = s_flux(bnd_type) + gam * w
   s_sink(bnd_type) = s_sink(bnd_type) + sink * R * w
   s_mom(bnd_type)  = s_mom(bnd_type)  + Bn * res * w
