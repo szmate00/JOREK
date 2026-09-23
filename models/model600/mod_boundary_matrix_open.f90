@@ -60,7 +60,8 @@ real*8     :: element_size_ij, element_size_kl, element_size_perp
 real*8     :: grad_t(2), B0_R, B0_Z, factor_cs_bnd_integral
 logical    :: mw_on                                              ! weak Bohm condition (mach1_weak) on this edge
 real*8     :: mw_orient, mw_vEn, mw_Bn, mw_vn, mw_tgt, mw_act, mw_cs, mw_res, mw_w
-real*8     :: fx_n, fx_v, fx_p, fx_u, fx_out                    ! normal-flow measure of the sheath fluxes and its columns
+real*8     :: fx_n, fx_v, fx_p, fx_u, fx_T, fx_out              ! normal-flow measure of the sheath fluxes and its columns
+real*8     :: ex_n, ex_v, ex_p, ex_u, ex_T, sf_cb               ! excess sink of the sheath-set wall flux and its columns
 logical    :: xpoint2
 integer    :: n_tor_local 
 logical    :: apply_natural_bc(0:n_var)
@@ -349,11 +350,13 @@ do ms=1, n_gauss
 
     ! --- Normal flow in the sheath particle and energy fluxes: vpar0*ps0_s*normal_sign3 = Vpar*(B_pol.n)*R*dl.
     ! --- Under mach1_weak it is the total outgoing flow max(vn,0)*R*dl, the same flow the Bohm row and the
-    ! --- kinetic recycling see. fx_v, fx_p, fx_u: coefficients of the trial Vpar, psi_s and u_s columns.
+    ! --- kinetic recycling see. fx_v, fx_p, fx_u, fx_T: coefficients of the trial Vpar, psi_s, u_s and cs(T) columns.
     fx_n = vpar0 * ps0_s * normal_sign3
     fx_v =         ps0_s * normal_sign3
     fx_p = vpar0         * normal_sign3
     fx_u = 0.d0
+    fx_T = 0.d0
+    ex_n = 0.d0; ex_v = 0.d0; ex_p = 0.d0; ex_u = 0.d0; ex_T = 0.d0
     if ( mw_on ) then
       fx_out = 0.d0
       if ( mw_vn .gt. 0.d0 ) fx_out = 1.d0
@@ -361,6 +364,31 @@ do ms=1, n_gauss
       fx_v = fx_out * mw_Bn * BigR * dl
       fx_p = fx_out * vpar0 * normal_sign3
       fx_u = - fx_out * mw_orient * BigR**2
+    endif
+
+    ! --- Sheath-set wall flux (mach1_weak_drift). The volume advection of rho and p is not integrated by parts,
+    ! --- so it carries an implicit wall flux q*vn*R*dl in both directions, with no inflow datum where vn < 0.
+    ! --- The drift-compatible Bohm condition is imposed on the flux itself, pointwise:
+    ! ---   Gamma = n*max(vn, cs*|b.n|),   energy gamma_sh*T*Gamma,
+    ! --- by keeping the rows above on fx_n = max(vn, cs*|b.n|)*R*dl and adding the excess sink
+    ! ---   - q*ex_n,   ex_n = max(cs*|b.n| - vn, 0)*R*dl        (q = rho, rho*Ti, rho*Te)
+    ! --- which replaces the implicit flux q*vn by q*max(vn, cs*|b.n|). Zero where the flow already satisfies the
+    ! --- condition; otherwise a sink proportional to q, so the wall never supplies plasma.
+    ! --- On the Bohm branch |b.n|*R*dl = |ps0_s|/Btot; the Btot dependence on the normal psi derivative is lagged.
+    if ( mw_on .and. mach1_weak_drift ) then
+      sf_cb = cs0 * abs(bdotn)
+      if ( mw_vn .lt. sf_cb ) then
+        fx_n = sf_cb * BigR * dl
+        fx_v = 0.d0
+        fx_p = cs0 * sign(1.d0, ps0_s) / Btot
+        fx_u = 0.d0
+        fx_T = abs(bdotn) * BigR * dl
+        ex_n = ( sf_cb - mw_vn ) * BigR * dl
+        ex_v = - mw_Bn * BigR * dl
+        ex_p = fx_p - vpar0 * normal_sign3
+        ex_u = + mw_orient * BigR**2
+        ex_T = fx_T
+      endif
     endif
 
 
@@ -395,19 +423,23 @@ do ms=1, n_gauss
 
             ! --- Density reflection and minimum particle flux
             rhs_ij(var_rho)   = + v * density_reflection * r0      * fx_n * tstep     &
+                                - v * r0      * ex_n * tstep                          & ! sheath-set wall flux: excess sink
                                 - v * r0      * cs0 * BigR * dl * c_angle * tstep     ! particle flux at 1 degree angle  
 
 
             ! --- Sheath heat flux (c_angle for mininum heat fluxes at grazing angles)
             if (with_TiTe) then
               rhs_ij(var_Ti)  = - v * (gamma_sheath_i-1.d0) * r0 * Ti0 * fx_n * tstep &
+                                - v *                         r0 * Ti0 * ex_n * tstep &
                                 - v * (gamma_sheath_i-1.d0) * r0 * Ti0 * cs0    * BigR * dl * c_angle * tstep & 
                                 - v * (GAMMA - 1.d0) * vpar0 * visco_par_heating * gradvpar0dotn * BigR * dl  * tstep  
 
               rhs_ij(var_Te)  = - v * (gamma_sheath_e-1.d0) * r0 * Te0 * fx_n * tstep &
+                                - v *                         r0 * Te0 * ex_n * tstep &
                                 - v * (gamma_sheath_e-1.d0) * r0 * Te0 * cs0  * BigR * dl * c_angle   * tstep  
             else
               rhs_ij(var_T)   = - v * (gamma_sheath  -1.d0) * r0 * T0  * fx_n * tstep &
+                                - v *                         r0 * T0  * ex_n * tstep &
                                 - v * (gamma_sheath  -1.d0) * r0 * T0  * cs0    * BigR * dl * c_angle * tstep & 
                                 - v * (GAMMA - 1.d0) * vpar0 * visco_par_heating * gradvpar0dotn * BigR * dl  * tstep  
             endif
@@ -474,53 +506,89 @@ do ms=1, n_gauss
                 if (with_vpar) then
 
                   ! --- Density reflection and minimum particle flux (c_angle)
-                  amat(var_rho,var_psi)   = - v * density_reflection * r0  * psi_s * fx_p * theta * tstep 
+                  amat(var_rho,var_psi)   = - v * density_reflection * r0  * psi_s * fx_p * theta * tstep &
+                                            + v                      * r0  * psi_s * ex_p * theta * tstep
                   amat(var_rho,var_rho)   = - v * density_reflection * rho * fx_n * theta * tstep &
+                                            + v                      * rho * ex_n * theta * tstep &
                                             + v                      * rho * cs0   * BigR * dl * c_angle  * theta * tstep 
-                  amat(var_rho,var_vpar)  = - v * density_reflection * r0  * vpar * fx_v * theta * tstep 
+                  amat(var_rho,var_vpar)  = - v * density_reflection * r0  * vpar * fx_v * theta * tstep &
+                                            + v                      * r0  * vpar * ex_v * theta * tstep
 
-                  amat(var_rho,var_u)     = - v * density_reflection * r0 * fx_u * psi_s * theta * tstep
+                  amat(var_rho,var_u)     = - v * density_reflection * r0 * fx_u * psi_s * theta * tstep &
+                                            + v                      * r0 * ex_u * psi_s * theta * tstep
 
                   ! --- Sheath heat flux
                   if (with_TiTe) then                
-                    amat(var_rho,var_Ti)  = + v * r0 * cs_Ti * BigR * dl * c_angle  * theta * tstep
-                    amat(var_rho,var_Te)  = + v * r0 * cs_Te * BigR * dl * c_angle  * theta * tstep
+                    amat(var_rho,var_Ti)  = + v * r0 * cs_Ti * BigR * dl * c_angle  * theta * tstep &
+                                            + v * r0 * cs_Ti * ( ex_T - density_reflection * fx_T ) * theta * tstep
+                    amat(var_rho,var_Te)  = + v * r0 * cs_Te * BigR * dl * c_angle  * theta * tstep &
+                                            + v * r0 * cs_Te * ( ex_T - density_reflection * fx_T ) * theta * tstep
                   else
-                    amat(var_rho,var_T)   = + v * r0 * cs_T  * BigR * dl * c_angle  * theta * tstep
+                    amat(var_rho,var_T)   = + v * r0 * cs_T  * BigR * dl * c_angle  * theta * tstep &
+                                            + v * r0 * cs_T  * ( ex_T - density_reflection * fx_T ) * theta * tstep
                   endif
 
                   ! --- Sheath heat flux
                   if (with_TiTe) then                
-                    amat(var_Ti,var_psi)  = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * psi_s * fx_p * theta * tstep 
+                    amat(var_Ti,var_psi)  = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * psi_s * fx_p * theta * tstep &
+                                            + v *                         r0  * Ti0 * psi_s * ex_p * theta * tstep
                     amat(var_Ti,var_rho)  = + v * (gamma_sheath_i-1.d0) * rho * Ti0 * fx_n * theta * tstep & 
+                                            + v *                         rho * Ti0 * ex_n * theta * tstep &
                                             + v * (gamma_sheath_i-1.d0) * rho * Ti0 * cs0   * BigR  * dl * c_angle * theta * tstep 
                     amat(var_Ti,var_Ti)   = + v * (gamma_sheath_i-1.d0) * r0  * Ti  * fx_n * theta * tstep & 
+                                            + v *                         r0  * Ti  * ex_n * theta * tstep &
                                             + v * (gamma_sheath_i-1.d0) * r0  * Ti  * cs0   * BigR  * dl * c_angle * theta * tstep &
                                             + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * cs_Ti * BigR  * dl * c_angle * theta * tstep
 
-                    amat(var_Te,var_psi)  = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * psi_s * fx_p * theta * tstep 
+                    amat(var_Te,var_psi)  = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * psi_s * fx_p * theta * tstep &
+                                            + v *                         r0  * Te0 * psi_s * ex_p * theta * tstep
                     amat(var_Te,var_rho)  = + v * (gamma_sheath_e-1.d0) * rho * Te0 * fx_n * theta * tstep & 
+                                            + v *                         rho * Te0 * ex_n * theta * tstep &
                                             + v * (gamma_sheath_e-1.d0) * rho * Te0 * cs0   * BigR  * dl * c_angle * theta * tstep 
-                    amat(var_Te,var_Te)   = + v * (gamma_sheath_e-1.d0) * r0  * Te  * fx_n * theta * tstep &
+                    amat(var_Te,var_Te)   = + v * (gamma_sheath_e-1.d0) * r0  * Te  * fx_n * theta * tstep & 
+                                            + v *                         r0  * Te  * ex_n * theta * tstep &
                                             + v * (gamma_sheath_e-1.d0) * r0  * Te  * cs0   * BigR  * dl * c_angle * theta * tstep &
                                             + v * (gamma_sheath_e-1.d0) * r0  * Te0 * cs_Te * BigR  * dl * c_angle * theta * tstep
 
                     amat(var_Ti,var_vpar) = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * vpar * fx_v * theta * tstep &
+                                            + v *                         r0  * Ti0 * vpar * ex_v * theta * tstep &
                                             + v * (GAMMA - 1.d0) * vpar * visco_par_heating * gradvpar0dotn * BigR * dl    * theta * tstep &
                                             + v * (GAMMA - 1.d0) * vpar0 * visco_par_heating * gradvpardotn * BigR * dl    * theta * tstep
-                    amat(var_Te,var_vpar) = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * vpar * fx_v * theta * tstep 
-                    amat(var_Ti,var_u)    = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * fx_u * psi_s * theta * tstep
-                    amat(var_Te,var_u)    = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * fx_u * psi_s * theta * tstep
+                    amat(var_Te,var_vpar) = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * vpar * fx_v * theta * tstep &
+                                            + v *                         r0  * Te0 * vpar * ex_v * theta * tstep
+                    amat(var_Ti,var_u)    = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * fx_u * psi_s * theta * tstep &
+                                            + v *                         r0  * Ti0 * ex_u * psi_s * theta * tstep
+                    amat(var_Te,var_u)    = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * fx_u * psi_s * theta * tstep &
+                                            + v *                         r0  * Te0 * ex_u * psi_s * theta * tstep
+                    ! --- Sheath-set wall flux, Bohm branch: fx_n and ex_n depend on T through cs (both species).
+                    ! --- The cross-species columns also carry the c_angle floor's cs dependence (sheath-set route only, so
+                    ! --- that develop runs keep their Jacobian bit for bit).
+                    amat(var_Ti,var_Ti)   = amat(var_Ti,var_Ti) &
+                                            + v * r0 * Ti0 * cs_Ti * ( (gamma_sheath_i-1.d0) * fx_T + ex_T ) * theta * tstep
+                    amat(var_Ti,var_Te)   = + v * r0 * Ti0 * cs_Te * ( (gamma_sheath_i-1.d0) * fx_T + ex_T ) * theta * tstep &
+                                            + v * (gamma_sheath_i-1.d0) * r0 * Ti0 * cs_Te * BigR * dl * c_angle * theta * tstep &
+                                              * merge(1.d0, 0.d0, mw_on .and. mach1_weak_drift)
+                    amat(var_Te,var_Te)   = amat(var_Te,var_Te) &
+                                            + v * r0 * Te0 * cs_Te * ( (gamma_sheath_e-1.d0) * fx_T + ex_T ) * theta * tstep
+                    amat(var_Te,var_Ti)   = + v * r0 * Te0 * cs_Ti * ( (gamma_sheath_e-1.d0) * fx_T + ex_T ) * theta * tstep &
+                                            + v * (gamma_sheath_e-1.d0) * r0 * Te0 * cs_Ti * BigR * dl * c_angle * theta * tstep &
+                                              * merge(1.d0, 0.d0, mw_on .and. mach1_weak_drift)
                   else
-                    amat(var_T,var_psi)   = + v * (gamma_sheath  -1.d0) * r0  *  T0 * psi_s * fx_p * theta * tstep 
+                    amat(var_T,var_psi)   = + v * (gamma_sheath  -1.d0) * r0  *  T0 * psi_s * fx_p * theta * tstep &
+                                            + v *                         r0  *  T0 * psi_s * ex_p * theta * tstep
                     amat(var_T,var_rho)   = + v * (gamma_sheath  -1.d0) * rho *  T0 * fx_n * theta * tstep &
+                                            + v *                         rho *  T0 * ex_n * theta * tstep &
                                             + v * (gamma_sheath  -1.d0) * rho *  T0 * cs0   * BigR  * dl * c_angle * theta * tstep 
                     amat(var_T,var_T)     = + v * (gamma_sheath  -1.d0) * r0  *  T  * fx_n * theta * tstep &
+                                            + v *                         r0  *  T  * ex_n * theta * tstep &
                                             + v * (gamma_sheath  -1.d0) * r0  *  T  * cs0   * BigR  * dl * c_angle * theta * tstep &
-                                            + v * (gamma_sheath  -1.d0) * r0  *  T0 * cs_T  * BigR  * dl * c_angle * theta * tstep
+                                            + v * (gamma_sheath  -1.d0) * r0  *  T0 * cs_T  * BigR  * dl * c_angle * theta * tstep &
+                                            + v * r0 * T0 * cs_T * ( (gamma_sheath-1.d0) * fx_T + ex_T ) * theta * tstep
 
-                    amat(var_T,var_u)     = + v * (gamma_sheath  -1.d0) * r0  * T0  * fx_u * psi_s * theta * tstep
+                    amat(var_T,var_u)     = + v * (gamma_sheath  -1.d0) * r0  * T0  * fx_u * psi_s * theta * tstep &
+                                            + v *                         r0  * T0  * ex_u * psi_s * theta * tstep
                     amat(var_T,var_vpar)  = + v * (gamma_sheath  -1.d0) * r0  * T0  * vpar * fx_v * theta * tstep & 
+                                            + v *                         r0  * T0  * vpar * ex_v * theta * tstep &
                                             + v * (GAMMA - 1.d0) * vpar * visco_par_heating * gradvpar0dotn * BigR * dl    * theta * tstep &
                                             + v * (GAMMA - 1.d0) * vpar0 * visco_par_heating * gradvpardotn * BigR * dl    * theta * tstep
                   endif ! with_TiTe
@@ -555,10 +623,10 @@ do ms=1, n_gauss
                                              - v * neutral_reflection * rho     * cs0 * BigR * dl * c_angle * theta * tstep 
  
                     if (with_TiTe) then 
-                      amat(var_rhon,var_Ti) = - v * neutral_reflection * r0 * cs_Ti * BigR * dl * c_angle * theta * tstep 
-                      amat(var_rhon,var_Te) = - v * neutral_reflection * r0 * cs_Te * BigR * dl * c_angle * theta * tstep 
+                      amat(var_rhon,var_Ti) = - v * neutral_reflection * r0 * cs_Ti * ( BigR * dl * c_angle + fx_T ) * theta * tstep 
+                      amat(var_rhon,var_Te) = - v * neutral_reflection * r0 * cs_Te * ( BigR * dl * c_angle + fx_T ) * theta * tstep 
                     else
-                      amat(var_rhon,var_T)  = - v * neutral_reflection * r0 * cs_T  * BigR * dl * c_angle * theta * tstep 
+                      amat(var_rhon,var_T)  = - v * neutral_reflection * r0 * cs_T  * ( BigR * dl * c_angle + fx_T ) * theta * tstep 
                     endif
   
                     amat(var_rhon,var_vpar) = - v * neutral_reflection * r0 * vpar * fx_v     * theta * tstep 

@@ -27,8 +27,12 @@ sheath_Lambda        = 3.d0
 ```
 
 `dirichlet%u` stays `.true.` on those types. Nothing else changes: the production timestep ramp,
-`min_sheath_angle`, `D_perp_sc_num` and every other parameter stay as in a develop run. Reference case:
-2000+ steps from the equilibrium through the ramp `1e-3 .. 10`.
+`min_sheath_angle`, `D_perp_sc_num` and every other parameter stay as in a develop run.
+
+Status: the earlier 2000+ step reference ran with the kinetic recycling clipped to INFLOW (inward
+`wall_normal_vector`), i.e. target recycling at the c_angle floor. With the recycling on the outward normal
+the same namelist died at step 729 (density holes at the inner strike point, then Te blow-up where rho -> 0).
+The sheath-set wall flux (item 4) is the fix for that; not yet run.
 
 ## What is assembled
 
@@ -53,7 +57,20 @@ sheath_Lambda        = 3.d0
    reflection rows (exact u, Vpar, psi columns) and in the kinetic recycling flux, on the outward normal
    (`calc_EBpsiU` returns the fluid ExB velocity `R grad(u) x e_phi`). Off the weak route the expressions
    are unchanged. `calc_NeTevpar` now reads Te itself in a two-temperature model600 build (it read Ti/2).
-4. **Exterior sides only** (`mod_boundary_edges.f90`): the open-boundary integral is skipped on interior
+4. **Sheath-set wall flux** (`mach1_weak_drift`, `mod_boundary_matrix_open.f90`,
+   `mod_particle_wall_interaction.f90`). The volume advection of rho, rho*Ti and rho*Te (parallel and ExB)
+   is not integrated by parts, so it carries an implicit wall flux `q*vn*R*dl` in both directions, with no
+   inflow datum where `vn < 0`; a central Galerkin advection term gains energy `-1/2 oint q^2 vn` there.
+   The drift-compatible Bohm condition is therefore imposed on the flux itself, pointwise:
+   `Gamma = n*max(vn, cs*|b.n|)`, energy `gamma_sh*T*Gamma`, kinetic recycling on the same `Gamma`. In the
+   rows this is `fx_n = max(vn, cs*|b.n|)*R*dl` plus the excess sink `-q*max(cs*|b.n| - vn, 0)*R*dl`,
+   which replaces the implicit `q*vn` by `q*max(vn, cs*|b.n|)`. It is zero wherever the flow already
+   satisfies the condition (the weak row holds only in moments, and the grazing cut and the pinned
+   `Vpar = 0` branch leave points that do not), and otherwise a sink proportional to q: the boundary
+   energy term becomes `oint q^2 (vn/2 - max(vn, cs|b.n|)) <= 0` for every vn. Exact columns on rho, Ti,
+   Te, Vpar, u and the psi trace; the Btot dependence of `|b.n|` on the normal psi derivative is lagged.
+   The kinetic side uses `cs = sqrt(gamma*(Ti+Te))` with the fluid Ti (`calc_NeTeTi`) for the Bohm branch.
+5. **Exterior sides only** (`mod_boundary_edges.f90`): the open-boundary integral is skipped on interior
    sides with two labelled endpoints (table from connectivity, once per matrix construction).
 
 Conventions: outward-positive normal flows; `vE.n = -orient*R*u_s/dl`, `orient = sign(y_s*n_R - x_s*n_Z)`
