@@ -59,6 +59,9 @@ module phys_module
                                   !< the fluid model, only recombination coefficients in the kinetic model
   logical :: deuterium_adas_1e20  !< use OPEN ADAS with fixed density=1e20 to calculate ionization, recombination and radiation coeffients for deuterium
   logical :: mach_one_bnd_integral!< use a boundary integral (boundary_matrix_open) to implement Mach=one boundary condition
+  logical :: wall_diag            !< print the [wall]/[volume] diagnostics tables to the log under mach1_weak (model600)
+  integer :: wall_diag_every      !< ... every this many time steps
+  integer :: wall_diag_profile_every !< full wall profile every this many steps (0: only when the wall min of rho or Te collapses)
   logical :: mach1_weak           !< weak (Galerkin) Bohm condition Vpar*(B_pol.n) = cs*|b.n| on the wall (model600)
   logical :: mach1_weak_drift     !< mach1_weak on the TOTAL normal flow, Vpar*(B_pol.n) >= cs*|b.n| - vE.n (SOLPS non-marginal form)
   logical :: mach1_weak_drift_cut   !< no drift compensation where |b.n| < sin(min_sheath_angle): the marginal row there

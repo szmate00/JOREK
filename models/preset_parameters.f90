@@ -92,6 +92,9 @@ subroutine preset_parameters
   deuterium_adas_1e20   = .false. 
   old_deuterium_atomic  = .false. 
   mach_one_bnd_integral = .false. ! implement Mach one condition as boundary integral
+  wall_diag             = .true.  ! [wall]/[volume] diagnostics tables in the log (only under mach1_weak)
+  wall_diag_every       = 1
+  wall_diag_profile_every = 0
   mach1_weak            = .false. ! weak Bohm condition Vpar = +-cs/|B| (replaces the nodal Mach rows)
   mach1_weak_drift      = .false. ! compensate the ExB drift by parallel flow (SOLPS non-marginal form)
   mach1_weak_drift_cut  = .false. ! no compensation below the grazing angle min_sheath_angle (marginal row there)
