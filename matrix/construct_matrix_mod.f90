@@ -329,6 +329,7 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
 #if JOREK_MODEL == 600
   use mod_boundary_edges, only: boundary_edges_build
   use mod_wall_diag,      only: wall_diag_reset, wall_diag_report
+  use mod_bohm_active,    only: bohm_active_begin, bohm_active_finish
 #endif
   
   !$ use omp_lib
@@ -473,6 +474,7 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   ! --- Exterior-side table: the open-boundary integral must not land on an interior side with two labelled endpoints
   if ( mach1_weak .or. any(bcs(:)%floating_u) ) call boundary_edges_build(element_list, node_list, my_id)
   call wall_diag_reset()
+  if ( mach1_weak .and. mach1_weak_drift_style .eq. 1 ) call bohm_active_begin(node_list%n_dof)
 #endif
 
   if (mhd_sim%freeboundary .and. (mhd_sim%sr_n_tor /= 0 ) ) then
@@ -767,6 +769,8 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
 #if JOREK_MODEL == 600
   ! --- Wall and volume diagnostics tables (wall_diag), from the boundary integrals just assembled
   if ( .not. harmonic_matrix ) call wall_diag_report(my_id, node_list)
+  ! --- Per-node active set of the Bohm inequality, used from the next matrix construction on
+  if ( mach1_weak .and. mach1_weak_drift_style .eq. 1 .and. .not. harmonic_matrix ) call bohm_active_finish()
 #endif
  
   ! --- Memory tracking

@@ -13,6 +13,8 @@
 !!              vE.n    largest outward and largest inward ExB normal speed, with (R,Z)
 !!              M       largest |Vpar*B|/cs
 !!              Phi     wall potential range [V]
+!! [wall row]   per type: fractions of the wall length where the Bohm row is imposed, the drift bound is active
+!!              (style 1), and the point is field-aligned (style 1)
 !! [wall flow]  per type: min/max of Vpar*Bn, vE.n, vn and cs|b.n|, min |b.n|, max |dPhi/ds| [V/m]
 !! [wall min]   per type: min rho [1e20 m^-3], min Ti, min Te [eV], each with (R,Z)
 !! [wall pt]    full local state at the wall point with the lowest rho, the lowest Te, the largest |vE.n|, the
@@ -35,6 +37,7 @@ module mod_wall_diag
   integer, parameter :: npt  = 5                 !< [wall pt] entries
   integer, parameter :: ncap = 50000             !< wall Gauss points kept per rank for [wall prof]
   real*8, save :: s_len(nt), s_in(nt), s_sub(nt), s_flux(nt), s_sink(nt), s_mom(nt), s_den(nt)
+  real*8, save :: s_row(nt), s_bnd(nt), s_fa(nt)
   real*8, save :: x_veo(nt), x_vei(nt), x_mach(nt), x_phi(nt), n_phi(nt)
   real*8, save :: f_min(5,nt), f_max(5,nt)       !< Vpar*Bn, vE.n, vn, cs|b.n|, |b.n| (min) / |dPhi/ds| (max)
   real*8, save :: n_rho(nt), n_Ti(nt), n_Te(nt)
@@ -60,6 +63,7 @@ subroutine wall_diag_reset()
   implicit none
   active = wall_diag_now()
   s_len = 0.d0 ; s_in = 0.d0 ; s_sub = 0.d0 ; s_flux = 0.d0 ; s_sink = 0.d0 ; s_mom = 0.d0 ; s_den = 0.d0
+  s_row = 0.d0 ; s_bnd = 0.d0 ; s_fa = 0.d0
   x_veo = -huge(1.d0) ; x_vei = huge(1.d0) ; x_mach = 0.d0 ; x_phi = -huge(1.d0) ; n_phi = huge(1.d0)
   f_min = huge(1.d0) ; f_max = -huge(1.d0)
   n_rho = huge(1.d0) ; n_Ti = huge(1.d0) ; n_Te = huge(1.d0)
@@ -73,10 +77,12 @@ end subroutine wall_diag_reset
 !> One wall Gauss point, JOREK units; w = Gauss weight * dl. u is the potential variable, Te_s and u_s the
 !! tangential derivatives per unit length, vfl the flux floor the sheath rows apply here (cs*|b.n| where the Bohm
 !! row compensates the drift, 0 below the grazing cut or with the marginal row).
-subroutine wall_diag_add(bnd_type, w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vEn, cs, res, u, Te_s, u_s, vfl)
+subroutine wall_diag_add(bnd_type, w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vEn, cs, res, u, Te_s, u_s, vfl, &
+                         row, bnd, fa)
   implicit none
   integer, intent(in) :: bnd_type
   real*8,  intent(in) :: w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vEn, cs, res, u, Te_s, u_s, vfl
+  logical, intent(in) :: row, bnd, fa   !< Bohm row imposed here, drift bound active, field-aligned point
   real*8 :: vn, cb, gam, sink, mach, st(ns)
   if ( .not. active ) return
   if ( bnd_type .lt. 1 .or. bnd_type .gt. nt ) return
@@ -90,6 +96,9 @@ subroutine wall_diag_add(bnd_type, w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vE
   s_len(bnd_type)  = s_len(bnd_type)  + w
   if ( vn .lt. 0.d0 ) s_in(bnd_type)  = s_in(bnd_type)  + w
   if ( vn .lt. vfl )  s_sub(bnd_type) = s_sub(bnd_type) + w
+  if ( row ) s_row(bnd_type) = s_row(bnd_type) + w
+  if ( bnd ) s_bnd(bnd_type) = s_bnd(bnd_type) + w
+  if ( fa  ) s_fa(bnd_type)  = s_fa(bnd_type)  + w
   s_flux(bnd_type) = s_flux(bnd_type) + gam * w
   s_sink(bnd_type) = s_sink(bnd_type) + sink * R * w
   s_mom(bnd_type)  = s_mom(bnd_type)  + Bn * res * w
@@ -133,7 +142,7 @@ subroutine wall_diag_report(my_id, node_list)
 
   real*8  :: g_len(nt), g_in(nt), g_sub(nt), g_flux(nt), g_sink(nt), g_mom(nt), g_den(nt)
   real*8  :: g_veo(nt), g_vei(nt), g_mach(nt), g_phi(nt), m_phi(nt), g_rho(nt), g_Ti(nt), g_Te(nt)
-  real*8  :: gf_min(5,nt), gf_max(5,nt)
+  real*8  :: gf_min(5,nt), gf_max(5,nt), g_row(nt), g_bnd(nt), g_fa(nt)
   real*8  :: loc(2,5,nt), loc_g(2,5,nt), pt(ns,npt), pt_g(ns,npt), kmin(2), kmax(3)
   real*8  :: v_norm, T_eV, n_20, phi_V, wall_rho, wall_Te
   real*8  :: nr, nti, nte, xte, val
@@ -151,6 +160,9 @@ subroutine wall_diag_report(my_id, node_list)
   call MPI_ALLREDUCE(s_sink, g_sink, nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(s_mom,  g_mom,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(s_den,  g_den,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(s_row,  g_row,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(s_bnd,  g_bnd,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(s_fa,   g_fa,   nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(x_veo,  g_veo,  nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(x_vei,  g_vei,  nt, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(x_mach, g_mach, nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
@@ -207,6 +219,11 @@ subroutine wall_diag_report(my_id, node_list)
         abs(g_mom(it))/max(g_den(it), tiny(1.d0)),                                                &
         g_veo(it)*v_norm, loc_g(:,1,it), g_vei(it)*v_norm, loc_g(:,2,it), g_mach(it),             &
         m_phi(it)*phi_V, g_phi(it)*phi_V
+    enddo
+    write(*,'(A)') ' [wall row] type  row    bnd    fa     (fractions of the wall length: Bohm row imposed, drift bound active, field-aligned)'
+    do it = 1, nt
+      if ( g_len(it) .le. 0.d0 ) cycle
+      write(*,'(A,I4,3F7.3)') ' [wall row] ', it, g_row(it)/g_len(it), g_bnd(it)/g_len(it), g_fa(it)/g_len(it)
     enddo
     write(*,'(A)') ' [wall flow] type  Vpar*Bn min / max    vE.n min / max       vn min / max         cs|b.n| min / max    min|b.n|   max|dPhi/ds|[V/m]'
     do it = 1, nt

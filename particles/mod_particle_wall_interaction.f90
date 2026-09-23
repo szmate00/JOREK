@@ -1684,7 +1684,7 @@ end function fluid_sputtering_yield
 subroutine project_sputter_vars_on_edge(this, sim)
   use mod_atomic_elements, only: atomic_weights
   use phys_module, only: central_mass, xpoint, xcase, min_sheath_angle, gamma, mach1_weak, mach1_weak_drift, &
-                         mach1_weak_drift_cut, bcs
+                         mach1_weak_drift_cut, mach1_weak_drift_style, mach1_weak_qalf_min, bcs
   
   type(wall_action),  intent(inout) :: this
   type(particle_sim), intent(in)    :: sim
@@ -1739,7 +1739,8 @@ subroutine project_sputter_vars_on_edge(this, sim)
 #else
     !$omp parallel do default(none) &
     !$omp shared(this, sim, gamma, &
-    !$omp i_patch, central_mass, psi_axis, psi_limit, c_angle, mach1_weak, mach1_weak_drift, mach1_weak_drift_cut, bcs) &
+    !$omp i_patch, central_mass, psi_axis, psi_limit, c_angle, mach1_weak, mach1_weak_drift, mach1_weak_drift_cut, &
+    !$omp mach1_weak_drift_style, mach1_weak_qalf_min, bcs) &
 #endif
     !$omp private(i, n_e, T_e, vpar, E, B, psi, U, vector_normal, B_hat, cos_alpha, q, T_i, mass_ion, c_s, m, Gamma_d, &
     !$omp         yield, Z, v_ExB, v_n_tot, n_e_tmp, T_e_tmp, T_i_b, c_s_b, mw_edge, mw_dc, i_side, iv1, iv2) schedule(static)
@@ -1795,6 +1796,8 @@ subroutine project_sputter_vars_on_edge(this, sim)
         mw_edge = .false.
         if ( iv1 .ge. 1 .and. iv2 .ge. 1 ) mw_edge = bcs(iv1)%mach1 .and. bcs(iv2)%mach1
         mw_dc   = mw_edge .and. mach1_weak_drift .and. .not. ( mach1_weak_drift_cut .and. cos_alpha .lt. sin(c_angle) )
+        ! SOLPS style: Bohm minimum everywhere except at field-aligned points, as the fluid rows
+        if ( mach1_weak_drift_style .eq. 1 ) mw_dc = mw_edge .and. cos_alpha .ge. mach1_weak_qalf_min
         if ( mw_dc ) then
           Gamma_d = n_e * max(v_n_tot, c_s_b * cos_alpha) + n_e * c_s_b * c_angle
         else

@@ -26,6 +26,13 @@ mach1_weak_drift_cut = .t.   ! ... except where the field grazes the wall
 sheath_Lambda        = 3.d0
 ```
 
+SOLPS-ITER style (recommended, `mach1_weak_drift_style = 1`, see `doc/solps_drift_bc_plan.md`):
+
+```fortran
+mach1_weak_drift_style = 1        ! drift bounded to +-2 cs|b.n|, Bohm row as an inequality (per-node active set)
+mach1_weak_qalf_min    = 1.d-3    ! field-aligned threshold in |b.n| (SOLPS Qalfmin); mach1_weak_drift_cut = .f.
+```
+
 `dirichlet%u` stays `.true.` on those types. Nothing else changes: the production timestep ramp,
 `min_sheath_angle`, `D_perp_sc_num` and every other parameter stay as in a develop run.
 
@@ -66,8 +73,19 @@ recycling now apply the same floor as the row at every point. Not yet run in thi
      reads Te itself in a two-temperature model600 build (it read Ti/2).
    Exact columns on rho, Ti, Te, Vpar, u and the psi trace; the Btot dependence on the free normal psi
    derivative is lagged (trace-DOF loop), as are the `corr_neg` derivatives of cs (pre-existing).
+   **Style 1 (`mach1_weak_drift_style = 1`, SOLPS-ITER BCMOM=13/BCCON=14 non-marginal, wide-grid form).** The drift
+   is bounded, `vE_r = clamp(vE.n, +-2 cs|b.n|)`, so the parallel correction never exceeds 2 cs; the row target is
+   `cs|b.n| - vE_r` (may be negative down to `-cs|b.n|`) and is imposed as an inequality: on a node's test functions
+   only if at that node `(B_pol.n)*Vpar < cs|b.n| - vE_r` (`mod_bohm_active.f90`; decided per node from the node's own
+   state, OR over its wall edges, collected in one matrix construction and used in the next, all nodes active before
+   the first). A free node follows the momentum equation with its natural condition (zero viscous flux). The wall
+   fluxes use `Gamma = n*max(vn, cs|b.n|)` at every point, the kinetic recycling the same. At field-aligned points
+   `|b.n| < mach1_weak_qalf_min` there is no Bohm row and the flux floor is 0 (`n*max(vn, 0)` plus the c_angle floor,
+   the analogue of SOLPS's leakage). `mach1_weak_drift_cut` must be off (setup check); `min_sheath_angle` then only
+   sets the c_angle floor.
 3. **Diagnostics** (`wall_diag`, default on under `mach1_weak`; `wall_diag_every`, `wall_diag_profile_every`;
-   `mod_wall_diag.f90`): per step in the log, `[wall]` per boundary type (inflow and sub-Bohm fractions, sink
+   `mod_wall_diag.f90`): per step in the log, `[wall]` per boundary type, `[wall row]` (fractions of the wall with the
+   Bohm row imposed, the drift bound active, field-aligned), (inflow and sub-Bohm fractions, sink
    share, Bohm-row moment, extreme vE.n with location, max Mach, potential range), `[wall flow]` (ranges of
    Vpar*B.n, vE.n, vn, cs|b.n|, min |b.n|, max |dPhi/ds|), `[wall min]` (min rho, Ti, Te with location),
    `[wall pt]` (full local state at the min-rho, min-Te, max-|vE.n|, max-sink and max-Mach points), `[volume]` (node

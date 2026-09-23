@@ -67,6 +67,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 density_reflection,                                 &
                 mach_one_bnd_integral, mach1_weak, mach1_weak_drift,&
                 mach1_weak_drift_cut, Vpar_smoothing,               &
+                mach1_weak_drift_style, mach1_weak_qalf_min,        &
                 wall_diag, wall_diag_every, wall_diag_profile_every,&
                 Vpar_smoothing_coef,                                &
                 zjz_0, zjz_1, zj_coef,                              &
@@ -259,6 +260,24 @@ if (my_id .eq. 0) then
   if ( mach1_weak .and. ( mach_one_bnd_integral .or. (.not. with_vpar) ) ) then
     write(*,*) 'ERROR: mach1_weak needs with_vpar and excludes mach_one_bnd_integral, EXITING!'
     stop
+  end if
+  if ( mach1_weak_drift_style .ne. 0 .and. mach1_weak_drift_style .ne. 1 ) then
+    write(*,*) 'ERROR: mach1_weak_drift_style must be 0 or 1, EXITING!'
+    stop
+  end if
+  if ( mach1_weak_drift_style .eq. 1 ) then
+    if ( .not. ( mach1_weak .and. mach1_weak_drift ) ) then
+      write(*,*) 'ERROR: mach1_weak_drift_style = 1 needs mach1_weak and mach1_weak_drift, EXITING!'
+      stop
+    end if
+    if ( mach1_weak_drift_cut ) then
+      write(*,*) 'ERROR: mach1_weak_drift_style = 1 bounds the drift itself; mach1_weak_drift_cut must be .false., EXITING!'
+      stop
+    end if
+    if ( mach1_weak_qalf_min .lt. 0.d0 ) then
+      write(*,*) 'ERROR: mach1_weak_qalf_min must be >= 0, EXITING!'
+      stop
+    end if
   end if
   if ( any(bcs(:)%floating_u) ) then
     if ( .not. mach1_weak ) then

@@ -97,6 +97,8 @@ subroutine preset_parameters
   wall_diag_profile_every = 0
   mach1_weak            = .false. ! weak Bohm condition Vpar = +-cs/|B| (replaces the nodal Mach rows)
   mach1_weak_drift      = .false. ! compensate the ExB drift by parallel flow (SOLPS non-marginal form)
+  mach1_weak_drift_style = 0      ! 1: SOLPS-ITER drift-compatible Bohm (bounded drift, inequality)
+  mach1_weak_qalf_min   = 1.d-3   ! style 1: field-aligned threshold in |b.n| (SOLPS Qalfmin default)
   mach1_weak_drift_cut  = .false. ! no compensation below the grazing angle min_sheath_angle (marginal row there)
   Vpar_smoothing        = .false. ! smooth the transitions of Vpar positive/negavtive at B.n
   Vpar_smoothing_coef   = (/0.01d0, 0.d0, 0.d0 /) !(/ 0.01d0, 0.016d0, 0.00575446347d0/)

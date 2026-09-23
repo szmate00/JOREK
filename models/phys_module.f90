@@ -64,6 +64,8 @@ module phys_module
   integer :: wall_diag_profile_every !< full wall profile every this many steps (0: only when the wall min of rho or Te collapses)
   logical :: mach1_weak           !< weak (Galerkin) Bohm condition Vpar*(B_pol.n) = cs*|b.n| on the wall (model600)
   logical :: mach1_weak_drift     !< mach1_weak on the TOTAL normal flow, Vpar*(B_pol.n) >= cs*|b.n| - vE.n (SOLPS non-marginal form)
+  integer :: mach1_weak_drift_style !< 0: equality row, unbounded drift; 1: SOLPS-ITER BCMOM=13/BCCON=14 non-marginal: drift bounded to +-2cs|b.n|, inequality row (per-node active set)
+  real*8  :: mach1_weak_qalf_min   !< style 1: |b.n| below which a wall point is field-aligned (no Bohm row, flux floor 0), SOLPS Qalfmin
   logical :: mach1_weak_drift_cut   !< no drift compensation where |b.n| < sin(min_sheath_angle): the marginal row there
   logical :: vpar_smoothing       !< apply a smoothing function to smooth jumps in Vpar at B.n=0
   real*8  :: vpar_smoothing_coef(3) !< coefficients for the smoothing profile of the parallel velocity

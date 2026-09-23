@@ -875,6 +875,8 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   write(*,INTG_FMT) 'wall_diag_profile_every', wall_diag_profile_every
   write(*,LOGI_FMT) 'mach1_weak_drift      ', mach1_weak_drift
   write(*,LOGI_FMT) 'mach1_weak_drift_cut  ', mach1_weak_drift_cut
+  write(*,INTG_FMT) 'mach1_weak_drift_style', mach1_weak_drift_style
+  write(*,REAL_FMT) 'mach1_weak_qalf_min   ', mach1_weak_qalf_min
   write(*,LOGI_FMT) 'deuterium_adas        ', deuterium_adas       
   write(*,LOGI_FMT) 'old_deuterium_atomic  ', old_deuterium_atomic
   write(*,LOGI_FMT) 'deuterium_adas_1e20   ', deuterium_adas_1e20

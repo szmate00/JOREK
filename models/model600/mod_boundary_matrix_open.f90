@@ -18,6 +18,8 @@ use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
 use mod_wall_diag, only: wall_diag_add
+use mod_bohm_active, only: bohm_active_mark, bohm_active_node
+use mod_basisfunctions, only: basisfunctions1
 
 implicit none
 
@@ -64,6 +66,12 @@ logical    :: mw_dc                                              ! the row compe
 real*8     :: mw_orient, mw_vEn, mw_Bn, mw_vn, mw_tgt, mw_act, mw_cs, mw_res, mw_w
 real*8     :: fx_n, fx_v, fx_p, fx_u, fx_T                      ! normal-flow measure of the sheath fluxes and its columns
 real*8     :: ex_n, ex_v, ex_p, ex_u, ex_T, sf_cb, sf_f         ! excess sink of the sheath-set wall flux and its columns
+logical    :: sp_on, sp_fa, sp_bnd                              ! SOLPS style (mach1_weak_drift_style=1); field-aligned point; drift bound active
+real*8     :: sp_vEr, mw_wi, sp_node(2)                         ! bounded drift; row weight on node i; per-node activity (0/1)
+real*8     :: he(2,n_degrees_1d,2), he_s(2,n_degrees_1d,2), he_ss(2,n_degrees_1d,2)   ! 1D basis at the two edge endpoints
+real*8     :: e_x, e_y, e_xs, e_ys, e_xt, e_yt, e_ps, e_pt, e_us, e_vp, e_ti, e_te, e_t0, e_esp, e_esz
+real*8     :: e_jac, e_px, e_py, e_nd(2), e_gt(2), e_n(2), e_bt, e_bn, e_cs, e_dl, e_or, e_ven, e_ver
+integer    :: ie
 logical    :: xpoint2
 integer    :: n_tor_local 
 logical    :: apply_natural_bc(0:n_var)
@@ -201,6 +209,70 @@ delta_g = delta_g * tstep / tstep_prev
 delta_s = delta_s * tstep / tstep_prev
 
 n_tor_local = i_tor_max - i_tor_min +1
+
+! --- Drift-compatible Bohm inequality, SOLPS style (mach1_weak_drift_style = 1): per-node active set.
+! --- At each edge endpoint (the node itself) the condition (B_pol.n)*Vpar >= cs*|b.n| - vE_r is evaluated with the
+! --- same interpolation as at the Gauss points (first toroidal plane); a violated node is marked for the next
+! --- matrix construction (mod_bohm_active). sp_node(i) = 1 if the row is imposed on node i's test functions.
+sp_on   = mw_on .and. mach1_weak_drift .and. ( mach1_weak_drift_style .eq. 1 )
+sp_node = 1.d0
+if ( sp_on ) then
+  call basisfunctions1(0.d0, he(:,:,1), he_s(:,:,1), he_ss(:,:,1))
+  call basisfunctions1(1.d0, he(:,:,2), he_s(:,:,2), he_ss(:,:,2))
+  do ie = 1, 2
+    e_x = 0.d0; e_y = 0.d0; e_xs = 0.d0; e_ys = 0.d0; e_xt = 0.d0; e_yt = 0.d0
+    e_ps = 0.d0; e_pt = 0.d0; e_us = 0.d0; e_vp = 0.d0; e_ti = 0.d0; e_te = 0.d0; e_t0 = 0.d0
+    do i = 1, 2
+      do j = 1, 2
+        j2 = direction(j)
+        j3 = direction_perp(j)
+        e_esz = element%size(vertex(i),j2)
+        e_esp = - element%size(vertex(i),direction_perp(1)) * 3.d0
+        if ((vertex(1)*vertex(2) .eq. 2)) e_esp = + element%size(vertex(i),direction_perp(1)) * 3.d0
+        e_x  = e_x  + nodes(i)%x(1,j2,1) * e_esz * he(i,j,ie)
+        e_y  = e_y  + nodes(i)%x(1,j2,2) * e_esz * he(i,j,ie)
+        e_xs = e_xs + nodes(i)%x(1,j2,1) * e_esz * he_s(i,j,ie)
+        e_ys = e_ys + nodes(i)%x(1,j2,2) * e_esz * he_s(i,j,ie)
+        e_xt = e_xt + nodes(i)%x(1,j3,1) * e_esz * he(i,j,ie) * e_esp
+        e_yt = e_yt + nodes(i)%x(1,j3,2) * e_esz * he(i,j,ie) * e_esp
+        do in = 1, n_tor
+          e_ps = e_ps + nodes(i)%values(in,j2,var_psi)  * e_esz * he_s(i,j,ie) * HZ(in,1)
+          e_pt = e_pt + nodes(i)%values(in,j3,var_psi)  * e_esz * he(i,j,ie)   * HZ(in,1) * e_esp
+          e_us = e_us + nodes(i)%values(in,j2,var_u)    * e_esz * he_s(i,j,ie) * HZ(in,1)
+          e_vp = e_vp + nodes(i)%values(in,j2,var_vpar) * e_esz * he(i,j,ie)   * HZ(in,1)
+          if (with_TiTe) then
+            e_ti = e_ti + nodes(i)%values(in,j2,var_Ti) * e_esz * he(i,j,ie)   * HZ(in,1)
+            e_te = e_te + nodes(i)%values(in,j2,var_Te) * e_esz * he(i,j,ie)   * HZ(in,1)
+          else
+            e_t0 = e_t0 + nodes(i)%values(in,j2,var_T)  * e_esz * he(i,j,ie)   * HZ(in,1)
+          endif
+        enddo
+      enddo
+    enddo
+    e_dl   = sqrt(e_xs**2 + e_ys**2)
+    e_jac  = e_xs*e_yt - e_xt*e_ys
+    e_gt   = (/ - e_ys, e_xs /) / e_jac
+    e_nd   = (/ e_x - R_cnt, e_y - Z_cnt /) / norm2((/ e_x - R_cnt, e_y - Z_cnt /))
+    e_n    = dot_product(e_gt, e_nd) * e_gt
+    e_n    = e_n / norm2(e_n)
+    e_px   = (   e_yt * e_ps - e_ys * e_pt ) / e_jac
+    e_py   = ( - e_xt * e_ps + e_xs * e_pt ) / e_jac
+    e_bt   = sqrt(F0**2 + e_px**2 + e_py**2) / e_x
+    e_bn   = (+ e_py * e_n(1) - e_px * e_n(2)) / e_x / e_bt
+    if (with_TiTe) then
+      e_cs = sqrt(gamma*(corr_neg_temp1(e_ti) + corr_neg_temp1(e_te)))
+    else
+      e_cs = sqrt(gamma*corr_neg_temp1(e_t0))
+    endif
+    e_or   = sign(1.d0, e_ys*e_n(1) - e_xs*e_n(2))
+    e_ven  = - e_or * e_x * e_us / e_dl
+    e_ver  = max(-2.d0*e_cs*abs(e_bn), min(2.d0*e_cs*abs(e_bn), e_ven))
+    if ( abs(e_bn) .ge. mach1_weak_qalf_min ) then
+      if ( e_bn*e_bt*e_vp - ( e_cs*abs(e_bn) - e_ver ) .lt. 0.d0 ) call bohm_active_mark(nodes(ie)%index(1))
+    endif
+    sp_node(ie) = bohm_active_node(nodes(ie)%index(1))
+  enddo
+endif
 !--------------------------------------------------- sum over the Gaussian integration points
 do ms=1, n_gauss
 
@@ -338,7 +410,26 @@ do ms=1, n_gauss
     mw_tgt    = cs0 * abs(bdotn)
     mw_act    = 0.d0
     mw_cs     = 1.d0
-    if ( mw_dc ) then
+    sp_fa     = .false.
+    sp_bnd    = .false.
+    if ( sp_on ) then
+      ! --- SOLPS style: drift bounded to +-2 cs|b.n| (the parallel correction never exceeds 2 cs), target may be
+      ! --- negative down to -cs|b.n| (wide-grid SOLPS); imposed as an inequality through the per-node active set;
+      ! --- no row at field-aligned points |b.n| < mach1_weak_qalf_min.
+      mw_dc  = .true.
+      sp_fa  = abs(bdotn) .lt. mach1_weak_qalf_min
+      sp_vEr = max(-2.d0*cs0*abs(bdotn), min(2.d0*cs0*abs(bdotn), mw_vEn))
+      sp_bnd = ( abs(mw_vEn) .gt. 2.d0*cs0*abs(bdotn) )
+      mw_tgt = cs0 * abs(bdotn) - sp_vEr
+      if ( sp_bnd ) then                  ! bound active: target = cs|b.n| -+ 2 cs|b.n|, no u column
+        mw_act = 0.d0
+        mw_cs  = 1.d0 - 2.d0 * sign(1.d0, mw_vEn)
+      else
+        mw_act = 1.d0
+        mw_cs  = 1.d0
+      endif
+      if ( sp_fa ) mw_dc = .false.
+    else if ( mw_dc ) then
       mw_tgt = cs0 * abs(bdotn) - mw_vEn
       mw_act = 1.d0
       if ( mw_tgt .le. 0.d0 ) then        ! drift alone already sonic: the parallel flow is not asked to reverse
@@ -349,7 +440,7 @@ do ms=1, n_gauss
     endif
     mw_res = mw_Bn * Vpar0 - mw_tgt
     mw_w   = 0.d0
-    if ( mw_on ) mw_w = Zbig * mw_Bn * dl
+    if ( mw_on .and. .not. sp_fa ) mw_w = Zbig * mw_Bn * dl
     mw_vn  = mw_Bn * Vpar0 + mw_vEn       ! total normal speed, outward positive
 
     ! --- Wall fluxes under mach1_weak, the same condition as the row at every point. The volume advection of
@@ -397,10 +488,12 @@ do ms=1, n_gauss
     ! --- Wall diagnostics (wall_diag): first toroidal plane, attributed to the types of both edge endpoints
     if ( mw_on .and. mp .eq. 1 ) then
       call wall_diag_add(bnd_type1, ws*dl, BigR, y_g(ms), r0, Ti0, Te0, Vpar0, Btot, mw_Bn, bdotn, mw_vEn, cs0, &
-                         mw_res, eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl, sf_cb)
+                         mw_res, eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl, sf_cb, &
+                         ( mw_w .ne. 0.d0 .and. maxval(sp_node) .gt. 0.d0 ), sp_bnd, sp_fa)
       if ( bnd_type2 .ne. bnd_type1 ) &
         call wall_diag_add(bnd_type2, ws*dl, BigR, y_g(ms), r0, Ti0, Te0, Vpar0, Btot, mw_Bn, bdotn, mw_vEn, cs0, &
-                           mw_res, eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl, sf_cb)
+                           mw_res, eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl, sf_cb, &
+                         ( mw_w .ne. 0.d0 .and. maxval(sp_node) .gt. 0.d0 ), sp_bnd, sp_fa)
     endif
 
 
@@ -415,6 +508,8 @@ do ms=1, n_gauss
     if (mach_one_bnd_integral) factor_cs_bnd_integral = 1.d0
 
     do i=1,2                ! loop over nodes
+
+      mw_wi = mw_w * sp_node(i)   ! weak Bohm row on node i's test functions (per-node active set, style 1)
 
       do j=1,2              ! loop over basis functions
 
@@ -460,7 +555,7 @@ do ms=1, n_gauss
             rhs_ij(var_vpar) = - v * (vpar0 * Btot * normal_sign - cs0 * factor) * dl * Zbig  * factor_cs_bnd_integral 
 
             ! --- Weak Bohm condition (mach1_weak)
-            rhs_ij(var_vpar) = rhs_ij(var_vpar) - v * mw_w * mw_res
+            rhs_ij(var_vpar) = rhs_ij(var_vpar) - v * mw_wi * mw_res
 
             ! --- Fluid neutral reflection
             if (with_neutrals) then 
@@ -616,14 +711,14 @@ do ms=1, n_gauss
                   endif
 
                   ! --- Weak Bohm condition (mach1_weak): columns of mw_res
-                  amat(var_vpar,var_vpar) = amat(var_vpar,var_vpar) + v * mw_w * mw_Bn * vpar
+                  amat(var_vpar,var_vpar) = amat(var_vpar,var_vpar) + v * mw_wi * mw_Bn * vpar
                   if (with_TiTe) then
-                    amat(var_vpar,var_Ti) = amat(var_vpar,var_Ti) - v * mw_w * mw_cs * abs(bdotn) * cs_Ti
-                    amat(var_vpar,var_Te) = amat(var_vpar,var_Te) - v * mw_w * mw_cs * abs(bdotn) * cs_Te
+                    amat(var_vpar,var_Ti) = amat(var_vpar,var_Ti) - v * mw_wi * mw_cs * abs(bdotn) * cs_Ti
+                    amat(var_vpar,var_Te) = amat(var_vpar,var_Te) - v * mw_wi * mw_cs * abs(bdotn) * cs_Te
                   else
-                    amat(var_vpar,var_T)  = amat(var_vpar,var_T)  - v * mw_w * mw_cs * abs(bdotn) * cs_T
+                    amat(var_vpar,var_T)  = amat(var_vpar,var_T)  - v * mw_wi * mw_cs * abs(bdotn) * cs_T
                   endif
-                  amat(var_vpar,var_u)    = - v * mw_w * mw_act * mw_orient * BigR * psi_s / dl
+                  amat(var_vpar,var_u)    = - v * mw_wi * mw_act * mw_orient * BigR * psi_s / dl
                   ! --- No psi column: B_pol.n uses the Dirichlet trace of psi; the |B| dependence on its free
                   ! --- normal derivative is lagged (this loop carries trace DOFs only).
 
