@@ -58,9 +58,6 @@ real*8     :: r0, r0_s, r0_t, r0_p, r0_x, r0_y, rho, rho_s, rho_t, rho_x, rho_y
 real*8     :: c_1, c_2, c_3, c_angle, neutral_source
 real*8     :: element_size_ij, element_size_kl, element_size_perp
 real*8     :: grad_t(2), B0_R, B0_Z, factor_cs_bnd_integral
-logical    :: mw_on                                              ! weak Bohm condition (mach1_weak) on this edge
-real*8     :: mw_orient, mw_vEn, mw_Bn, mw_vn, mw_tgt, mw_act, mw_cs, mw_res, mw_w
-real*8     :: fx_n, fx_v, fx_p, fx_u, fx_out                    ! normal-flow measure of the sheath fluxes and its columns
 logical    :: xpoint2
 integer    :: n_tor_local 
 logical    :: apply_natural_bc(0:n_var)
@@ -141,10 +138,6 @@ do i_var=1, n_var
   if ( (i_var==var_rhon) .and. (bcs(bnd_type1)%natural%rhon .or. bcs(bnd_type2)%natural%rhon))  apply_natural_bc(i_var)=.true.
   if ( (i_var==var_vpar) .and. (bcs(bnd_type1)%natural%vpar .or. bcs(bnd_type2)%natural%vpar))  apply_natural_bc(i_var)=.true.
 enddo
-
-! --- Weak Bohm condition (mach1_weak): on edges whose both endpoints are mach1 types, into the Vpar rows
-mw_on = mach1_weak .and. with_vpar .and. bcs(bnd_type1)%mach1 .and. bcs(bnd_type2)%mach1
-if ( mw_on ) apply_natural_bc(var_vpar) = .true.
 
 do i=1,2    ! sum over 2 verices
   
@@ -317,53 +310,6 @@ do ms=1, n_gauss
     normal_sign  = sign(1.d0,bdotn)
     normal_sign3 = sign(1.d0,ps0_s) * normal_sign
 
-    ! --- Weak Bohm condition (mach1_weak), one residual per Gauss point on the Vpar trace:
-    ! ---   res = (B_pol.n)*Vpar - target,   weight d(res)/d(Vpar) = B_pol.n
-    ! --- so the row fades as (B.n)^2 at grazing incidence and the natural Vpar condition takes over.
-    ! --- target = cs*|b.n|                        (marginal Bohm, Vpar = +-cs/|B|)
-    ! ---        = max(cs*|b.n| - vE.n, 0)          with mach1_weak_drift: the parallel flow supplies the
-    ! ---                                           outward normal flow the ExB drift does not (SOLPS
-    ! ---                                           non-marginal form); with mach1_weak_drift_cut only
-    ! ---                                           where |b.n| >= sin(min_sheath_angle)
-    ! --- vE.n = -orient*R*u_s/dl is the outward ExB normal speed (v_E = (-R*u_Z, +R*u_R)), Vpar*(B_pol.n)
-    ! --- the parallel normal speed (v = Vpar*B). mw_act is the u column's switch, mw_cs the cs column's.
-    mw_orient = sign(1.d0, y_s(ms)*normal(1) - x_s(ms)*normal(2))
-    mw_vEn    = - mw_orient * BigR * eq_s(mp,var_u,ms) / dl
-    mw_Bn     = bdotn * Btot
-    mw_tgt    = cs0 * abs(bdotn)
-    mw_act    = 0.d0
-    mw_cs     = 1.d0
-    if ( mach1_weak_drift .and. .not. ( mach1_weak_drift_cut .and. abs(bdotn) .lt. sin(c_angle) ) ) then
-      mw_tgt = cs0 * abs(bdotn) - mw_vEn
-      mw_act = 1.d0
-      if ( mw_tgt .le. 0.d0 ) then        ! drift alone already sonic: nothing to impose
-        mw_tgt = 0.d0
-        mw_act = 0.d0
-        mw_cs  = 0.d0
-      endif
-    endif
-    mw_res = mw_Bn * Vpar0 - mw_tgt
-    mw_w   = 0.d0
-    if ( mw_on ) mw_w = Zbig * mw_Bn * dl
-    mw_vn  = mw_Bn * Vpar0 + mw_vEn       ! total normal speed, outward positive
-
-    ! --- Normal flow in the sheath particle and energy fluxes: vpar0*ps0_s*normal_sign3 = Vpar*(B_pol.n)*R*dl.
-    ! --- Under mach1_weak it is the total outgoing flow max(vn,0)*R*dl, the same flow the Bohm row and the
-    ! --- kinetic recycling see. fx_v, fx_p, fx_u: coefficients of the trial Vpar, psi_s and u_s columns.
-    fx_n = vpar0 * ps0_s * normal_sign3
-    fx_v =         ps0_s * normal_sign3
-    fx_p = vpar0         * normal_sign3
-    fx_u = 0.d0
-    if ( mw_on ) then
-      fx_out = 0.d0
-      if ( mw_vn .gt. 0.d0 ) fx_out = 1.d0
-      fx_n = max(mw_vn, 0.d0) * BigR * dl
-      fx_v = fx_out * mw_Bn * BigR * dl
-      fx_p = fx_out * vpar0 * normal_sign3
-      fx_u = - fx_out * mw_orient * BigR**2
-    endif
-
-
     c_1 = vpar_smoothing_coef(1); c_2 = vpar_smoothing_coef(2); c_3 = vpar_smoothing_coef(3)
     if (vpar_smoothing) then
       factor = 0.25d0 * ( 1.d0 + tanh( (abs(bdotn) - c_1) / c_2 ) )**2 - c_3
@@ -394,20 +340,19 @@ do ms=1, n_gauss
           if (with_vpar) then
 
             ! --- Density reflection and minimum particle flux
-            rhs_ij(var_rho)   = + v * density_reflection * r0      * fx_n * tstep     &
+            rhs_ij(var_rho)   = + v * density_reflection * r0      * vpar0 * ps0_s * normal_sign3 * tstep     &
                                 - v * r0      * cs0 * BigR * dl * c_angle * tstep     ! particle flux at 1 degree angle  
-
 
             ! --- Sheath heat flux (c_angle for mininum heat fluxes at grazing angles)
             if (with_TiTe) then
-              rhs_ij(var_Ti)  = - v * (gamma_sheath_i-1.d0) * r0 * Ti0 * fx_n * tstep &
+              rhs_ij(var_Ti)  = - v * (gamma_sheath_i-1.d0) * r0 * Ti0 * vpar0 * ps0_s * normal_sign3 * tstep &
                                 - v * (gamma_sheath_i-1.d0) * r0 * Ti0 * cs0    * BigR * dl * c_angle * tstep & 
                                 - v * (GAMMA - 1.d0) * vpar0 * visco_par_heating * gradvpar0dotn * BigR * dl  * tstep  
 
-              rhs_ij(var_Te)  = - v * (gamma_sheath_e-1.d0) * r0 * Te0 * fx_n * tstep &
+              rhs_ij(var_Te)  = - v * (gamma_sheath_e-1.d0) * r0 * Te0 * vpar0 * ps0_s * normal_sign3 * tstep &
                                 - v * (gamma_sheath_e-1.d0) * r0 * Te0 * cs0  * BigR * dl * c_angle   * tstep  
             else
-              rhs_ij(var_T)   = - v * (gamma_sheath  -1.d0) * r0 * T0  * fx_n * tstep &
+              rhs_ij(var_T)   = - v * (gamma_sheath  -1.d0) * r0 * T0  * vpar0 * ps0_s * normal_sign3 * tstep &
                                 - v * (gamma_sheath  -1.d0) * r0 * T0  * cs0    * BigR * dl * c_angle * tstep & 
                                 - v * (GAMMA - 1.d0) * vpar0 * visco_par_heating * gradvpar0dotn * BigR * dl  * tstep  
             endif
@@ -415,13 +360,10 @@ do ms=1, n_gauss
             ! --- Mach=1 through boundary integral penalization method
             rhs_ij(var_vpar) = - v * (vpar0 * Btot * normal_sign - cs0 * factor) * dl * Zbig  * factor_cs_bnd_integral 
 
-            ! --- Weak Bohm condition (mach1_weak)
-            rhs_ij(var_vpar) = rhs_ij(var_vpar) - v * mw_w * mw_res
-
             ! --- Fluid neutral reflection
             if (with_neutrals) then 
               rhs_ij(var_rhon) = rhs_ij(var_rhon)                                                   &
-                               + v * neutral_reflection * r0 * fx_n * tstep &
+                               + v * neutral_reflection * r0 * vpar0 * ps0_s * normal_sign3 * tstep &
                                + v * neutral_reflection * r0 * cs0 * BigR * dl * c_angle    * tstep ! particle flux at 1 degree angle  
             endif ! with_neutrals
 
@@ -474,12 +416,10 @@ do ms=1, n_gauss
                 if (with_vpar) then
 
                   ! --- Density reflection and minimum particle flux (c_angle)
-                  amat(var_rho,var_psi)   = - v * density_reflection * r0  * psi_s * fx_p * theta * tstep 
-                  amat(var_rho,var_rho)   = - v * density_reflection * rho * fx_n * theta * tstep &
+                  amat(var_rho,var_psi)   = - v * density_reflection * r0  * vpar0 * psi_s * normal_sign3 * theta * tstep 
+                  amat(var_rho,var_rho)   = - v * density_reflection * rho * vpar0 * ps0_s * normal_sign3 * theta * tstep &
                                             + v                      * rho * cs0   * BigR * dl * c_angle  * theta * tstep 
-                  amat(var_rho,var_vpar)  = - v * density_reflection * r0  * vpar * fx_v * theta * tstep 
-
-                  amat(var_rho,var_u)     = - v * density_reflection * r0 * fx_u * psi_s * theta * tstep
+                  amat(var_rho,var_vpar)  = - v * density_reflection * r0  * vpar  * ps0_s * normal_sign3 * theta * tstep 
 
                   ! --- Sheath heat flux
                   if (with_TiTe) then                
@@ -491,36 +431,33 @@ do ms=1, n_gauss
 
                   ! --- Sheath heat flux
                   if (with_TiTe) then                
-                    amat(var_Ti,var_psi)  = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * psi_s * fx_p * theta * tstep 
-                    amat(var_Ti,var_rho)  = + v * (gamma_sheath_i-1.d0) * rho * Ti0 * fx_n * theta * tstep & 
+                    amat(var_Ti,var_psi)  = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * vpar0 * psi_s * normal_sign3 * theta * tstep 
+                    amat(var_Ti,var_rho)  = + v * (gamma_sheath_i-1.d0) * rho * Ti0 * vpar0 * ps0_s * normal_sign3 * theta * tstep & 
                                             + v * (gamma_sheath_i-1.d0) * rho * Ti0 * cs0   * BigR  * dl * c_angle * theta * tstep 
-                    amat(var_Ti,var_Ti)   = + v * (gamma_sheath_i-1.d0) * r0  * Ti  * fx_n * theta * tstep & 
+                    amat(var_Ti,var_Ti)   = + v * (gamma_sheath_i-1.d0) * r0  * Ti  * vpar0 * ps0_s * normal_sign3 * theta * tstep & 
                                             + v * (gamma_sheath_i-1.d0) * r0  * Ti  * cs0   * BigR  * dl * c_angle * theta * tstep &
                                             + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * cs_Ti * BigR  * dl * c_angle * theta * tstep
 
-                    amat(var_Te,var_psi)  = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * psi_s * fx_p * theta * tstep 
-                    amat(var_Te,var_rho)  = + v * (gamma_sheath_e-1.d0) * rho * Te0 * fx_n * theta * tstep & 
+                    amat(var_Te,var_psi)  = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * vpar0 * psi_s * normal_sign3 * theta * tstep 
+                    amat(var_Te,var_rho)  = + v * (gamma_sheath_e-1.d0) * rho * Te0 * vpar0 * ps0_s * normal_sign3 * theta * tstep & 
                                             + v * (gamma_sheath_e-1.d0) * rho * Te0 * cs0   * BigR  * dl * c_angle * theta * tstep 
-                    amat(var_Te,var_Te)   = + v * (gamma_sheath_e-1.d0) * r0  * Te  * fx_n * theta * tstep &
+                    amat(var_Te,var_Te)   = + v * (gamma_sheath_e-1.d0) * r0  * Te  * vpar0 * ps0_s * normal_sign3 * theta * tstep &
                                             + v * (gamma_sheath_e-1.d0) * r0  * Te  * cs0   * BigR  * dl * c_angle * theta * tstep &
                                             + v * (gamma_sheath_e-1.d0) * r0  * Te0 * cs_Te * BigR  * dl * c_angle * theta * tstep
 
-                    amat(var_Ti,var_vpar) = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * vpar * fx_v * theta * tstep &
+                    amat(var_Ti,var_vpar) = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * vpar  * ps0_s * normal_sign3 * theta * tstep &
                                             + v * (GAMMA - 1.d0) * vpar * visco_par_heating * gradvpar0dotn * BigR * dl    * theta * tstep &
                                             + v * (GAMMA - 1.d0) * vpar0 * visco_par_heating * gradvpardotn * BigR * dl    * theta * tstep
-                    amat(var_Te,var_vpar) = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * vpar * fx_v * theta * tstep 
-                    amat(var_Ti,var_u)    = + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * fx_u * psi_s * theta * tstep
-                    amat(var_Te,var_u)    = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * fx_u * psi_s * theta * tstep
+                    amat(var_Te,var_vpar) = + v * (gamma_sheath_e-1.d0) * r0  * Te0 * vpar  * ps0_s * normal_sign3 * theta * tstep 
                   else
-                    amat(var_T,var_psi)   = + v * (gamma_sheath  -1.d0) * r0  *  T0 * psi_s * fx_p * theta * tstep 
-                    amat(var_T,var_rho)   = + v * (gamma_sheath  -1.d0) * rho *  T0 * fx_n * theta * tstep &
+                    amat(var_T,var_psi)   = + v * (gamma_sheath  -1.d0) * r0  *  T0 * vpar0 * psi_s * normal_sign3 * theta * tstep 
+                    amat(var_T,var_rho)   = + v * (gamma_sheath  -1.d0) * rho *  T0 * vpar0 * ps0_s * normal_sign3 * theta * tstep &
                                             + v * (gamma_sheath  -1.d0) * rho *  T0 * cs0   * BigR  * dl * c_angle * theta * tstep 
-                    amat(var_T,var_T)     = + v * (gamma_sheath  -1.d0) * r0  *  T  * fx_n * theta * tstep &
+                    amat(var_T,var_T)     = + v * (gamma_sheath  -1.d0) * r0  *  T  * vpar0 * ps0_s * normal_sign3 * theta * tstep &
                                             + v * (gamma_sheath  -1.d0) * r0  *  T  * cs0   * BigR  * dl * c_angle * theta * tstep &
                                             + v * (gamma_sheath  -1.d0) * r0  *  T0 * cs_T  * BigR  * dl * c_angle * theta * tstep
 
-                    amat(var_T,var_u)     = + v * (gamma_sheath  -1.d0) * r0  * T0  * fx_u * psi_s * theta * tstep
-                    amat(var_T,var_vpar)  = + v * (gamma_sheath  -1.d0) * r0  * T0  * vpar * fx_v * theta * tstep & 
+                    amat(var_T,var_vpar)  = + v * (gamma_sheath  -1.d0) * r0  * T0  * vpar  * ps0_s * normal_sign3 * theta * tstep & 
                                             + v * (GAMMA - 1.d0) * vpar * visco_par_heating * gradvpar0dotn * BigR * dl    * theta * tstep &
                                             + v * (GAMMA - 1.d0) * vpar0 * visco_par_heating * gradvpardotn * BigR * dl    * theta * tstep
                   endif ! with_TiTe
@@ -535,23 +472,11 @@ do ms=1, n_gauss
                     amat(var_vpar,var_T)  =   v * ( - cs_T)  * factor         * dl * Zbig * factor_cs_bnd_integral
                   endif
 
-                  ! --- Weak Bohm condition (mach1_weak): columns of mw_res
-                  amat(var_vpar,var_vpar) = amat(var_vpar,var_vpar) + v * mw_w * mw_Bn * vpar
-                  if (with_TiTe) then
-                    amat(var_vpar,var_Ti) = amat(var_vpar,var_Ti) - v * mw_w * mw_cs * abs(bdotn) * cs_Ti
-                    amat(var_vpar,var_Te) = amat(var_vpar,var_Te) - v * mw_w * mw_cs * abs(bdotn) * cs_Te
-                  else
-                    amat(var_vpar,var_T)  = amat(var_vpar,var_T)  - v * mw_w * mw_cs * abs(bdotn) * cs_T
-                  endif
-                  amat(var_vpar,var_u)    = - v * mw_w * mw_act * mw_orient * BigR * psi_s / dl
-                  ! --- No psi column: B_pol.n uses the Dirichlet trace of psi; the |B| dependence on its free
-                  ! --- normal derivative is lagged (this loop carries trace DOFs only).
-
                   ! --- Fluid neutral sources and reflection
                   if (with_neutrals) then
-                    amat(var_rhon,var_psi) = - v * neutral_reflection * r0  * psi_s * fx_p      * theta * tstep 
+                    amat(var_rhon,var_psi) = - v * neutral_reflection * r0  * vpar0 * psi_s * normal_sign3      * theta * tstep 
   
-                    amat(var_rhon,var_rho) = - v * neutral_reflection * rho     * fx_n      * theta * tstep &
+                    amat(var_rhon,var_rho) = - v * neutral_reflection * rho     * vpar0 * ps0_s * normal_sign3      * theta * tstep &
                                              - v * neutral_reflection * rho     * cs0 * BigR * dl * c_angle * theta * tstep 
  
                     if (with_TiTe) then 
@@ -561,8 +486,7 @@ do ms=1, n_gauss
                       amat(var_rhon,var_T)  = - v * neutral_reflection * r0 * cs_T  * BigR * dl * c_angle * theta * tstep 
                     endif
   
-                    amat(var_rhon,var_vpar) = - v * neutral_reflection * r0 * vpar * fx_v     * theta * tstep 
-                    amat(var_rhon,var_u)    = - v * neutral_reflection * r0 * fx_u * psi_s    * theta * tstep 
+                    amat(var_rhon,var_vpar) = - v * neutral_reflection * r0 * vpar  * ps0_s * normal_sign3     * theta * tstep 
                   endif ! with neutrals
 
                 endif   ! with_vpar

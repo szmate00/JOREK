@@ -35,7 +35,7 @@ use vacuum, ONLY: is_freebound
 use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_cos_dR, dpsi_RMP_cos_dZ, &
        psi_RMP_sin, dpsi_RMP_sin_dR, dpsi_RMP_sin_dZ, t_now, RMP_growth_rate, RMP_ramp_up_time,            &
        RMP_start_time, tstep, RMP_har_cos, RMP_har_sin, T_min,                                             &
-       mach_one_bnd_integral, mach1_weak, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,                &
+       mach_one_bnd_integral, mach1_omit_drift, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,          &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass, sheath_V_wall 
 use mod_floating_u, only: floating_u_norm
@@ -106,6 +106,7 @@ real*8  :: d2Mach1BC, d2Mach1BC_v, d2Mach1BC_T, d2Mach1BC_Tb, d2Mach1BC_Tbb
 
 integer :: node_indices( (n_order+1)/2, (n_order+1)/2 ), index_tmp, kk, ll
 real*8  :: fu_a_n, fu_C_T, fu_C_V, fu_target   ! floating-potential row: u = C_T*Te + C_V*V_wall
+real*8  :: m1_drift                            ! 1: nodal Mach-1 row with its ExB drift term (develop), 0: without (mach1_omit_drift)
 integer :: fu_var_T                            ! temperature trace variable: Te, or T in a single-T build
 logical, parameter :: include_2nd_derivatives = .false.
 
@@ -162,6 +163,8 @@ zbig_backup = zbig
 
 ! --- Floating-potential row constants (mod_floating_u); the temperature trace variable it reads
 call floating_u_norm(fu_a_n, fu_C_T, fu_C_V)
+m1_drift = 1.d0
+if ( mach1_omit_drift ) m1_drift = 0.d0
 fu_var_T = var_T
 if ( with_TiTe ) fu_var_T = var_Te
 
@@ -340,9 +343,6 @@ do i=1, n_local_elms !=== do elements
             if ( (k==var_zj   ) .and. (.not. apply_current_BC) )       cycle
             if ( (k==var_vpar ) .and.  apply_cs .and. (bnd_type/=3)  ) cycle  ! vpar=cs is a special case (this is done below)
                                                                               ! however bnd_type=3 needs both BCs for different directions
-            if ( (k==var_vpar ) .and.  apply_cs .and. mach1_weak     ) cycle  ! weak Bohm row (mod_boundary_matrix_open) owns the
-                                                                              ! whole Vpar trace on mach1 types, type 3 included
-
 !            if ((k.eq.7) .and. (node_list%node(inode)%boundary .eq. 3)) cycle  !=== better included for ITER extended wall
 
             ! --- Fix derivatives in one direction
@@ -394,9 +394,7 @@ do i=1, n_local_elms !=== do elements
         if ((node_list%node(inode)%boundary .eq.  3) .and. (node_list%node(inode2)%boundary .eq.  2)) cycle
 
         ! --- Mach1 Boundary Conditions
-        ! --- Nodal Mach-1 rows. Under mach1_weak the condition is a boundary integral in
-        ! --- mod_boundary_matrix_open and nothing is assembled here.
-        if ( apply_cs .and. (.not. mach1_weak) ) then
+        if ( apply_cs ) then
 
           call basisfunctions1(0.d0, H1, H1_s, H1_ss)
 
@@ -563,10 +561,10 @@ do i=1, n_local_elms !=== do elements
           cs0_TT   = - 0.25d0 * gamma**2 / cs0**3 
           cs0_TTT  = 3.d0/8.d0* gamma**3 / cs0**5 
 
-          Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0               + factor / Btot * BigR**2 * U0_b/ps0_b 
+          Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0               + m1_drift * factor / Btot * BigR**2 * U0_b/ps0_b 
           Mach1BC_v   = - 1.0
           Mach1BC_T   =           + direction / Btot * factor  * cs0_T 
-          Mach1BC_u   =                                                            + factor / Btot * BigR**2 * element_size_0/ps0_b 
+          Mach1BC_u   =                                                            + m1_drift * factor / Btot * BigR**2 * element_size_0/ps0_b 
           dMach1BC    = - Vpar0_b + direction / Btot * factor  * cs0_T * (Ti0_b+Te0_b)  &
                                   + direction / Btot * Hfact_b * cs0         
           dMach1BC_v  = - element_size_0
@@ -580,8 +578,8 @@ do i=1, n_local_elms !=== do elements
 
 
           if (n_order .ge. 5) then
-            dMach1BC     = dMach1BC + factor / Btot * BigR**2 * U0_bb/ps0_b
-            dMach1BC_ubb = + factor / Btot * BigR**2 * element_size_3/ps0_b
+            dMach1BC     = dMach1BC + m1_drift * factor / Btot * BigR**2 * U0_bb/ps0_b
+            dMach1BC_ubb = + m1_drift * factor / Btot * BigR**2 * element_size_3/ps0_b
             d2Mach1BC    = - Vpar0_bb + direction / Btot * factor   * cs0_TT * (Ti0_b+Te0_b)**2   &
                                       + direction / Btot * factor   * cs0_T  * (Ti0_bb+Te0_bb)   !&
                                       !+ direction / Btot * Hfact_b  * cs0_T  * T0_b *2.0 !&

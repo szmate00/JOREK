@@ -65,8 +65,8 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 deuterium_adas, deuterium_adas_1e20,                &
                 old_deuterium_atomic,                               &
                 density_reflection,                                 &
-                mach_one_bnd_integral, mach1_weak, mach1_weak_drift,&
-                mach1_weak_drift_cut, Vpar_smoothing,               &
+                mach_one_bnd_integral, mach1_omit_drift,            &
+                Vpar_smoothing,                                     &
                 Vpar_smoothing_coef,                                &
                 zjz_0, zjz_1, zj_coef,                              &
                 rho_0, rho_1, rho_coef,                             &
@@ -254,16 +254,8 @@ if (my_id .eq. 0) then
     read(5,in1)
   endif
 
-  ! --- Weak Bohm condition and floating-potential BC
-  if ( mach1_weak .and. ( mach_one_bnd_integral .or. (.not. with_vpar) ) ) then
-    write(*,*) 'ERROR: mach1_weak needs with_vpar and excludes mach_one_bnd_integral, EXITING!'
-    stop
-  end if
+  ! --- Floating-potential BC
   if ( any(bcs(:)%floating_u) ) then
-    if ( .not. mach1_weak ) then
-      write(*,*) 'ERROR: bcs%floating_u requires mach1_weak (the nodal Mach1 row cannot take a wall potential that varies along the wall), EXITING!'
-      stop
-    end if
     if ( any(bcs(:)%floating_u .and. .not. bcs(:)%dirichlet%u) ) then
       write(*,*) 'ERROR: bcs%floating_u replaces the Dirichlet u rows, so dirichlet%u must stay .true. on those types, EXITING!'
       stop
