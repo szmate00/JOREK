@@ -66,6 +66,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 old_deuterium_atomic,                               &
                 density_reflection,                                 &
                 mach_one_bnd_integral, mach1_omit_drift,            &
+                wall_diag, wall_diag_every, wall_diag_profile_every,&
                 Vpar_smoothing,                                     &
                 Vpar_smoothing_coef,                                &
                 zjz_0, zjz_1, zj_coef,                              &

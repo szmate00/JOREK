@@ -60,6 +60,9 @@ module phys_module
   logical :: deuterium_adas_1e20  !< use OPEN ADAS with fixed density=1e20 to calculate ionization, recombination and radiation coeffients for deuterium
   logical :: mach_one_bnd_integral!< use a boundary integral (boundary_matrix_open) to implement Mach=one boundary condition
   logical :: mach1_omit_drift     !< drop the ExB drift term factor/Btot*R^2*u_b/psi_b from the nodal Mach-1 row: Vpar = +-cs/|B| (model600)
+  logical :: wall_diag            !< print the [floating_u]/[mach1] wall diagnostics tables to the log under bcs%floating_u (model600)
+  integer :: wall_diag_every      !< ... every this many time steps
+  integer :: wall_diag_profile_every !< full wall profile every this many steps (0: never)
   logical :: vpar_smoothing       !< apply a smoothing function to smooth jumps in Vpar at B.n=0
   real*8  :: vpar_smoothing_coef(3) !< coefficients for the smoothing profile of the parallel velocity
   real*8  :: min_sheath_angle     !< For sheath boundary conditions: Minimum incident angle for heat and particle fluxes (in degrees)

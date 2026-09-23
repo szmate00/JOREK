@@ -93,6 +93,9 @@ subroutine preset_parameters
   old_deuterium_atomic  = .false. 
   mach_one_bnd_integral = .false. ! implement Mach one condition as boundary integral
   mach1_omit_drift      = .false. ! nodal Mach-1 row without its ExB drift term (Vpar = +-cs/|B|)
+  wall_diag             = .true.  ! [floating_u]/[mach1] wall diagnostics tables in the log (only under bcs%floating_u)
+  wall_diag_every       = 1
+  wall_diag_profile_every = 0
   Vpar_smoothing        = .false. ! smooth the transitions of Vpar positive/negavtive at B.n
   Vpar_smoothing_coef   = (/0.01d0, 0.d0, 0.d0 /) !(/ 0.01d0, 0.016d0, 0.00575446347d0/)
   min_sheath_angle      = 1.d0   ! 1 degree (not in radians)

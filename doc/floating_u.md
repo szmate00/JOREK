@@ -44,6 +44,20 @@ mach1_omit_drift  = .t.      ! .f. = develop's nodal row with its drift term
 
 Everything else as in a develop run.
 
+## 3. Wall diagnostics (`wall_diag`, default `.true.`, printed only when some `bcs%floating_u` is set)
+
+`mod_wall_diag.f90`, sampled at the wall Gauss points of `mod_boundary_matrix_open` (first toroidal plane) on every
+matrix construction (`wall_diag_every`, default 1). One line per boundary type, velocities in m/s, locations (R,Z):
+
+    [floating_u] |u-uf|[V]: max floating-row residual at the wall nodes; vE.n out/in: largest outward and inward
+                 ExB normal speed; min rho, min Te; inflow: fraction of the wall length with net inflow
+                 (Vpar*B.n + vE.n < 0); exb>cs: fraction with |vE.n| > cs|b.n|
+    [mach1]      |res| = |B.n*Vpar - cs|b.n|| min/mean/max (what the nodal row imposes under mach1_omit_drift);
+                 max Mach |Vpar*B|/cs; max cs|b.n|; drift/cs = max |vE.n|/(cs|b.n|); Gauss points
+
+`wall_diag_profile_every = N > 0` adds `[wall prof]`, the full wall profile (one line per Gauss point) every N
+steps and whenever the wall minimum of rho or Te goes non-positive or halves. No equation is touched.
+
 ## Not covered
 
 `n_order >= 5` trace DOFs beyond value and first derivative; boundary postproc expressions along the wall.

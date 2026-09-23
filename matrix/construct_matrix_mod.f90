@@ -317,6 +317,9 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   use mod_axis_treatment
   use mod_simulation_data, only: type_MHD_SIM
   use global_distributed_matrix, only: global_matrix_structure_vacuum
+#if JOREK_MODEL == 600
+  use mod_wall_diag, only: wall_diag_reset, wall_diag_report
+#endif
   
   !$ use omp_lib
   implicit none
@@ -455,6 +458,10 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
 
   call tr_allocate(rhs_local, Int1, a_mat%ng, "rhs_local", CAT_DMATRIX)
   rhs_local  = 0.d0
+
+#if JOREK_MODEL == 600
+  call wall_diag_reset()
+#endif
 
   if (mhd_sim%freeboundary .and. (mhd_sim%sr_n_tor /= 0 ) ) then
     call global_matrix_structure_vacuum(mhd_sim%node_list, mhd_sim%bnd_node_list, a_mat, i_tor_min=1, i_tor_max=n_tor)
@@ -744,6 +751,11 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
     call dealloc_node(aux_nodes(iv))
   enddo
   !$omp end parallel
+
+#if JOREK_MODEL == 600
+  ! --- Wall diagnostics tables (wall_diag), from the boundary integrals just assembled
+  if ( .not. harmonic_matrix ) call wall_diag_report(my_id, node_list)
+#endif
  
   ! --- Memory tracking
   call tr_vnorms("cm_A_bef_bc", a_mat%val, a_mat%nnz)
