@@ -32,12 +32,10 @@ with the potential floating on all five wall types, drift-compensating Bohm cond
    Vpar condition takes over; no threshold and no division by B.n anywhere. Assembled on edges whose both
    endpoints are `mach1` types. The nodal rows are not assembled under this flag; type 3 gets no Dirichlet
    Vpar row. Columns on Vpar, Ti, Te and the u trace are exact.
-   - `mach1_weak_drift`: `target = max(cs*|b.n| - vE.n, 0)`, the SOLPS non-marginal form: the parallel
-     flow supplies the outward normal flow the ExB drift does not, and is never asked to reverse.
-     Without it `target = cs*|b.n|` (marginal Bohm).
-   - `mach1_weak_drift_cut`: the drift is not compensated where `|b.n| < sin(min_sheath_angle)`, the
-     angle below which the sheath fluxes already come from the c_angle floor model; the marginal row is
-     imposed there. Compensating the drift on a grazing wall demands an unbounded parallel flow.
+   - The target is `max(cs*|b.n| - vE.n, 0)` everywhere (SOLPS non-marginal form): the parallel flow
+     supplies the outward normal flow the ExB drift does not and is never asked to reverse. There is no
+     marginal variant and no grazing-angle cut: the Vpar row, the wall fluxes (item 3) and the kinetic
+     recycling impose the same drift-compatible condition `Vpar*(B_pol.n) + vE.n >= cs*|b.n|` at every point.
    Why weak: the nodal Mach-1 row on develop carries its drift term `factor/Btot*R^2*u_b/psi_b` in the
    value row only, divided by psi_b; it is dormant while u is constant along the wall and cannot take a
    wall potential that varies along it. `floating_u` therefore requires `mach1_weak` (checked at setup).
@@ -84,7 +82,7 @@ with the potential floating on all five wall types, drift-compensating Bohm cond
 ```fortran
 bcs(1)%floating_u = .t. ; bcs(3)%floating_u = .t. ; bcs(4)%floating_u = .t.
 bcs(5)%floating_u = .t. ; bcs(9)%floating_u = .t.
-mach1_weak = .t. ; mach1_weak_drift = .t. ; mach1_weak_drift_cut = .t.
+mach1_weak = .t.
 sheath_Lambda = 3.d0
 ```
 
@@ -101,7 +99,7 @@ per Gauss point and differentiated exactly on the branch taken.
 - `n_order >= 5`: only the value and first tangential-derivative u DOFs are replaced.
 - The |B| dependence of the weak row on the free normal psi derivative is lagged (the column loop covers
   trace DOFs; measured 9e-4 of the Vpar column on a test element).
-- The marginal and non-marginal Bohm forms bracket the physics of the ion flux at grazing incidence;
-  both are provided, the reference run uses the non-marginal form with the grazing cut.
+- STALE: the reference-run claims above predate the recycling sign fix and the sheath-set flux; to be
+  rewritten after the current runs (see doc/floating_u.md, Status).
 - Every Jacobian column of the new rows was finite-difference checked in a serial harness during
   development (not part of this PR). No MPI regression case is added.

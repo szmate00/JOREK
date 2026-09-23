@@ -20,57 +20,57 @@ bcs(3)%floating_u = .t.
 bcs(4)%floating_u = .t.
 bcs(5)%floating_u = .t.
 bcs(9)%floating_u = .t.
-mach1_weak           = .t.   ! required
-mach1_weak_drift     = .t.   ! SOLPS non-marginal Bohm condition ...
-mach1_weak_drift_cut = .t.   ! ... except where the field grazes the wall
-sheath_Lambda        = 3.d0
+mach1_weak        = .t.      ! required: the drift-compatible Bohm condition
+sheath_Lambda     = 3.d0
 ```
 
 `dirichlet%u` stays `.true.` on those types. Nothing else changes: the production timestep ramp,
-`min_sheath_angle`, `D_perp_sc_num` and every other parameter stay as in a develop run.
+`min_sheath_angle`, `D_perp_sc_num` and every other parameter stay as in a develop run. The former switches
+`mach1_weak_drift` and `mach1_weak_drift_cut` are gone (remove them from the namelist): the Bohm condition is
+drift-compatible everywhere, with no marginal form and no angle below which the drift is ignored.
 
 Status: the earlier 2000+ step reference ran with the kinetic recycling clipped to INFLOW (inward
 `wall_normal_vector`), i.e. target recycling at the c_angle floor. With the recycling on the outward normal
-the same namelist died at step 729 (density holes at the inner strike point, then Te blow-up where rho -> 0).
-The sheath-set wall flux (item 4) is the fix for that; not yet run.
+the same namelist died at step 729; with the sheath-set flux but the grazing cut still on, at 808 (same
+inner-strike-point depletion, positive density). The cut made the Vpar row and the wall flux disagree below
+the angle; both now impose the same condition. Not yet run in this form.
 
 ## What is assembled
 
 1. **Potential row** (`mod_boundary_conditions.f90`, `mod_floating_u.f90`): u = C_T*Te + C_V*V_wall on
    every u trace DOF, replacing the Dirichlet rows. C_T = 2*Lambda/a_n (halved in a single-T build),
    C_V = sqrt(mu0*rho0)/F0, a_n = 2*e*F0*sqrt(mu0*rho0)/m_i.
-2. **Weak Bohm condition** (`mach1_weak`, `mod_boundary_matrix_open.f90`): one residual per wall Gauss
-   point on edges whose both endpoints are `mach1` types,
-   `res = (B_pol.n)*Vpar - target`, weight `d(res)/d(Vpar) = B_pol.n`, so it fades as (B.n)^2 at grazing
-   incidence and the natural Vpar condition takes over; no threshold, no division. `target = cs*|b.n|`
-   (marginal), or `max(cs*|b.n| - vE.n, 0)` with `mach1_weak_drift` (the parallel flow supplies the
-   outward normal flow the drift does not, never asked to reverse). With `mach1_weak_drift_cut` the drift
-   is not compensated where |b.n| < sin(min_sheath_angle): the angle below which the sheath fluxes already
-   come from the c_angle floor model. The nodal Mach1 rows are not assembled under `mach1_weak`; type 3
-   gets no Dirichlet Vpar row. Columns on Vpar, Ti, Te and the u trace are exact; the |B| dependence on
-   the free normal psi derivative is lagged (trace-DOF loop).
-   Why weak: the nodal row's drift term sits in the value row only and divides by psi_b; it cannot take a
-   wall potential that varies along the wall. Why the cut: compensating the drift where the field grazes
-   demands an unbounded parallel flow (Mach 400 measured); a smooth 2cs bound failed at the same wall;
-   leaving Vpar free there runs away within tens of steps. All measured on this case.
-3. **One total normal flow** `max(Vpar*(B_pol.n) + vE.n, 0)` in the sheath energy transmission and density
-   reflection rows (exact u, Vpar, psi columns) and in the kinetic recycling flux, on the outward normal
-   (`calc_EBpsiU` returns the fluid ExB velocity `R grad(u) x e_phi`). Off the weak route the expressions
-   are unchanged. `calc_NeTevpar` now reads Te itself in a two-temperature model600 build (it read Ti/2).
-4. **Sheath-set wall flux** (`mach1_weak_drift`, `mod_boundary_matrix_open.f90`,
-   `mod_particle_wall_interaction.f90`). The volume advection of rho, rho*Ti and rho*Te (parallel and ExB)
-   is not integrated by parts, so it carries an implicit wall flux `q*vn*R*dl` in both directions, with no
-   inflow datum where `vn < 0`; a central Galerkin advection term gains energy `-1/2 oint q^2 vn` there.
-   The drift-compatible Bohm condition is therefore imposed on the flux itself, pointwise:
-   `Gamma = n*max(vn, cs*|b.n|)`, energy `gamma_sh*T*Gamma`, kinetic recycling on the same `Gamma`. In the
-   rows this is `fx_n = max(vn, cs*|b.n|)*R*dl` plus the excess sink `-q*max(cs*|b.n| - vn, 0)*R*dl`,
-   which replaces the implicit `q*vn` by `q*max(vn, cs*|b.n|)`. It is zero wherever the flow already
-   satisfies the condition (the weak row holds only in moments, and the grazing cut and the pinned
-   `Vpar = 0` branch leave points that do not), and otherwise a sink proportional to q: the boundary
-   energy term becomes `oint q^2 (vn/2 - max(vn, cs|b.n|)) <= 0` for every vn. Exact columns on rho, Ti,
-   Te, Vpar, u and the psi trace; the Btot dependence of `|b.n|` on the normal psi derivative is lagged.
-   The kinetic side uses `cs = sqrt(gamma*(Ti+Te))` with the fluid Ti (`calc_NeTeTi`) for the Bohm branch.
-5. **Exterior sides only** (`mod_boundary_edges.f90`): the open-boundary integral is skipped on interior
+2. **Drift-compatible Bohm condition** (`mach1_weak`, `mod_boundary_matrix_open.f90`): the total normal flow
+   into the sheath `vn = Vpar*(B_pol.n) + vE.n >= cs*|b.n|`, imposed in the same form at every wall Gauss
+   point of edges whose both endpoints are `mach1` types, by three consistent parts:
+   - **Vpar row**: `res = (B_pol.n)*Vpar - max(cs*|b.n| - vE.n, 0)`, weight `B_pol.n`, one residual per
+     Gauss point on the Vpar trace (SOLPS non-marginal form): the parallel flow supplies the outward normal
+     flow the ExB drift does not and is never asked to reverse (target 0 where the drift alone exceeds
+     `cs*|b.n|`). The nodal Mach1 rows are not assembled; type 3 gets no Dirichlet Vpar row. Why weak: the
+     nodal row's drift term sits in the value row only and divides by psi_b.
+   - **Wall fluxes**: the volume advection of rho, rho*Ti and rho*Te (parallel and ExB) is not integrated by
+     parts, so it carries an implicit wall flux `q*vn*R*dl` in both directions, with no inflow datum where
+     `vn < 0`; central Galerkin gains energy `-1/2 oint q^2 vn` there. The same condition is imposed on the
+     flux, pointwise: `Gamma = n*max(vn, cs*|b.n|)`, energy `gamma_sh*T*Gamma`, i.e. the sheath rows on
+     `fx_n = max(vn, cs*|b.n|)*R*dl` plus the excess sink `-q*max(cs*|b.n| - vn, 0)*R*dl`. Zero wherever the
+     row holds; where it does not pointwise (the row fixes moments), a sink proportional to q. Boundary
+     energy term `oint q^2 (vn/2 - max(vn, cs|b.n|)) <= 0` for every vn.
+   - **Kinetic recycling** (`mod_particle_wall_interaction.f90`): exactly what the fluid loses at that wall
+     point, `n*max(vn, cs*|b.n|)` on edges whose both endpoints are `mach1` types (the same edge test as the
+     fluid), `n*max(vn, 0)` elsewhere, plus the c_angle floor, all with the fluid's sound speed
+     `sqrt(gamma*(Ti+Te))` (fluid Ti via `calc_NeTeTi`), on the outward normal (`wall_normal_vector` points
+     inward). `calc_EBpsiU` returns the fluid ExB velocity. `calc_NeTevpar` reads Te itself in a
+     two-temperature model600 build (it read Ti/2).
+   Exact columns on rho, Ti, Te, Vpar, u and the psi trace; the Btot dependence on the free normal psi
+   derivative is lagged (trace-DOF loop), as are the `corr_neg` derivatives of cs (pre-existing).
+3. **Diagnostics** (`wall_diag`, default on under `mach1_weak`; `wall_diag_every`, `wall_diag_profile_every`;
+   `mod_wall_diag.f90`): per step in the log, `[wall]` per boundary type (inflow and sub-Bohm fractions, sink
+   share, Bohm-row moment, extreme vE.n with location, max Mach, potential range), `[wall flow]` (ranges of
+   Vpar*B.n, vE.n, vn, cs|b.n|, min |b.n|, max |dPhi/ds|), `[wall min]` (min rho, Ti, Te with location),
+   `[wall pt]` (full local state at the min-rho, min-Te, max-|vE.n| and max-sink points), `[volume]` (node
+   minima of rho, Ti, Te and max Te with location and boundary type), and `[wall prof]`, the full wall
+   profile, automatically on any step where the wall minimum of rho or Te is non-positive or has halved.
+4. **Exterior sides only** (`mod_boundary_edges.f90`): the open-boundary integral is skipped on interior
    sides with two labelled endpoints (table from connectivity, once per matrix construction).
 
 Conventions: outward-positive normal flows; `vE.n = -orient*R*u_s/dl`, `orient = sign(y_s*n_R - x_s*n_Z)`

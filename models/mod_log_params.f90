@@ -870,8 +870,9 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   write(*,LOGI_FMT) 'bench_without_plot    ', bench_without_plot
   write(*,LOGI_FMT) 'mach_one_bnd_integral ', mach_one_bnd_integral
   write(*,LOGI_FMT) 'mach1_weak            ', mach1_weak
-  write(*,LOGI_FMT) 'mach1_weak_drift      ', mach1_weak_drift
-  write(*,LOGI_FMT) 'mach1_weak_drift_cut  ', mach1_weak_drift_cut
+  write(*,LOGI_FMT) 'wall_diag             ', wall_diag
+  write(*,INTG_FMT) 'wall_diag_every       ', wall_diag_every
+  write(*,INTG_FMT) 'wall_diag_profile_every', wall_diag_profile_every
   write(*,LOGI_FMT) 'deuterium_adas        ', deuterium_adas       
   write(*,LOGI_FMT) 'old_deuterium_atomic  ', old_deuterium_atomic
   write(*,LOGI_FMT) 'deuterium_adas_1e20   ', deuterium_adas_1e20
