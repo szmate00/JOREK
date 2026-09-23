@@ -105,7 +105,8 @@ real*8  ::  dMach1BC,  dMach1BC_v,  dMach1BC_T,  dMach1BC_Ti, dMach1BC_Te,  dMac
 real*8  :: d2Mach1BC, d2Mach1BC_v, d2Mach1BC_T, d2Mach1BC_Tb, d2Mach1BC_Tbb
 
 integer :: node_indices( (n_order+1)/2, (n_order+1)/2 ), index_tmp, kk, ll
-real*8  :: fu_a_n, fu_C_T, fu_C_V, fu_target   ! floating-potential row: u = C_T*Te + C_V*V_wall
+real*8  :: fu_a_n, fu_C_T, fu_C_V, fu_target   ! floating-potential row: u = C_T*max(Te,T_min) + C_V*V_wall
+real*8  :: fu_act                              ! d max(Te,T_min)/dTe on the branch of the node value: 1 or 0
 real*8  :: m1_drift                            ! 1: nodal Mach-1 row with its ExB drift term (develop), 0: without (mach1_omit_drift)
 integer :: fu_var_T                            ! temperature trace variable: Te, or T in a single-T build
 logical, parameter :: include_2nd_derivatives = .false.
@@ -356,14 +357,25 @@ do i=1, n_local_elms !=== do elements
                        index_node, k, in, index_node, k, in,            &
                        zbig, index_min, index_max, a_mat)
 
-                ! --- Floating potential: u = C_T*Te + C_V*V_wall on every u trace DOF. The Te
+                ! --- Floating potential: u = C_T*max(Te,T_min) + C_V*V_wall on every u trace DOF. The Te
                 ! --- column and the RHS make the row exact; V_wall enters the n=0 value DOF only.
+                ! --- The temperature floor is the one the Mach-1 rows below use (max(T, T_min) on the
+                ! --- axisymmetric node value): without it a node whose Te crosses zero imposes a negative
+                ! --- potential, i.e. a reversed ExB drift, while cs at the same node stays floored. The
+                ! --- branch is taken on the axisymmetric node value; fu_act is the exact derivative of
+                ! --- max() on that branch, so the relation stays piecewise affine and one linear solve
+                ! --- imposes it exactly while the branch does not change. On a clamped node the potential
+                ! --- is the constant C_T*T_min + C_V*V_wall: every derivative DOF and every harmonic is
+                ! --- homogeneous (target 0, no Te column), so the node drives no ExB flow at all.
                 if ( (k == var_u) .and. bcs(bnd_type)%floating_u ) then
-                  fu_target = fu_C_T * node_list%node(inode)%values(in, index_tmp, fu_var_T)
-                  if ( (index_tmp .eq. 1) .and. (in .eq. 1) ) fu_target = fu_target + fu_C_V * sheath_V_wall
+                  fu_act = 1.d0
+                  if ( node_list%node(inode)%values(1,1,fu_var_T) .le. T_min ) fu_act = 0.d0
+                  fu_target = fu_C_T * fu_act * node_list%node(inode)%values(in, index_tmp, fu_var_T)
+                  if ( (index_tmp .eq. 1) .and. (in .eq. 1) ) &
+                    fu_target = fu_target + fu_C_T * (1.d0 - fu_act) * T_min + fu_C_V * sheath_V_wall
                   call boundary_conditions_add_one_entry(                        &
                          index_node, var_u, in, index_node, fu_var_T, in,        &
-                         - zbig * fu_C_T, index_min, index_max, a_mat)
+                         - zbig * fu_C_T * fu_act, index_min, index_max, a_mat)
                   call boundary_conditions_add_RHS(                              &
                          index_node, var_u, in, index_min, index_max, RHS_loc,   &
                          - zbig * ( node_list%node(inode)%values(in, index_tmp, var_u) - fu_target ), &

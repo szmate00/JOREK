@@ -7,13 +7,22 @@ the boundary integrals (`mod_boundary_matrix_open.f90`) and the matrix construct
 
 On every u trace DOF (value and tangential derivative) of boundary type i the Dirichlet u row is replaced by
 
-    Phi - V_wall = Lambda * k_B*Te / e        i.e.        u = C_T*Te + C_V*V_wall
+    Phi - V_wall = Lambda * k_B*max(Te,T_min) / e        i.e.        u = C_T*max(Te,T_min) + C_V*V_wall
 
 with `sheath_Lambda` (default 3) and `sheath_V_wall` in volts (default 0): the zero-local-current limit of the
 sheath characteristic. `C_T = 2*Lambda/a_n` (halved in a single-T build), `C_V = sqrt(mu0*rho0)/F0`,
 `a_n = 2*e*F0*sqrt(mu0*rho0)/m_i`; the Te column and the RHS make the row exact in one solve
 (`mod_boundary_conditions.f90`, `mod_floating_u.f90`, self-test at setup). `dirichlet%u` stays `.true.` on those
 types. `Phi = +F0*u` (right-handed (R,Z,phi)); `a_n` carries the sign of F0.
+
+The temperature floor is the one the nodal Mach-1 rows use (`max(T, T_min)` on the axisymmetric node value).
+Without it a wall node whose Te crosses zero imposes a negative potential, i.e. a reversed ExB drift, while cs at
+the same node stays floored (measured 2026-09-06: type-1 min Te crossed zero and the Mach residual started
+growing on the next output). The branch is taken on the node value; the Te column carries the exact derivative
+of `max()` on that branch (1 or 0), so the relation is piecewise affine and one solve imposes it exactly while the
+branch does not change. A clamped node has the constant potential `C_T*T_min + C_V*V_wall`: its derivative DOFs
+and harmonics have target 0 and no Te column, so it drives no ExB flow. `T_min` is the namelist floor (0.1 eV in
+the current runs); the `[floating_u]` residual column uses the same floor.
 
 The wall potential then follows Te along the wall, so there is an ExB drift normal to the wall wherever Te varies
 along it; the rest of the wall treatment (nodal Mach-1 row, sheath particle/energy fluxes, kinetic recycling) is

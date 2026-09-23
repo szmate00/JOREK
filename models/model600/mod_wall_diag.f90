@@ -4,7 +4,7 @@
 !! (mod_boundary_matrix_open), first toroidal plane; Bn = B_pol.n, b_n = Bn/|B|, vn = Vpar*Bn + vE.n the total
 !! outward normal flow, cs|b.n| the Bohm normal speed. Velocities in m/s, one line per boundary type.
 !!
-!! [floating_u] max floating-row residual |u - C_T*Te - C_V*V_wall| [V] at the wall nodes, largest outward and
+!! [floating_u] max floating-row residual |u - C_T*max(Te,T_min) - C_V*V_wall| [V] at the wall nodes, largest outward and
 !!              largest inward ExB normal speed, min rho and min Te at the wall Gauss points, each with (R,Z);
 !!              fraction of the wall length with net inflow (vn < 0) and with the ExB normal speed above the
 !!              Bohm normal speed (|vE.n| > cs|b.n|)
@@ -98,7 +98,7 @@ end subroutine wall_diag_add
 subroutine wall_diag_report(my_id, node_list)
 
   use constants,          only: MU_ZERO, ATOMIC_MASS_UNIT, EL_CHG
-  use phys_module,        only: central_density, central_mass, F0, t_now, index_now, wall_diag_profile_every, bcs, sheath_V_wall
+  use phys_module,        only: central_density, central_mass, F0, t_now, index_now, wall_diag_profile_every, bcs, sheath_V_wall, T_min
   use mod_floating_u,     only: floating_u_norm
   use mod_parameters,     only: var_rho, var_Te, var_Ti, var_T, var_u, with_TiTe
   use data_structure,     only: type_node_list
@@ -162,8 +162,8 @@ subroutine wall_diag_report(my_id, node_list)
   n_20   = central_density                                                                    ! 1e20 m^-3 per unit
   phi_V  = F0 * v_norm                                                                        ! V per unit of u
 
-  ! --- Floating-row residual |u - C_T*Te - C_V*V_wall| at the wall nodes of floating types (n=0 value DOF);
-  ! --- the row uses the raw temperature, so this is exactly what it imposes
+  ! --- Floating-row residual |u - C_T*max(Te,T_min) - C_V*V_wall| at the wall nodes of floating types (n=0
+  ! --- value DOF), with the row's own temperature floor
   f_res = -1.d0 ; f_loc = 0.d0
   call floating_u_norm(fu_a_n, fu_C_T, fu_C_V)
   do inode = 1, node_list%n_nodes
@@ -175,7 +175,7 @@ subroutine wall_diag_report(my_id, node_list)
     else
       ur = node_list%node(inode)%values(1,1,var_T)
     endif
-    fres = abs( node_list%node(inode)%values(1,1,var_u) - fu_C_T*ur - fu_C_V*sheath_V_wall )
+    fres = abs( node_list%node(inode)%values(1,1,var_u) - fu_C_T*max(ur, T_min) - fu_C_V*sheath_V_wall )
     if ( fres .gt. f_res(ib) ) then ; f_res(ib) = fres ; f_loc(:,ib) = node_list%node(inode)%x(1,1,1:2) ; endif
   enddo
 
