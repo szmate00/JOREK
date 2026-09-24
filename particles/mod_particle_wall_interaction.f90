@@ -1772,7 +1772,8 @@ subroutine project_sputter_vars_on_edge(this, sim)
       ! --- so recycle the TOTAL outgoing normal flow (signed: a face the plasma flows away from gets
       ! --- only the grazing-incidence floor); the parallel part alone otherwise, as before.
       if ( mach1_weak ) then
-        v_n_tot = vpar * dot_product(B, vector_normal) + dot_product(v_ExB, vector_normal)
+        ! --- wall_normal_vector points INTO the plasma; the flux onto the wall is along the outward normal
+        v_n_tot = - ( vpar * dot_product(B, vector_normal) + dot_product(v_ExB, vector_normal) )
         Gamma_d = n_e * max(v_n_tot, 0.d0) + n_e * c_s * c_angle
       else
         Gamma_d = n_e * abs(vpar) * norm2(B) * cos_alpha + n_e * c_s * c_angle
