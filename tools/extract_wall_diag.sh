@@ -19,7 +19,7 @@ awk -v T="$typ" '
   $1=="[floating_u]" && $2==T && step!="" {
     fu[step]=sprintf("%11s %8s %8s | %11s %8s %8s | %11s | %11s %8s %8s | %7s %7s %10s", $12,$13,$14, $9,$10,$11, $6, $15,$16,$17, $18,$19,$20)
     tt[step]=t; if (!(step in seen)) { order[++n]=step; seen[step]=1 } ; next }
-  $1=="[mach1]" && $2==T && step!="" { m1[step]=sprintf("%11s %8s %8s %8s", $5, $9, $10, $11); next }
+  $1=="[mach1]" && $2==T && step!="" { m1[step]=sprintf("%11s %8s %8s %8s", $5, $8, $9, $10); next }
   END { for (i=1;i<=n;i++) { s=order[i]; printf "%8s %12s | %s | %s\n", s, tt[s], fu[s], m1[s] } }
 ' "$log"
 echo
