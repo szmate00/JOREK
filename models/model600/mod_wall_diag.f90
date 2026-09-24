@@ -7,7 +7,8 @@
 !! [floating_u] max floating-row residual |u - C_T*max(Te,T_min) - C_V*V_wall| [V] at the wall nodes, largest outward and
 !!              largest inward ExB normal speed, min rho and min Te at the wall Gauss points, each with (R,Z);
 !!              fraction of the wall length with net inflow (vn < 0) and with the ExB normal speed above the
-!!              Bohm normal speed (|vE.n| > cs|b.n|)
+!!              Bohm normal speed (|vE.n| > cs|b.n|); sink/Bohm: excess sink of the sheath-set wall flux integrated
+!!              over the type, relative to its Bohm floor (0 without the flux)
 !! [mach1]      residual of the drift-free Mach-1 condition in normal-speed units, |res| = |Bn*Vpar - cs|b.n||
 !!              min/mean/max with the location of the max (with mach1_omit_drift this is what the nodal row
 !!              imposes; with the drift term the row's target differs by its ExB term), max Mach |Vpar*B|/cs
@@ -24,7 +25,7 @@ module mod_wall_diag
   integer, parameter :: nt   = 30                !< max_bnd_types
   integer, parameter :: ns   = 15                !< state vector length
   integer, parameter :: ncap = 50000             !< wall Gauss points kept per rank for [wall prof]
-  real*8, save :: s_len(nt), s_in(nt), s_exb(nt), s_npt(nt)
+  real*8, save :: s_len(nt), s_in(nt), s_exb(nt), s_npt(nt), s_sink(nt), s_bohm(nt)
   real*8, save :: r_min(nt), r_sum(nt), r_max(nt), l_res(2,nt), c_max(nt), d_max(nt)
   real*8, save :: x_veo(nt), x_vei(nt), x_mach(nt)
   real*8, save :: n_rho(nt), n_Te(nt)
@@ -48,7 +49,7 @@ end function wall_diag_now
 subroutine wall_diag_reset()
   implicit none
   active = wall_diag_now()
-  s_len = 0.d0 ; s_in = 0.d0 ; s_exb = 0.d0 ; s_npt = 0.d0
+  s_len = 0.d0 ; s_in = 0.d0 ; s_exb = 0.d0 ; s_npt = 0.d0 ; s_sink = 0.d0 ; s_bohm = 0.d0
   r_min = huge(1.d0) ; r_sum = 0.d0 ; r_max = -huge(1.d0) ; l_res = 0.d0
   c_max = -huge(1.d0) ; d_max = -huge(1.d0)
   x_veo = -huge(1.d0) ; x_vei = huge(1.d0) ; x_mach = 0.d0
@@ -61,10 +62,11 @@ end subroutine wall_diag_reset
 
 !> One wall Gauss point, JOREK units; w = Gauss weight * dl. u is the potential variable, Te_s and u_s the
 !! tangential derivatives per unit length.
-subroutine wall_diag_add(bnd_type, w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vEn, cs, u, Te_s, u_s)
+!! sink = rho*max(v_fl - vn, 0)*R*dl the excess sink of the sheath-set flux at this point, bohm = rho*v_fl*R*dl its floor.
+subroutine wall_diag_add(bnd_type, w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vEn, cs, u, Te_s, u_s, sink, bohm)
   implicit none
   integer, intent(in) :: bnd_type
-  real*8,  intent(in) :: w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vEn, cs, u, Te_s, u_s
+  real*8,  intent(in) :: w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vEn, cs, u, Te_s, u_s, sink, bohm
   real*8 :: vn, cb, res, mach, st(ns)
   if ( .not. active ) return
   if ( bnd_type .lt. 1 .or. bnd_type .gt. nt ) return
@@ -78,6 +80,7 @@ subroutine wall_diag_add(bnd_type, w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vE
   if ( vn .lt. 0.d0 )      s_in(bnd_type)  = s_in(bnd_type)  + w
   if ( abs(vEn) .gt. cb )  s_exb(bnd_type) = s_exb(bnd_type) + w
   s_npt(bnd_type) = s_npt(bnd_type) + 1.d0
+  s_sink(bnd_type) = s_sink(bnd_type) + sink * w ; s_bohm(bnd_type) = s_bohm(bnd_type) + bohm * w
   r_min(bnd_type) = min(r_min(bnd_type), abs(res)) ; r_sum(bnd_type) = r_sum(bnd_type) + abs(res)
   if ( abs(res) .gt. r_max(bnd_type) ) then ; r_max(bnd_type) = abs(res) ; l_res(:,bnd_type) = (/ R, Z /) ; endif
   c_max(bnd_type) = max(c_max(bnd_type), cb)
@@ -108,7 +111,7 @@ subroutine wall_diag_report(my_id, node_list)
   integer,              intent(in) :: my_id
   type(type_node_list), intent(in) :: node_list
 
-  real*8  :: g_len(nt), g_in(nt), g_exb(nt), g_npt(nt), gr_min(nt), gr_sum(nt), gr_max(nt), gc_max(nt), gd_max(nt)
+  real*8  :: g_len(nt), g_in(nt), g_exb(nt), g_npt(nt), g_sink(nt), g_bohm(nt), sink_bohm(nt), gr_min(nt), gr_sum(nt), gr_max(nt), gc_max(nt), gd_max(nt)
   real*8  :: g_veo(nt), g_vei(nt), g_mach(nt), g_rho(nt), g_Te(nt)
   real*8  :: loc(2,5,nt), loc_g(2,5,nt), lm(2,nt), lm_g(2,nt)
   real*8  :: f_res(nt), f_loc(2,nt), fu_a_n, fu_C_T, fu_C_V, fres, ur
@@ -122,6 +125,8 @@ subroutine wall_diag_report(my_id, node_list)
   call MPI_ALLREDUCE(s_in,   g_in,   nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(s_exb,  g_exb,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(s_npt,  g_npt,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(s_sink, g_sink, nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(s_bohm, g_bohm, nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(r_min,  gr_min, nt, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(r_sum,  gr_sum, nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(r_max,  gr_max, nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
@@ -147,6 +152,10 @@ subroutine wall_diag_report(my_id, node_list)
   call MPI_ALLREDUCE(lm,  lm_g,   2*nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
 
   if ( sum(g_len) .le. 0.d0 ) return
+  sink_bohm = 0.d0
+  do it = 1, nt
+    if ( g_bohm(it) .gt. 0.d0 ) sink_bohm(it) = g_sink(it) / g_bohm(it)
+  enddo
 
   ! --- Full profile (only if wall_diag_profile_every > 0): every that many steps, and on the step where the wall
   ! --- minimum of rho or Te is non-positive or has halved
@@ -181,12 +190,12 @@ subroutine wall_diag_report(my_id, node_list)
 
   if ( my_id .eq. 0 ) then
     write(*,'(A,I8,A,ES13.5)') ' [floating_u] step', index_now, '  t_now', t_now
-    write(*,'(A)') ' [floating_u] type  |u-uf|[V]  at (R,Z)           vE.n out[m/s] at (R,Z)          vE.n in[m/s]  at (R,Z)          min rho[1e20] at (R,Z)         min Te[eV]  at (R,Z)           inflow  exb>cs'
+    write(*,'(A)') ' [floating_u] type  |u-uf|[V]  at (R,Z)           vE.n out[m/s] at (R,Z)          vE.n in[m/s]  at (R,Z)          min rho[1e20] at (R,Z)         min Te[eV]  at (R,Z)           inflow  exb>cs  sink/Bohm'
     do it = 1, nt
       if ( g_len(it) .le. 0.d0 ) cycle
-      write(*,'(A,I4,ES11.3,2F8.4,4(ES11.3,2F8.4),2F8.3)') ' [floating_u] ', it, max(f_res(it),0.d0)*phi_V, f_loc(:,it), &
+      write(*,'(A,I4,ES11.3,2F8.4,4(ES11.3,2F8.4),2F8.3,ES10.2)') ' [floating_u] ', it, max(f_res(it),0.d0)*phi_V, f_loc(:,it), &
         g_veo(it)*v_norm, loc_g(:,1,it), g_vei(it)*v_norm, loc_g(:,2,it), g_rho(it)*n_20, loc_g(:,3,it), &
-        g_Te(it)*T_eV, loc_g(:,4,it), g_in(it)/g_len(it), g_exb(it)/g_len(it)
+        g_Te(it)*T_eV, loc_g(:,4,it), g_in(it)/g_len(it), g_exb(it)/g_len(it), sink_bohm(it)
     enddo
     write(*,'(A)') ' [mach1] type  |res| min / mean / max [m/s]        at (R,Z)         max M    at (R,Z)          max cs|b.n|  drift/cs   npts'
     do it = 1, nt

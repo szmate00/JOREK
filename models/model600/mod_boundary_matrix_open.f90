@@ -321,18 +321,6 @@ do ms=1, n_gauss
     normal_sign  = sign(1.d0,bdotn)
     normal_sign3 = sign(1.d0,ps0_s) * normal_sign
 
-    ! --- Wall diagnostics (wall_diag): first toroidal plane, attributed to the types of both edge endpoints.
-    ! --- vE.n = -orient*R*u_s/dl is the outward ExB normal speed (v_E = (-R*u_Z, +R*u_R)); B_pol.n = bdotn*Btot.
-    if ( with_vpar .and. mp .eq. 1 ) then
-      wd_orient = sign(1.d0, y_s(ms)*normal(1) - x_s(ms)*normal(2))
-      wd_vEn    = - wd_orient * BigR * eq_s(mp,var_u,ms) / dl
-      call wall_diag_add(bnd_type1, ws*dl, BigR, y_g(ms), r0, Ti0, Te0, Vpar0, Btot, bdotn*Btot, bdotn, wd_vEn, cs0, &
-                         eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl)
-      if ( bnd_type2 .ne. bnd_type1 ) &
-        call wall_diag_add(bnd_type2, ws*dl, BigR, y_g(ms), r0, Ti0, Te0, Vpar0, Btot, bdotn*Btot, bdotn, wd_vEn, cs0, &
-                           eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl)
-    endif
-
     c_1 = vpar_smoothing_coef(1); c_2 = vpar_smoothing_coef(2); c_3 = vpar_smoothing_coef(3)
     if (vpar_smoothing) then
       factor = 0.25d0 * ( 1.d0 + tanh( (abs(bdotn) - c_1) / c_2 ) )**2 - c_3
@@ -365,12 +353,12 @@ do ms=1, n_gauss
     fx_u = 0.d0
     fx_T = 0.d0
     ex_n = 0.d0; ex_v = 0.d0; ex_p = 0.d0; ex_u = 0.d0; ex_T = 0.d0
+    sf_fl = max(factor, 0.d0) * cs0 * abs(bdotn)
     if ( sf_on ) then
       sf_orient = sign(1.d0, y_s(ms)*normal(1) - x_s(ms)*normal(2))
       sf_vEn = - sf_orient * BigR * eq_s(mp,var_u,ms) / dl
       sf_Bn  = bdotn * Btot
       sf_vn  = sf_Bn * Vpar0 + sf_vEn
-      sf_fl  = max(factor, 0.d0) * cs0 * abs(bdotn)
       if ( sf_vn .ge. sf_fl ) then          ! flow satisfies the condition: Gamma = n*vn
         fx_n = sf_vn * BigR * dl
         fx_v = sf_Bn * BigR * dl
@@ -389,6 +377,19 @@ do ms=1, n_gauss
         ex_T = fx_T
       endif
     endif
+
+    ! --- Wall diagnostics (wall_diag): first toroidal plane, attributed to the types of both edge endpoints.
+    ! --- vE.n = -orient*R*u_s/dl is the outward ExB normal speed (v_E = (-R*u_Z, +R*u_R)); B_pol.n = bdotn*Btot.
+    if ( with_vpar .and. mp .eq. 1 ) then
+      wd_orient = sign(1.d0, y_s(ms)*normal(1) - x_s(ms)*normal(2))
+      wd_vEn    = - wd_orient * BigR * eq_s(mp,var_u,ms) / dl
+      call wall_diag_add(bnd_type1, ws*dl, BigR, y_g(ms), r0, Ti0, Te0, Vpar0, Btot, bdotn*Btot, bdotn, wd_vEn, cs0, &
+                         eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl, r0*ex_n, r0*sf_fl*BigR*dl)
+      if ( bnd_type2 .ne. bnd_type1 ) &
+        call wall_diag_add(bnd_type2, ws*dl, BigR, y_g(ms), r0, Ti0, Te0, Vpar0, Btot, bdotn*Btot, bdotn, wd_vEn, cs0, &
+                           eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl, r0*ex_n, r0*sf_fl*BigR*dl)
+    endif
+
 
     do i=1,2                ! loop over nodes
 
