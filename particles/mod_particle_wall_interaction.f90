@@ -1772,7 +1772,7 @@ subroutine project_sputter_vars_on_edge(this, sim)
       m = atomic_weights(Z) * ATOMIC_MASS_UNIT
       
       ! --- Incident ion flux. On edges where the fluid assembles the sheath-set wall flux (both vertices of the
-      ! --- wall element's side are floating_u + mach1 types, mod_boundary_matrix_open) exactly what the fluid loses
+      ! --- wall element's side are floating_u or sheath_j types with mach1, mod_boundary_matrix_open) exactly what the fluid loses
       ! --- there: n*max(vn, v_fl) + n*cs*c_angle, vn = Vpar*(B.n) + vE.n on the OUTWARD normal (wall_normal_vector
       ! --- points inward, hence the minus), v_fl = factor*cs*cos_alpha the parallel normal flow the Mach-1 row
       ! --- imposes (factor = vpar_smoothing weight), with the fluid's n, Te, Ti and cs = sqrt(gamma*(Ti+Te)/m).
@@ -1784,8 +1784,9 @@ subroutine project_sputter_vars_on_edge(this, sim)
       iv2     = sim%fields%node_list%node( sim%fields%element_list%element( &
                   this%fluid_yield_integral%patch(i_patch)%i_elm_jorek_edge(i) )%vertex(mod(i_side,4)+1) )%boundary
       sf_edge = .false.
-      if ( iv1 .ge. 1 .and. iv2 .ge. 1 ) sf_edge = bcs(iv1)%floating_u .and. bcs(iv2)%floating_u .and. &
-                                                   bcs(iv1)%mach1      .and. bcs(iv2)%mach1
+      if ( iv1 .ge. 1 .and. iv2 .ge. 1 ) sf_edge = ( bcs(iv1)%floating_u .or. bcs(iv1)%sheath_j ) .and. &
+                                                   ( bcs(iv2)%floating_u .or. bcs(iv2)%sheath_j ) .and. &
+                                                   bcs(iv1)%mach1 .and. bcs(iv2)%mach1
       if ( sf_edge ) then
         call sim%fields%calc_NeTeTi(sim%time, this%fluid_yield_integral%patch(i_patch)%i_elm_jorek_edge(i), &
              this%fluid_yield_integral%patch(i_patch)%st(:,i), real(this%fluid_yield_integral%patch(i_patch)%xyz(3,i), 8), &

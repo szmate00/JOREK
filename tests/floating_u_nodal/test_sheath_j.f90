@@ -44,6 +44,17 @@ program test_sheath_j
   if ( .not. anyrow(var_zj) ) error stop 'FAIL 1: no zj row above the grazing angle'
   if ( anyrow(var_u) ) error stop 'FAIL 1: a u row was assembled (u belongs to the vorticity equation)'
   write(*,'(a)') ' PASS 1: zj row: none with sheath_j off, none below the angle, present above it; no u row'
+  ! the total-flow wall flux must be on for a sheath type too: with u varying along the wall the rho rows get a u column
+  call set_u(ufl); base(:)%values(1,2,var_u) = 0.05d0; nodes = base; call assemble(a, r)
+  worst = 0.d0
+  do row = 1, nd
+    if ( varof(row) /= var_rho ) cycle
+    do col = 1, nd
+      if ( varof(col) == var_u ) worst = max(worst, abs(a(row,col)))
+    enddo
+  enddo
+  if ( worst .eq. 0.d0 ) error stop 'FAIL 1: total-flow wall flux not active on a sheath_j type (no u column in the rho rows)'
+  write(*,'(a)') ' PASS 1b: total-flow wall flux active on the sheath type (rho rows carry the u column)'
 
   ! ---------------------------------------------------------------- 2. FD
   do icase = 1, 4
