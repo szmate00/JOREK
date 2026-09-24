@@ -1683,7 +1683,8 @@ end function fluid_sputtering_yield
 !> Assume that the impact angle of all particles is 0
 subroutine project_sputter_vars_on_edge(this, sim)
   use mod_atomic_elements, only: atomic_weights
-  use phys_module, only: central_mass, xpoint, xcase, min_sheath_angle, gamma, bcs, vpar_smoothing, vpar_smoothing_coef
+  use phys_module, only: central_mass, xpoint, xcase, min_sheath_angle, gamma, bcs, vpar_smoothing, vpar_smoothing_coef, &
+                         sheath_flux_on_sheath_j
   
   type(wall_action),  intent(inout) :: this
   type(particle_sim), intent(in)    :: sim
@@ -1737,7 +1738,7 @@ subroutine project_sputter_vars_on_edge(this, sim)
 #else
     !$omp parallel do default(none) &
     !$omp shared(this, sim, gamma, &
-    !$omp i_patch, central_mass, psi_axis, psi_limit, c_angle, bcs, vpar_smoothing, vpar_smoothing_coef) &
+    !$omp i_patch, central_mass, psi_axis, psi_limit, c_angle, bcs, vpar_smoothing, vpar_smoothing_coef, sheath_flux_on_sheath_j) &
 #endif
     !$omp private(i, n_e, T_e, vpar, E, B, psi, U, vector_normal, B_hat, cos_alpha, q, T_i, mass_ion, c_s, m, Gamma_d, &
     !$omp         yield, Z, v_ExB, v_n_tot, n_e_b, T_e_b, T_i_b, c_s_b, sf_fac, sf_edge, i_side, iv1, iv2) schedule(static)
@@ -1784,8 +1785,8 @@ subroutine project_sputter_vars_on_edge(this, sim)
       iv2     = sim%fields%node_list%node( sim%fields%element_list%element( &
                   this%fluid_yield_integral%patch(i_patch)%i_elm_jorek_edge(i) )%vertex(mod(i_side,4)+1) )%boundary
       sf_edge = .false.
-      if ( iv1 .ge. 1 .and. iv2 .ge. 1 ) sf_edge = ( bcs(iv1)%floating_u .or. bcs(iv1)%sheath_j ) .and. &
-                                                   ( bcs(iv2)%floating_u .or. bcs(iv2)%sheath_j ) .and. &
+      if ( iv1 .ge. 1 .and. iv2 .ge. 1 ) sf_edge = ( bcs(iv1)%floating_u .or. ( bcs(iv1)%sheath_j .and. sheath_flux_on_sheath_j ) ) .and. &
+                                                   ( bcs(iv2)%floating_u .or. ( bcs(iv2)%sheath_j .and. sheath_flux_on_sheath_j ) ) .and. &
                                                    bcs(iv1)%mach1 .and. bcs(iv2)%mach1
       if ( sf_edge ) then
         call sim%fields%calc_NeTeTi(sim%time, this%fluid_yield_integral%patch(i_patch)%i_elm_jorek_edge(i), &

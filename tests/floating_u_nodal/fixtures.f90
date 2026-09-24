@@ -35,7 +35,7 @@ module phys_module
   logical :: floating_u_mach_flux=.false.,floating_u_wall_flux=.false.,floating_u_transport_diag=.false.
   real*8 :: floating_u_probe_R=1.6d0,floating_u_probe_Z=-1.11d0
   logical :: vpar_smoothing=.false.,mach_one_bnd_integral=.false.,mach1_omit_drift=.false.
-  logical :: wall_diag=.true.,sheath_j_current_row=.true.
+  logical :: wall_diag=.true.,sheath_j_current_row=.true.,sheath_flux_on_sheath_j=.true.
   integer :: wall_diag_every=1,index_now=1,wall_diag_profile_every=0
   real*8  :: t_now=0.d0,T_min=2.d-6
   real*8 :: vpar_smoothing_coef(3)=[0.02d0,0.016d0,0.005754d0]

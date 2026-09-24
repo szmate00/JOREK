@@ -102,6 +102,7 @@ subroutine preset_parameters
   sheath_Lambda         = 3.d0   ! floating sheath drop, e*Phi/Te
   sheath_V_wall         = 0.d0   ! wall potential [V]
   sheath_j_current_row  = .true. ! bcs%sheath_j form: characteristic in the zj row (the only form here)
+  sheath_flux_on_sheath_j = .true. ! total-flow wall flux and recycling also on sheath_j types (.f.: develop's rows there)
 
   amix                 = 0.d0
   amix_freeb           = 0.85d0

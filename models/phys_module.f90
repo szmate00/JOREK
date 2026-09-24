@@ -63,6 +63,7 @@ module phys_module
   logical :: mach_one_bnd_integral!< use a boundary integral (boundary_matrix_open) to implement Mach=one boundary condition
   logical :: mach1_omit_drift     !< drop the ExB drift term factor/Btot*R^2*u_b/psi_b from the nodal Mach-1 row: Vpar = +-cs/|B| (model600)
   logical :: wall_diag            !< print the [floating_u]/[mach1]/[sheath_j] wall diagnostics tables to the log under bcs%floating_u / bcs%sheath_j (model600)
+  logical :: sheath_flux_on_sheath_j !< total-flow sheath wall flux (rows and recycling) also on bcs%sheath_j types; .false.: develop's parallel-only rows there (A/B: the inflow sink under a sheath potential)
   logical :: sheath_j_current_row !< the form of bcs%sheath_j: characteristic in the zj row, u from the vorticity equation (the only form on this branch; kept for namelist compatibility)
   integer :: wall_diag_every      !< ... every this many time steps
   integer :: wall_diag_profile_every !< full wall profile every this many steps (0: never)

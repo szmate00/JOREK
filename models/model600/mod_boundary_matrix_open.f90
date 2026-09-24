@@ -142,8 +142,8 @@ bnd_type2 = nodes(2)%boundary
 ! --- Sheath-set wall flux on the total normal flow: on edges whose both endpoints carry a wall potential that varies
 ! --- along the wall (bcs%floating_u or bcs%sheath_j) and the Mach-1 row, so that the flux and the row describe the
 ! --- same wall
-sf_on = with_vpar .and. ( bcs(bnd_type1)%floating_u .or. bcs(bnd_type1)%sheath_j ) &
-                  .and. ( bcs(bnd_type2)%floating_u .or. bcs(bnd_type2)%sheath_j ) &
+sf_on = with_vpar .and. ( bcs(bnd_type1)%floating_u .or. ( bcs(bnd_type1)%sheath_j .and. sheath_flux_on_sheath_j ) ) &
+                  .and. ( bcs(bnd_type2)%floating_u .or. ( bcs(bnd_type2)%sheath_j .and. sheath_flux_on_sheath_j ) ) &
                   .and. bcs(bnd_type1)%mach1 .and. bcs(bnd_type2)%mach1
 
 ! --- If one of the nodes has a boundary type where natural BCs are applied, apply boundary integral for the full bnd element
