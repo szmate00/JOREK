@@ -103,6 +103,9 @@ subroutine preset_parameters
   sheath_V_wall         = 0.d0   ! wall potential [V]
   sheath_j_current_row  = .true. ! bcs%sheath_j form: characteristic in the zj row (the only form here)
   sheath_flux_on_sheath_j = .true. ! total-flow wall flux and recycling also on sheath_j types (.f.: develop's rows there)
+  sheath_j_ion_slope    = 0.d0   ! ion-saturation slope of the characteristic (sheath expansion); 0 = hard saturation
+  sheath_j_ramp_time    = 0.d0   ! switch-on ramp of the characteristic: 0 = over the timestep ramp, <0 = none
+  sheath_j_ramp_alpha0  = 0.05d0 ! initial alpha of that ramp
 
   amix                 = 0.d0
   amix_freeb           = 0.85d0

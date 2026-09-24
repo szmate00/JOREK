@@ -139,7 +139,7 @@ subroutine wall_diag_report(my_id, node_list)
 
   use constants,          only: MU_ZERO, ATOMIC_MASS_UNIT, EL_CHG
   use phys_module,        only: central_density, central_mass, F0, t_now, index_now, wall_diag_profile_every, bcs, sheath_V_wall, T_min
-  use mod_floating_u,     only: floating_u_norm
+  use mod_floating_u,     only: floating_u_norm, sheath_j_ramp
   use mod_parameters,     only: var_rho, var_Te, var_Ti, var_T, var_u, with_TiTe
   use data_structure,     only: type_node_list
   use mpi_mod
@@ -269,6 +269,7 @@ subroutine wall_diag_report(my_id, node_list)
         write(*,'(I3,A,ES10.2,A,ES9.2,A)', advance='no') it, ':', g_inet(it), '/', gj_isat(it), ' '
       enddo
       write(*,'(A,ES10.2,A,ES9.2)') ' | sum', sum(g_inet), '  sum |Isat|', sum(gj_isat)
+      write(*,'(A,F7.3)') ' [sheath_j] ramp alpha', sheath_j_ramp(t_now)
       write(*,'(A)') ' [sheath_j] type  e-sat  |j|>jsat   j/jsat min     max    max|j/jsat| at (R,Z)      Phi[V] min      max     Inet/Isat'
       do it = 1, nt
         if ( gj_len(it) .le. 0.d0 ) cycle

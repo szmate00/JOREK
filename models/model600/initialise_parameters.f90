@@ -213,7 +213,8 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 find_RZ_nearby_iter, find_RZ_nearby_tol,            &
                 min_sheath_angle, bcs, part_kill_ratio,             &
                 sheath_Lambda, sheath_V_wall, sheath_j_current_row, &
-                sheath_flux_on_sheath_j,                            &
+                sheath_flux_on_sheath_j, sheath_j_ion_slope,        &
+                sheath_j_ramp_time, sheath_j_ramp_alpha0,           &
                 use_sc, add_sources_in_sc, visco_sc_num,            &
                 D_perp_sc_num, D_par_sc_num, ZK_perp_sc_num,        &
                 ZK_par_sc_num, ZK_i_perp_sc_num, ZK_i_par_sc_num,   &
@@ -275,6 +276,10 @@ if (my_id .eq. 0) then
     end if
     if ( any(bcs(:)%sheath_j .and. .not. (bcs(:)%dirichlet%u .and. bcs(:)%dirichlet%zj)) ) then
       write(*,*) 'ERROR: bcs%sheath_j takes over the u and zj rows, so dirichlet%u and dirichlet%zj must stay .true., EXITING!'
+      stop
+    end if
+    if ( sheath_j_ion_slope .lt. 0.d0 .or. sheath_j_ramp_alpha0 .le. 0.d0 .or. sheath_j_ramp_alpha0 .gt. 1.d0 ) then
+      write(*,*) 'ERROR: sheath_j_ion_slope must be >= 0 and sheath_j_ramp_alpha0 in (0, 1], EXITING!'
       stop
     end if
     if ( any(bcs(:)%sheath_j .and. .not. bcs(:)%mach1) ) then

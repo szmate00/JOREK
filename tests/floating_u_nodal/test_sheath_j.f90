@@ -8,7 +8,7 @@ program test_sheath_j
   use phys_module
   use data_structure
   use mod_boundary_matrix_open
-  use mod_floating_u, only: floating_u_norm
+  use mod_floating_u, only: floating_u_norm, sheath_j_ramp
   use basis_at_gaussian, only: set_basis
   implicit none
   integer, parameter :: nd = 4*4*n_var
@@ -86,6 +86,51 @@ program test_sheath_j
     enddo
     write(*,'(a,i2,a,es9.2)') ' PASS 2 case', icase, ': zj/u/rho/Ti/Te columns of the zj rows vs FD, worst ', worst
   enddo
+
+  ! ---------------------------------------------------------------- 2c. ion-saturation slope and switch-on ramp
+  ! FD of every column of the zj rows with s > 0 on the ion side, and with alpha < 1 in all three states; the ramp
+  ! function: alpha0 at t = 0, 1 at the end of the timestep ramp, linear between, 1 with the ramp disabled.
+  do icase = 1, 5
+    sheath_j_ion_slope = 0.d0 ; sheath_j_ramp_time = -1.d0 ; t_now = 0.d0
+    select case (icase)
+    case (1); sheath_j_ion_slope = 0.03d0 ; call set_u( 1.5d0*ufl)                 ! ion side with slope
+    case (2); sheath_j_ion_slope = 0.03d0 ; call set_u( 0.6d0*ufl)                 ! electron side: slope inactive
+    case (3); sheath_j_ramp_time = 1.d0 ; t_now = 0.d0 ; call set_u( 1.05d0*ufl)   ! alpha0 = 0.05, ion side
+    case (4); sheath_j_ramp_time = 1.d0 ; t_now = 0.d0 ; call set_u( 0.98d0*ufl)   ! alpha0, electron side below the cap
+    case (5); sheath_j_ramp_time = 1.d0 ; t_now = 0.5d0 ; sheath_j_ion_slope = 0.03d0 ; call set_u( 1.3d0*ufl)  ! mid-ramp with slope
+    end select
+    nodes = base; call assemble(a, r)
+    worst = 0.d0
+    do col = 1, nd
+      if ( .not. any(varof(col) == fd_vars) ) cycle
+      eps = 1.d-8
+      ! alpha = 0.05: the exponent varies 20x faster in u and Te, central FD needs a smaller step on those columns
+      if ( icase >= 3 .and. (varof(col) == var_u .or. varof(col) == var_Te) ) eps = 3.d-10
+      nodes = base; call bump(col, +eps); call assemble(ap, rp)
+      nodes = base; call bump(col, -eps); call assemble(am, rm)
+      scale = max(1.d-30, maxval(abs(a(:,col))), maxval(abs(rp-rm))/(2*eps))
+      do row = 1, nd
+        if ( varof(row) /= var_zj ) cycle
+        worst = max(worst, abs(a(row,col) + (rp(row)-rm(row))/(2*eps)) / scale)
+        if ( abs(a(row,col) + (rp(row)-rm(row))/(2*eps)) / scale > 1.d-6 ) then
+          write(*,'(a,4i5,2es14.5)') ' FAIL 2c: case,row,col,var, amat, -fd', icase, row, col, varof(col), a(row,col), -(rp(row)-rm(row))/(2*eps)
+          error stop 1
+        endif
+      enddo
+    enddo
+    write(*,'(a,i2,a,es9.2)') ' PASS 2c case', icase, ': slope/ramp: zj-row columns vs FD, worst ', worst
+  enddo
+  sheath_j_ion_slope = 0.d0 ; sheath_j_ramp_time = -1.d0 ; t_now = 0.d0
+  ! ramp function
+  tstep_n(1:3) = [1.d-2, 1.d-1, 1.d0] ; nstep_n(1:3) = [10, 10, 1000]      ! ramp phases end at t = 1.1
+  sheath_j_ramp_time = 0.d0
+  if ( abs(sheath_j_ramp(0.d0) - 0.05d0) > 1.d-14 )  error stop 'FAIL 2c: alpha(0) /= alpha0'
+  if ( abs(sheath_j_ramp(0.55d0) - 0.525d0) > 1.d-14 ) error stop 'FAIL 2c: alpha not linear over the timestep ramp'
+  if ( sheath_j_ramp(1.1d0) /= 1.d0 .or. sheath_j_ramp(5.d0) /= 1.d0 ) error stop 'FAIL 2c: alpha /= 1 after the ramp'
+  sheath_j_ramp_time = -1.d0
+  if ( sheath_j_ramp(0.d0) /= 1.d0 ) error stop 'FAIL 2c: alpha /= 1 with the ramp disabled'
+  tstep_n = 0.d0 ; nstep_n = 0
+  write(*,'(a)') ' PASS 2c: ramp alpha: alpha0 at t = 0, linear to 1 at the end of the timestep ramp, 1 when disabled'
 
   ! ---------------------------------------------------------------- 3. sign of the saturation current
   ! u far above floating: f -> 1, residual of the zj row with zj = 0 is +Zbig*dl*j_sat per unit test function.

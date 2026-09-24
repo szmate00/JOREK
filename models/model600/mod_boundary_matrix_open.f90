@@ -18,7 +18,7 @@ use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
 use mod_wall_diag, only: wall_diag_add, wall_diag_sheath_add
-use mod_floating_u, only: floating_u_norm, sheath_j_norm
+use mod_floating_u, only: floating_u_norm, sheath_j_norm, sheath_j_ramp
 
 implicit none
 
@@ -68,6 +68,7 @@ real*8     :: ex_n, ex_v, ex_p, ex_u, ex_T                      ! excess sink of
 logical    :: sj_on, sj_here                                     ! sheath current row on this edge / at this Gauss point
 real*8     :: sj_an, sj_csat, sj_CT, sj_CV, sj_jsat, sj_vfl      ! its normalisation, j_sat and the Bohm parallel flow it scales with
 real*8     :: sc_x, sc_ex, sc_f, sc_dfdu, sc_dfdTe, sc_res, sc_w, sc_Tc, sc_dTc, sc_drc   ! the characteristic and its columns
+real*8     :: sj_al, sc_y, sc_dydu, sc_dydT                     ! switch-on ramp alpha, y = x/alpha and its u, Te derivatives
 logical    :: xpoint2
 integer    :: n_tor_local 
 logical    :: apply_natural_bc(0:n_var)
@@ -164,6 +165,7 @@ enddo
 ! --- ExB part of the wall flux carries ions and electrons together and adds no net current.
 sj_on = sheath_j_current_row .and. bcs(bnd_type1)%sheath_j .and. bcs(bnd_type2)%sheath_j
 sj_an = 0.d0 ; sj_csat = 0.d0 ; sj_CT = 0.d0 ; sj_CV = 0.d0
+sj_al = sheath_j_ramp(t_now)
 if ( sj_on ) then
   apply_natural_bc(var_zj) = .true.
   call sheath_j_norm(sj_an, sj_csat)
@@ -398,35 +400,46 @@ do ms=1, n_gauss
       endif
     endif
 
-    ! --- Sheath current row (sj_on) at this Gauss point: residual zj - j_sat*f(x), f = 1 - exp(min(x, Lambda))
-    ! --- (electron current saturated at x >= Lambda, potential not below the wall), Zbig*dl weight, exact columns
-    ! --- on zj, u, rho and T (through cs and through x). corr_neg-corrected Te and rho as in every natural row: a
-    ! --- raw Te <= 0 would flip the sign of x and a raw rho <= 0 the sign of j_sat. The Btot and sign(B.n)
-    ! --- dependence on psi is lagged, as everywhere in this routine.
+    ! --- Sheath current row (sj_on) at this Gauss point: residual zj - j_sat*f, with y = x/alpha,
+    ! ---   f = 1 - exp(min(y, Lambda)) - s*min(y, 0),   x = Lambda - a_n*(u - C_V*V_wall)/(2Te),
+    ! --- Zbig*dl weight, exact columns on zj, u, rho and T (through cs and through y). Electron current saturated
+    ! --- at y >= Lambda (potential not below the wall). s = sheath_j_ion_slope: the finite slope of the ion-
+    ! --- saturation branch (sheath expansion), which gives the row a solution where the plasma delivers more than
+    ! --- j_sat; with s = 0 there is none and the potential runs away there. alpha = sheath_j_ramp(t_now): the
+    ! --- switch-on ramp, 1 after it (mod_floating_u). corr_neg-corrected Te and rho as in every natural row: a raw
+    ! --- Te <= 0 would flip the sign of x and a raw rho <= 0 the sign of j_sat. The Btot and sign(B.n) dependence
+    ! --- on psi is lagged, as everywhere in this routine.
     sj_here = sj_on .and. ( abs(bdotn) .ge. sin(c_angle) )
     sj_vfl  = max(factor, 0.d0) * cs0
     sj_jsat = 0.d0
-    sc_w = 0.d0 ; sc_x = 0.d0 ; sc_ex = 1.d0 ; sc_f = 0.d0 ; sc_dfdu = 0.d0 ; sc_dfdTe = 0.d0 ; sc_res = 0.d0
-    sc_Tc = 1.d0 ; sc_dTc = 1.d0 ; sc_drc = 1.d0
+    sc_w = 0.d0 ; sc_x = 0.d0 ; sc_y = 0.d0 ; sc_ex = 1.d0 ; sc_f = 0.d0 ; sc_dfdu = 0.d0 ; sc_dfdTe = 0.d0 ; sc_res = 0.d0
+    sc_Tc = 1.d0 ; sc_dTc = 1.d0 ; sc_drc = 1.d0 ; sc_dydu = 0.d0 ; sc_dydT = 0.d0
     if ( sj_here ) then
       sj_jsat = sj_csat * r0_corr * normal_sign * sj_vfl / Btot
       sc_Tc   = Te0_corr
       sc_dTc  = dcorr_neg_temp_dT(Te0)
       sc_drc  = dcorr_neg_dens_drho(r0)
       sc_x    = sheath_Lambda - sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*sc_Tc)
-      sc_ex   = exp( min(sc_x, sheath_Lambda) )
-      sc_f    = 1.d0 - sc_ex
-      if ( sc_x .lt. sheath_Lambda ) then
-        sc_dfdu  =   sc_ex * sj_an / (2.d0*sc_Tc)
-        sc_dfdTe = - sc_ex * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*sc_Tc**2) * sc_dTc
+      sc_y    = sc_x / sj_al
+      sc_dydu = - sj_an / (2.d0*sc_Tc) / sj_al
+      sc_dydT =   sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*sc_Tc**2) * sc_dTc / sj_al
+      sc_ex   = exp( min(sc_y, sheath_Lambda) )
+      sc_f    = 1.d0 - sc_ex - sheath_j_ion_slope * min(sc_y, 0.d0)
+      if ( sc_y .lt. sheath_Lambda ) then
+        sc_dfdu  = - sc_ex * sc_dydu
+        sc_dfdTe = - sc_ex * sc_dydT
+      endif
+      if ( sc_y .lt. 0.d0 ) then
+        sc_dfdu  = sc_dfdu  - sheath_j_ion_slope * sc_dydu
+        sc_dfdTe = sc_dfdTe - sheath_j_ion_slope * sc_dydT
       endif
       sc_res  = eq_g(mp,var_zj,ms) - sj_jsat * sc_f
       sc_w    = Zbig * dl
       if ( mp .eq. 1 ) call wall_diag_sheath_add(bnd_type1, ws*dl, BigR, y_g(ms), eq_g(mp,var_zj,ms), sj_jsat, &
-                                                 bdotn*Btot, eq_g(mp,var_u,ms), sc_x .ge. sheath_Lambda)
+                                                 bdotn*Btot, eq_g(mp,var_u,ms), sc_y .ge. sheath_Lambda)
       if ( mp .eq. 1 .and. bnd_type2 .ne. bnd_type1 ) &
         call wall_diag_sheath_add(bnd_type2, ws*dl, BigR, y_g(ms), eq_g(mp,var_zj,ms), sj_jsat, &
-                                  bdotn*Btot, eq_g(mp,var_u,ms), sc_x .ge. sheath_Lambda)
+                                  bdotn*Btot, eq_g(mp,var_u,ms), sc_y .ge. sheath_Lambda)
     endif
 
     ! --- Wall diagnostics (wall_diag): first toroidal plane, attributed to the types of both edge endpoints.

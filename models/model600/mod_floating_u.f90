@@ -22,7 +22,7 @@ module mod_floating_u
   implicit none
   private
 
-  public :: floating_u_norm, floating_u_volts, floating_u_selftest, sheath_j_norm
+  public :: floating_u_norm, floating_u_volts, floating_u_selftest, sheath_j_norm, sheath_j_ramp
 
 contains
 
@@ -124,6 +124,40 @@ pure subroutine sheath_j_norm(a_n, c_sat)
   c_sat = - EL_CHG * F0 * n_0 * sqrt(MU_ZERO / rho0)
 
 end subroutine sheath_j_norm
+
+
+!> Switch-on ramp alpha(t) of the sheath characteristic zj = j_sat*(1 - exp(x/alpha)): alpha = 1 is the
+!! characteristic itself; a small alpha is the sheath of a plasma at alpha*Te, a stiff I-V that pins the potential
+!! near floating and lets any current pass, so the equilibrium's wall current (which is no sheath current) can be
+!! relaxed by the induction equation while the sheath tightens, as JOREK ramps RMPs. Linear from
+!! sheath_j_ramp_alpha0 at t = 0 to 1 at t_end: sheath_j_ramp_time > 0 sets t_end, 0 takes the end of the
+!! timestep ramp (the last tstep_n phase begins), < 0 disables the ramp. The end state is the same either way.
+pure real*8 function sheath_j_ramp(t)
+
+  use phys_module, only: sheath_j_ramp_time, sheath_j_ramp_alpha0, tstep_n, nstep_n
+
+  implicit none
+  real*8, intent(in) :: t
+
+  real*8  :: t_end
+  integer :: i, n_last
+
+  sheath_j_ramp = 1.d0
+  if ( sheath_j_ramp_time .lt. 0.d0 ) return
+  t_end = sheath_j_ramp_time
+  if ( t_end .eq. 0.d0 ) then
+    n_last = 1
+    do i = 1, size(nstep_n)
+      if ( nstep_n(i) .gt. 0 ) n_last = i
+    enddo
+    do i = 1, n_last-1
+      t_end = t_end + tstep_n(i) * nstep_n(i)
+    enddo
+  endif
+  if ( t_end .le. 0.d0 ) return
+  sheath_j_ramp = sheath_j_ramp_alpha0 + ( 1.d0 - sheath_j_ramp_alpha0 ) * min( 1.d0, max( 0.d0, t / t_end ) )
+
+end function sheath_j_ramp
 
 
 end module mod_floating_u

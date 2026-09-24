@@ -64,6 +64,9 @@ module phys_module
   logical :: mach1_omit_drift     !< drop the ExB drift term factor/Btot*R^2*u_b/psi_b from the nodal Mach-1 row: Vpar = +-cs/|B| (model600)
   logical :: wall_diag            !< print the [floating_u]/[mach1]/[sheath_j] wall diagnostics tables to the log under bcs%floating_u / bcs%sheath_j (model600)
   logical :: sheath_flux_on_sheath_j !< total-flow sheath wall flux (rows and recycling) also on bcs%sheath_j types; .false.: develop's parallel-only rows there (A/B: the inflow sink under a sheath potential)
+  real*8  :: sheath_j_ion_slope   !< finite slope of the ion-saturation branch of the sheath characteristic (sheath expansion): f = 1 - e^x - s*min(x,0); 0 = hard saturation (no voltage root above j_sat)
+  real*8  :: sheath_j_ramp_time   !< switch-on ramp of the sheath characteristic, zj = j_sat*(1 - exp(x/alpha)): alpha from sheath_j_ramp_alpha0 to 1 over this time (JOREK units); 0 = over the timestep ramp (alpha = 1 when the last tstep_n phase begins), < 0 = no ramp
+  real*8  :: sheath_j_ramp_alpha0 !< initial alpha of the switch-on ramp (a stiff, floating-like characteristic: the sheath of a plasma at alpha*Te)
   logical :: sheath_j_current_row !< the form of bcs%sheath_j: characteristic in the zj row, u from the vorticity equation (the only form on this branch; kept for namelist compatibility)
   integer :: wall_diag_every      !< ... every this many time steps
   integer :: wall_diag_profile_every !< full wall profile every this many steps (0: never)

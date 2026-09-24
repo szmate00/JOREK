@@ -30,6 +30,26 @@ is independent of the field sign. Normalisation in `mod_floating_u.f90` (`sheath
 written as the tauIC electron-pressure term with Pe/rho -> 0.71*Te (needs tauIC /= 0). Cherry-picked from
 `sheath-j-clean` unchanged.
 
+## Ion-saturation slope and switch-on ramp (2026-09-24)
+
+With the plain characteristic the row has no solution where the plasma delivers more than j_sat (f <= 1), and
+the potential runs away there in one solve; every from-0 run died this way at the inner strike point.
+
+`sheath_j_ion_slope` (s, default 0): f = 1 - e^y - s*min(y, 0), the finite slope of the ion-saturation branch
+(sheath expansion, the ion branch of a Langmuir characteristic). A node pushed to j > j_sat then has a finite
+potential, Phi = Te*(Lambda + (j/j_sat - 1)/s) above floating, and the row keeps its u column there.
+
+`sheath_j_ramp_time`, `sheath_j_ramp_alpha0` (default 0 and 0.05): switch-on ramp of the characteristic,
+y = x/alpha with alpha from alpha0 at t = 0 to 1 at the end of the timestep ramp (0), at the given time (> 0), or
+no ramp (< 0). A small alpha is the sheath of a plasma at alpha*Te: a stiff I-V that pins the potential near
+floating and passes any current, so the equilibrium's wall current, which is no sheath current, can be relaxed by
+the induction equation while the sheath tightens, as JOREK ramps RMPs. The electron cap sits at y = Lambda. The end
+state is the same with or without the ramp; on a restart past the ramp alpha = 1. `[sheath_j] ramp alpha` prints
+the current value.
+
+`sheath_flux_on_sheath_j` (default .t.): A/B switch, .f. gives develop's parallel-only wall rows and recycling on
+the sheath types (the first sheath_j run's configuration).
+
 ## Namelist (the Sept-21 configuration on this branch)
 
 ```fortran
@@ -42,6 +62,8 @@ sheath_j_current_row = .t.     ! the only form here (default .t.; kept so the ol
 sheath_Lambda     = 3.d0
 mach1_omit_drift  = .t.
 thermoelectric_ohm = .t.       ! optional, needs tauIC /= 0
+sheath_j_ion_slope = 0.03d0    ! finite ion-saturation branch (0 = hard saturation, the Sept-21 form)
+sheath_j_ramp_time = 0.d0      ! default: characteristic switched on over the timestep ramp
 ```
 
 Not on this branch (the namelist read aborts on them): `mach1_weak*`, `floating_u_diag`, `sheath_j_float_u`,

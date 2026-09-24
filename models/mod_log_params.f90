@@ -842,6 +842,9 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,REAL_FMT) 'sheath_V_wall         ', sheath_V_wall
     write(*,LOGI_FMT) 'sheath_j_current_row  ', sheath_j_current_row
     write(*,LOGI_FMT) 'sheath_flux_on_sheath_j', sheath_flux_on_sheath_j
+    write(*,REAL_FMT) 'sheath_j_ion_slope    ', sheath_j_ion_slope
+    write(*,REAL_FMT) 'sheath_j_ramp_time    ', sheath_j_ramp_time
+    write(*,REAL_FMT) 'sheath_j_ramp_alpha0  ', sheath_j_ramp_alpha0
     write(*,'(1X,A,30I3)') 'sheath_j on boundary types:', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%sheath_j )
   end if
 
