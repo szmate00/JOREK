@@ -1683,7 +1683,7 @@ end function fluid_sputtering_yield
 !> Assume that the impact angle of all particles is 0
 subroutine project_sputter_vars_on_edge(this, sim)
   use mod_atomic_elements, only: atomic_weights
-  use phys_module, only: central_mass, xpoint, xcase, min_sheath_angle, gamma
+  use phys_module, only: central_mass, xpoint, xcase, min_sheath_angle, gamma, bcs, vpar_smoothing, vpar_smoothing_coef
   
   type(wall_action),  intent(inout) :: this
   type(particle_sim), intent(in)    :: sim
@@ -1694,6 +1694,10 @@ subroutine project_sputter_vars_on_edge(this, sim)
   real*8, dimension(3) :: E, B, B_hat
   real*8 :: m, psi, U
   real*8 :: c_angle !< min_sheath_angle but then in radians, same as in mod_boundary_matrix_open
+  real*8 :: v_ExB(3), v_n_tot     !< fluid ExB velocity and total outward normal flow at the wall [m/s]
+  real*8 :: n_e_b, T_e_b, T_i_b, c_s_b, sf_fac !< fluid n, Te, Ti, sound speed and vpar_smoothing weight for the sheath-set flux
+  logical :: sf_edge               !< the fluid assembles the sheath-set wall flux on this edge (floating_u + mach1 types)
+  integer :: i_side, iv1, iv2      !< element side of the wall point and the boundary types of its two vertices
 
   real*8 :: psi_axis, R_axis, Z_axis, s_axis, t_axis, psi_xpoint(2), psi_limit, R_xpoint(2), Z_xpoint(2), s_xpoint(2), t_xpoint(2)
   integer :: i_elm_axis, ifail, i_elm_xpoint(2)
@@ -1733,10 +1737,10 @@ subroutine project_sputter_vars_on_edge(this, sim)
 #else
     !$omp parallel do default(none) &
     !$omp shared(this, sim, gamma, &
-    !$omp i_patch, central_mass, psi_axis, psi_limit, c_angle) &
+    !$omp i_patch, central_mass, psi_axis, psi_limit, c_angle, bcs, vpar_smoothing, vpar_smoothing_coef) &
 #endif
     !$omp private(i, n_e, T_e, vpar, E, B, psi, U, vector_normal, B_hat, cos_alpha, q, T_i, mass_ion, c_s, m, Gamma_d, &
-    !$omp         yield, Z) schedule(static)
+    !$omp         yield, Z, v_ExB, v_n_tot, n_e_b, T_e_b, T_i_b, c_s_b, sf_fac, sf_edge, i_side, iv1, iv2) schedule(static)
     do i = 1, size(this%fluid_yield_integral%patch(i_patch)%xyz, 2) !< over all nodes
       call sim%fields%calc_NeTevpar(sim%time, this%fluid_yield_integral%patch(i_patch)%i_elm_jorek_edge(i), this%fluid_yield_integral%patch(i_patch)%st(:,i), &
         real(this%fluid_yield_integral%patch(i_patch)%xyz(3,i), 8), n_e, T_e, vpar)
@@ -1744,7 +1748,7 @@ subroutine project_sputter_vars_on_edge(this, sim)
       call sim%fields%calc_EBpsiU(sim%time, this%fluid_yield_integral%patch(i_patch)%i_elm_jorek_edge(i), &
            this%fluid_yield_integral%patch(i_patch)%st(:,i), &
            real(this%fluid_yield_integral%patch(i_patch)%xyz(3,i), 8), &
-           E, B, psi, U)
+           E, B, psi, U, v_ExB)
       
       !> normal vector calculation
       vector_normal = wall_normal_vector(sim%fields%node_list, sim%fields%element_list, &
@@ -1767,7 +1771,34 @@ subroutine project_sputter_vars_on_edge(this, sim)
       Z = this%fluid_Z
       m = atomic_weights(Z) * ATOMIC_MASS_UNIT
       
-      Gamma_d = n_e * abs(vpar) * norm2(B) * cos_alpha + n_e * c_s * c_angle
+      ! --- Incident ion flux. On edges where the fluid assembles the sheath-set wall flux (both vertices of the
+      ! --- wall element's side are floating_u + mach1 types, mod_boundary_matrix_open) exactly what the fluid loses
+      ! --- there: n*max(vn, v_fl) + n*cs*c_angle, vn = Vpar*(B.n) + vE.n on the OUTWARD normal (wall_normal_vector
+      ! --- points inward, hence the minus), v_fl = factor*cs*cos_alpha the parallel normal flow the Mach-1 row
+      ! --- imposes (factor = vpar_smoothing weight), with the fluid's n, Te, Ti and cs = sqrt(gamma*(Ti+Te)/m).
+      ! --- Develop's parallel-flow form otherwise.
+      i_side  = minloc([ this%fluid_yield_integral%patch(i_patch)%st(2,i), 1.d0 - this%fluid_yield_integral%patch(i_patch)%st(1,i), &
+                         1.d0 - this%fluid_yield_integral%patch(i_patch)%st(2,i), this%fluid_yield_integral%patch(i_patch)%st(1,i) ], 1)
+      iv1     = sim%fields%node_list%node( sim%fields%element_list%element( &
+                  this%fluid_yield_integral%patch(i_patch)%i_elm_jorek_edge(i) )%vertex(i_side) )%boundary
+      iv2     = sim%fields%node_list%node( sim%fields%element_list%element( &
+                  this%fluid_yield_integral%patch(i_patch)%i_elm_jorek_edge(i) )%vertex(mod(i_side,4)+1) )%boundary
+      sf_edge = .false.
+      if ( iv1 .ge. 1 .and. iv2 .ge. 1 ) sf_edge = bcs(iv1)%floating_u .and. bcs(iv2)%floating_u .and. &
+                                                   bcs(iv1)%mach1      .and. bcs(iv2)%mach1
+      if ( sf_edge ) then
+        call sim%fields%calc_NeTeTi(sim%time, this%fluid_yield_integral%patch(i_patch)%i_elm_jorek_edge(i), &
+             this%fluid_yield_integral%patch(i_patch)%st(:,i), real(this%fluid_yield_integral%patch(i_patch)%xyz(3,i), 8), &
+             n_e_b, T_e_b, T_i=T_i_b)
+        c_s_b   = sqrt((k_boltz/mass_ion)*(gamma * (T_i_b+T_e_b)))
+        v_n_tot = - ( vpar * dot_product(B, vector_normal) + dot_product(v_ExB, vector_normal) )
+        sf_fac  = 1.d0
+        if ( vpar_smoothing ) sf_fac = max( 0.25d0 * ( 1.d0 + tanh( (cos_alpha - vpar_smoothing_coef(1)) / vpar_smoothing_coef(2) ) )**2 &
+                                            - vpar_smoothing_coef(3), 0.d0 )
+        Gamma_d = n_e_b * max(v_n_tot, sf_fac * c_s_b * cos_alpha) + n_e_b * c_s_b * c_angle
+      else
+        Gamma_d = n_e * abs(vpar) * norm2(B) * cos_alpha + n_e * c_s * c_angle
+      endif
 
       ! Assume an impact angle of 0!
       ! need the abs here because we cheat using negative numbers to indicate D, T

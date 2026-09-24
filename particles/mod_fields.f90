@@ -85,7 +85,7 @@ module mod_fields
 contains
 !> Calculates the electric and magnetic fields at a specific position
 !> in the jorek element `i_elm` at `st`.
-subroutine calc_EBpsiU(fields, time, i_elm, st, phi, E, B, psi, U)
+subroutine calc_EBpsiU(fields, time, i_elm, st, phi, E, B, psi, U, v_ExB)
   use phys_module, only: F0, mode, central_mass, central_density
   use constants, only: mu_zero, atomic_mass_unit
   use mod_coordinate_transforms, only: transform_derivatives_st_to_RZ
@@ -100,6 +100,9 @@ subroutine calc_EBpsiU(fields, time, i_elm, st, phi, E, B, psi, U)
   real*8, intent(out) :: B(3) !< Magnetic field [T]
   real*8, intent(out) :: psi !< psi in JOREK units
   real*8, intent(out) :: u !< velocity stream function in m/s
+  !> Poloidal ExB velocity the FLUID advects with, v = (-R*u_Z, +R*u_R, 0) [m/s].
+  !> Not E x B/|B|^2: E also carries the inductive part, which the reduced-MHD flow does not.
+  real*8, intent(out), optional :: v_ExB(3)
 
   ! Internal parameters
 #ifdef fullmhd
@@ -194,6 +197,7 @@ subroutine calc_EBpsiU(fields, time, i_elm, st, phi, E, B, psi, U)
   ! See http://jorek.eu/wiki/doku.php?id=u_phi
   E     = [-F0*U_R, -F0*U_Z, -F0*U_phi*R_inv]/t_norm
   E(3)  = E(3) - R_inv*P_time(1) ! because this is not normalized with t_norm
+  if ( present(v_ExB) ) v_ExB = [ -R*U_Z, R*U_R, 0.d0 ] / t_norm
 #endif
 
 #endif

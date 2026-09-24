@@ -67,6 +67,34 @@ matrix construction (`wall_diag_every`, default 1). One line per boundary type, 
 `wall_diag_profile_every = N > 0` adds `[wall prof]`, the full wall profile (one line per Gauss point) every N
 steps and whenever the wall minimum of rho or Te goes non-positive or halves. No equation is touched.
 
+## 4. Sheath-set wall flux on the total normal flow (automatic with `floating_u`)
+
+Develop's rho/Ti/Te wall rows carry only the parallel flow, while the volume advection (not integrated by parts)
+carries the full velocity, so with a wall potential that varies along the wall an ExB wall flux `q*vE.n` flows
+implicitly in both directions with no inflow datum where `vE.n < 0`. Measured (2026-09-24, no `use_sc`): the run dies
+where that inflow is largest (outer target, vE.n = -6e4 m/s, 11x the Bohm normal speed), density negative there
+first, the Mach row still satisfied. On edges whose both endpoints are `floating_u` + `mach1` types the sheath rows
+therefore impose the flux on the TOTAL normal flow (`mod_boundary_matrix_open.f90`, `sf_on`):
+
+    Gamma = n*max(vn, v_fl),   vn = Vpar*(B_pol.n) + vE.n,   v_fl = factor*cs*|b.n|,   energy gamma_sh*T*Gamma
+
+`v_fl` is exactly the parallel normal flow the nodal Mach-1 row imposes (`factor` = the `vpar_smoothing` weight, 1
+without it), so with the row holding `Gamma = n*(v_fl + max(vE.n,0))`: unchanged where the ExB points out of the
+plasma, the implicit emission replaced by the Bohm flux where it points in (the wall absorbs, never emits; SOLEDGE's
+Bohm-Chodura inequality on the wall flux, SOLPS's `U_out` floor). In the rows: `max(vn, v_fl)*R*dl` replaces the
+parallel measure and the excess sink `-q*max(v_fl - vn, 0)*R*dl` is added; boundary energy term
+`oint q^2 (vn/2 - max(vn, v_fl)) <= 0` at every incidence angle; nothing divides by `b.n`. Exact columns for the
+trial u_s, Vpar, psi_s (trace) and T (through cs); the |B| dependence on the normal psi DOF is lagged, as in develop.
+The `c_angle` floors are untouched. Kinetic recycling (`mod_particle_wall_interaction.f90`) uses the same `Gamma` on
+those edges, with the fluid's n, Te, Ti and the outward normal (`wall_normal_vector` points inward); the fluid ExB
+velocity comes from `calc_EBpsiU`'s new optional `v_ExB = (-R*u_Z, R*u_R, 0)`. Off those edges, and in every run
+without `floating_u`, fluid and kinetic expressions are develop's.
+
+Serial checks (scratchpad harness, production routine + stub modules): residuals equal develop's for constant u and
+flow above the floor; every u/Vpar/Ti/Te/rho column matches central FD (worst 1.5e-7) in the sub-Bohm, ExB-inflow,
+ExB-outflow, near-branch-point and `vpar_smoothing` states; psi trace columns to the lagged-|B| level (1e-3);
+with `floating_u` off the assembled edge matrix equals develop's to 3e-14 (re-associated products).
+
 ## Not covered
 
 `n_order >= 5` trace DOFs beyond value and first derivative; boundary postproc expressions along the wall.
