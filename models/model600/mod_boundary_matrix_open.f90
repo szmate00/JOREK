@@ -437,10 +437,10 @@ do ms=1, n_gauss
       if ( sj_jsat .ne. 0.d0 ) wd_jr = eq_g(mp,var_zj,ms) / sj_jsat
       wd_vEn    = - wd_orient * BigR * eq_s(mp,var_u,ms) / dl
       call wall_diag_add(bnd_type1, ws*dl, BigR, y_g(ms), r0, Ti0, Te0, Vpar0, Btot, bdotn*Btot, bdotn, wd_vEn, cs0, &
-                         eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl, r0*ex_n, r0*sf_fl*BigR*dl, wd_jr, sc_x)
+                         eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl, r0*ex_n, r0*sf_fl*BigR*dl, wd_jr, sc_x, eq_g(mp,var_zj,ms))
       if ( bnd_type2 .ne. bnd_type1 ) &
         call wall_diag_add(bnd_type2, ws*dl, BigR, y_g(ms), r0, Ti0, Te0, Vpar0, Btot, bdotn*Btot, bdotn, wd_vEn, cs0, &
-                           eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl, r0*ex_n, r0*sf_fl*BigR*dl, wd_jr, sc_x)
+                           eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl, r0*ex_n, r0*sf_fl*BigR*dl, wd_jr, sc_x, eq_g(mp,var_zj,ms))
     endif
 
 

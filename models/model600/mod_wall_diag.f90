@@ -13,6 +13,8 @@
 !!              min/mean/max with the location of the max (with mach1_omit_drift this is what the nodal row
 !!              imposes; with the drift term the row's target differs by its ExB term), max Mach |Vpar*B|/cs
 !!              with location, max cs|b.n|, max drift demand |vE.n|/(cs|b.n|), number of Gauss points
+!! [wall I]     wall current into the wall per type over ALL types (pinned Dirichlet current included) with the
+!!              saturation current of the sheath types, JOREK units, and the sum over the wall (charge balance)
 !! [sheath_j]   per type carrying the sheath current row: fraction of its length at electron saturation, fraction
 !!              with |j/j_sat| > 1, min/max j/j_sat (negative = electron current, +1 = ion saturation), largest
 !!              |j/j_sat| with (R,Z), wall potential min/max [V], net current into the wall over the saturation current
@@ -28,7 +30,7 @@ module mod_wall_diag
   integer, parameter :: nt   = 30                !< max_bnd_types
   integer, parameter :: ns   = 17                !< state vector length
   integer, parameter :: ncap = 50000             !< wall Gauss points kept per rank for [wall prof]
-  real*8, save :: s_len(nt), s_in(nt), s_exb(nt), s_npt(nt), s_sink(nt), s_bohm(nt)
+  real*8, save :: s_len(nt), s_in(nt), s_exb(nt), s_npt(nt), s_sink(nt), s_bohm(nt), s_inet(nt)
   real*8, save :: r_min(nt), r_sum(nt), r_max(nt), l_res(2,nt), c_max(nt), d_max(nt)
   real*8, save :: x_veo(nt), x_vei(nt), x_mach(nt)
   real*8, save :: n_rho(nt), n_Te(nt)
@@ -55,7 +57,7 @@ end function wall_diag_now
 subroutine wall_diag_reset()
   implicit none
   active = wall_diag_now()
-  s_len = 0.d0 ; s_in = 0.d0 ; s_exb = 0.d0 ; s_npt = 0.d0 ; s_sink = 0.d0 ; s_bohm = 0.d0
+  s_len = 0.d0 ; s_in = 0.d0 ; s_exb = 0.d0 ; s_npt = 0.d0 ; s_sink = 0.d0 ; s_bohm = 0.d0 ; s_inet = 0.d0
   r_min = huge(1.d0) ; r_sum = 0.d0 ; r_max = -huge(1.d0) ; l_res = 0.d0
   c_max = -huge(1.d0) ; d_max = -huge(1.d0)
   x_veo = -huge(1.d0) ; x_vei = huge(1.d0) ; x_mach = 0.d0
@@ -71,11 +73,12 @@ end subroutine wall_diag_reset
 !> One wall Gauss point, JOREK units; w = Gauss weight * dl. u is the potential variable, Te_s and u_s the
 !! tangential derivatives per unit length.
 !! sink = rho*max(v_fl - vn, 0)*R*dl the excess sink of the sheath-set flux at this point, bohm = rho*v_fl*R*dl its floor;
-!! jr = zj/j_sat and x = Lambda - e*Phi/Te where the sheath current row acts (0 elsewhere).
-subroutine wall_diag_add(bnd_type, w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vEn, cs, u, Te_s, u_s, sink, bohm, jr, x)
+!! jr = zj/j_sat and x = Lambda - e*Phi/Te where the sheath current row acts (0 elsewhere); zj the wall current variable
+!! (every type: pinned Dirichlet current included, for the charge balance over the whole wall).
+subroutine wall_diag_add(bnd_type, w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vEn, cs, u, Te_s, u_s, sink, bohm, jr, x, zj)
   implicit none
   integer, intent(in) :: bnd_type
-  real*8,  intent(in) :: w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vEn, cs, u, Te_s, u_s, sink, bohm, jr, x
+  real*8,  intent(in) :: w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vEn, cs, u, Te_s, u_s, sink, bohm, jr, x, zj
   real*8 :: vn, cb, res, mach, st(ns)
   if ( .not. active ) return
   if ( bnd_type .lt. 1 .or. bnd_type .gt. nt ) return
@@ -90,6 +93,7 @@ subroutine wall_diag_add(bnd_type, w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vE
   if ( abs(vEn) .gt. cb )  s_exb(bnd_type) = s_exb(bnd_type) + w
   s_npt(bnd_type) = s_npt(bnd_type) + 1.d0
   s_sink(bnd_type) = s_sink(bnd_type) + sink * w ; s_bohm(bnd_type) = s_bohm(bnd_type) + bohm * w
+  s_inet(bnd_type) = s_inet(bnd_type) - zj * Bn * R * w        ! current into the wall ~ -zj*(B_pol.n)/F0, every type
   r_min(bnd_type) = min(r_min(bnd_type), abs(res)) ; r_sum(bnd_type) = r_sum(bnd_type) + abs(res)
   if ( abs(res) .gt. r_max(bnd_type) ) then ; r_max(bnd_type) = abs(res) ; l_res(:,bnd_type) = (/ R, Z /) ; endif
   c_max(bnd_type) = max(c_max(bnd_type), cb)
@@ -144,7 +148,7 @@ subroutine wall_diag_report(my_id, node_list)
   integer,              intent(in) :: my_id
   type(type_node_list), intent(in) :: node_list
 
-  real*8  :: g_len(nt), g_in(nt), g_exb(nt), g_npt(nt), g_sink(nt), g_bohm(nt), sink_bohm(nt), gr_min(nt), gr_sum(nt), gr_max(nt), gc_max(nt), gd_max(nt)
+  real*8  :: g_len(nt), g_in(nt), g_exb(nt), g_npt(nt), g_sink(nt), g_bohm(nt), sink_bohm(nt), g_inet(nt), gr_min(nt), gr_sum(nt), gr_max(nt), gc_max(nt), gd_max(nt)
   real*8  :: g_veo(nt), g_vei(nt), g_mach(nt), g_rho(nt), g_Te(nt)
   real*8  :: loc(2,5,nt), loc_g(2,5,nt), lm(2,nt), lm_g(2,nt)
   real*8  :: f_res(nt), f_loc(2,nt), fu_a_n, fu_C_T, fu_C_V, fres, ur
@@ -162,6 +166,7 @@ subroutine wall_diag_report(my_id, node_list)
   call MPI_ALLREDUCE(s_npt,  g_npt,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(s_sink, g_sink, nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(s_bohm, g_bohm, nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(s_inet, g_inet, nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(r_min,  gr_min, nt, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(r_sum,  gr_sum, nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(r_max,  gr_max, nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
@@ -254,7 +259,16 @@ subroutine wall_diag_report(my_id, node_list)
         gr_min(it)*v_norm, gr_sum(it)/max(g_npt(it),1.d0)*v_norm, gr_max(it)*v_norm, loc_g(:,5,it), &
         g_mach(it), lm_g(:,it), gc_max(it)*v_norm, gd_max(it), g_npt(it)
     enddo
+    ! --- Wall current balance over ALL types (pinned Dirichlet current included): sum -zj*(B_pol.n)*R*dl, JOREK
+    ! --- units, with the saturation current of the sheath types in the same units; the sum over the wall must
+    ! --- vanish for charge conservation, and the pinned types show what the sheath types are made to return.
     if ( any(gj_len .gt. 0.d0) ) then
+      write(*,'(A)', advance='no') ' [wall I] type: Inet / Isat_type ...  |'
+      do it = 1, nt
+        if ( g_len(it) .le. 0.d0 ) cycle
+        write(*,'(I3,A,ES10.2,A,ES9.2,A)', advance='no') it, ':', g_inet(it), '/', gj_isat(it), ' '
+      enddo
+      write(*,'(A,ES10.2,A,ES9.2)') ' | sum', sum(g_inet), '  sum |Isat|', sum(gj_isat)
       write(*,'(A)') ' [sheath_j] type  e-sat  |j|>jsat   j/jsat min     max    max|j/jsat| at (R,Z)      Phi[V] min      max     Inet/Isat'
       do it = 1, nt
         if ( gj_len(it) .le. 0.d0 ) cycle
