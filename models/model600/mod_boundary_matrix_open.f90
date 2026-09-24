@@ -17,7 +17,8 @@ use phys_module
 use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
-use mod_wall_diag, only: wall_diag_add
+use mod_wall_diag, only: wall_diag_add, wall_diag_sheath_add
+use mod_floating_u, only: floating_u_norm, sheath_j_norm
 
 implicit none
 
@@ -64,6 +65,9 @@ logical    :: sf_on                                              ! sheath-set wa
 real*8     :: sf_orient, sf_vEn, sf_Bn, sf_vn, sf_fl            ! outward ExB / parallel / total normal speed, its floor
 real*8     :: fx_n, fx_v, fx_p, fx_u, fx_T                      ! normal-flow measure of the sheath fluxes and its columns
 real*8     :: ex_n, ex_v, ex_p, ex_u, ex_T                      ! excess sink of the sheath-set wall flux and its columns
+logical    :: sj_on, sj_here                                     ! sheath current row on this edge / at this Gauss point
+real*8     :: sj_an, sj_csat, sj_CT, sj_CV, sj_jsat, sj_vfl      ! its normalisation, j_sat and the Bohm parallel flow it scales with
+real*8     :: sc_x, sc_ex, sc_f, sc_dfdu, sc_dfdTe, sc_res, sc_w, sc_Tc, sc_dTc, sc_drc   ! the characteristic and its columns
 logical    :: xpoint2
 integer    :: n_tor_local 
 logical    :: apply_natural_bc(0:n_var)
@@ -149,6 +153,20 @@ do i_var=1, n_var
   if ( (i_var==var_rhon) .and. (bcs(bnd_type1)%natural%rhon .or. bcs(bnd_type2)%natural%rhon))  apply_natural_bc(i_var)=.true.
   if ( (i_var==var_vpar) .and. (bcs(bnd_type1)%natural%vpar .or. bcs(bnd_type2)%natural%vpar))  apply_natural_bc(i_var)=.true.
 enddo
+
+! --- Sheath current BC (bcs%sheath_j): on edges whose both endpoints are sheath types the zj rows carry the
+! --- characteristic zj = j_sat*(1 - exp(x)), x = Lambda - a_n*(u - C_V*V_wall)/(2Te), at the Gauss points where
+! --- |b.n| >= sin(min_sheath_angle) (the nodes there have their Dirichlet u and zj rows released,
+! --- mod_boundary_conditions; u follows from the vorticity equation). j_sat = c_sat*rho*(+-v_fl/|b.n|)/|B| with
+! --- v_fl = factor*cs*|b.n| the parallel Bohm flow the nodal Mach-1 row imposes: the sheath-accelerated flux; the
+! --- ExB part of the wall flux carries ions and electrons together and adds no net current.
+sj_on = sheath_j_current_row .and. bcs(bnd_type1)%sheath_j .and. bcs(bnd_type2)%sheath_j
+sj_an = 0.d0 ; sj_csat = 0.d0 ; sj_CT = 0.d0 ; sj_CV = 0.d0
+if ( sj_on ) then
+  apply_natural_bc(var_zj) = .true.
+  call sheath_j_norm(sj_an, sj_csat)
+  call floating_u_norm(sj_an, sj_CT, sj_CV)
+endif
 
 do i=1,2    ! sum over 2 verices
   
@@ -378,6 +396,37 @@ do ms=1, n_gauss
       endif
     endif
 
+    ! --- Sheath current row (sj_on) at this Gauss point: residual zj - j_sat*f(x), f = 1 - exp(min(x, Lambda))
+    ! --- (electron current saturated at x >= Lambda, potential not below the wall), Zbig*dl weight, exact columns
+    ! --- on zj, u, rho and T (through cs and through x). corr_neg-corrected Te and rho as in every natural row: a
+    ! --- raw Te <= 0 would flip the sign of x and a raw rho <= 0 the sign of j_sat. The Btot and sign(B.n)
+    ! --- dependence on psi is lagged, as everywhere in this routine.
+    sj_here = sj_on .and. ( abs(bdotn) .ge. sin(c_angle) )
+    sj_vfl  = max(factor, 0.d0) * cs0
+    sj_jsat = 0.d0
+    sc_w = 0.d0 ; sc_x = 0.d0 ; sc_ex = 1.d0 ; sc_f = 0.d0 ; sc_dfdu = 0.d0 ; sc_dfdTe = 0.d0 ; sc_res = 0.d0
+    sc_Tc = 1.d0 ; sc_dTc = 1.d0 ; sc_drc = 1.d0
+    if ( sj_here ) then
+      sj_jsat = sj_csat * r0_corr * normal_sign * sj_vfl / Btot
+      sc_Tc   = Te0_corr
+      sc_dTc  = dcorr_neg_temp_dT(Te0)
+      sc_drc  = dcorr_neg_dens_drho(r0)
+      sc_x    = sheath_Lambda - sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*sc_Tc)
+      sc_ex   = exp( min(sc_x, sheath_Lambda) )
+      sc_f    = 1.d0 - sc_ex
+      if ( sc_x .lt. sheath_Lambda ) then
+        sc_dfdu  =   sc_ex * sj_an / (2.d0*sc_Tc)
+        sc_dfdTe = - sc_ex * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*sc_Tc**2) * sc_dTc
+      endif
+      sc_res  = eq_g(mp,var_zj,ms) - sj_jsat * sc_f
+      sc_w    = Zbig * dl
+      if ( mp .eq. 1 ) call wall_diag_sheath_add(bnd_type1, ws*dl, BigR, y_g(ms), eq_g(mp,var_zj,ms), sj_jsat, &
+                                                 bdotn*Btot, eq_g(mp,var_u,ms), sc_x .ge. sheath_Lambda)
+      if ( mp .eq. 1 .and. bnd_type2 .ne. bnd_type1 ) &
+        call wall_diag_sheath_add(bnd_type2, ws*dl, BigR, y_g(ms), eq_g(mp,var_zj,ms), sj_jsat, &
+                                  bdotn*Btot, eq_g(mp,var_u,ms), sc_x .ge. sheath_Lambda)
+    endif
+
     ! --- Wall diagnostics (wall_diag): first toroidal plane, attributed to the types of both edge endpoints.
     ! --- vE.n = -orient*R*u_s/dl is the outward ExB normal speed (v_E = (-R*u_Z, +R*u_R)); B_pol.n = bdotn*Btot.
     if ( with_vpar .and. mp .eq. 1 ) then
@@ -406,6 +455,9 @@ do ms=1, n_gauss
           if (with_neutrals) then
             rhs_ij(var_rhon) =  v * neutral_source * BigR * dl * tstep     
           endif
+
+          ! --- Sheath current row (bcs%sheath_j)
+          rhs_ij(var_zj) = - v * sc_w * sc_res
 
           ! --- Most B.C.s need vpar
           if (with_vpar) then
@@ -486,6 +538,19 @@ do ms=1, n_gauss
                 cs_T   = gamma * T  / (2.d0 * cs0)
                 cs_Ti  = gamma * Ti / (2.d0 * cs0)
                 cs_Te  = gamma * Te / (2.d0 * cs0)
+
+                ! --- Sheath current row: exact columns of zj - j_sat*f (amat is assigned per (k,l,in), never accumulated)
+                amat(var_zj,var_zj)  =   v * sc_w * psi
+                amat(var_zj,var_rho) = - v * sc_w * sj_csat * normal_sign * sj_vfl / Btot * sc_f * sc_drc * rho
+                amat(var_zj,var_u)   = - v * sc_w * sj_jsat * sc_dfdu * psi
+                if (with_TiTe) then
+                  amat(var_zj,var_Ti)  = - v * sc_w * sj_csat * r0_corr * normal_sign * max(factor, 0.d0) / Btot * sc_f * cs_Ti
+                  amat(var_zj,var_Te)  = - v * sc_w * ( sj_csat * r0_corr * normal_sign * max(factor, 0.d0) / Btot * sc_f * cs_Te &
+                                                        + sj_jsat * sc_dfdTe * Te )
+                else
+                  amat(var_zj,var_T)   = - v * sc_w * ( sj_csat * r0_corr * normal_sign * max(factor, 0.d0) / Btot * sc_f * cs_T &
+                                                        + sj_jsat * sc_dfdTe * 0.5d0 * T )
+                endif
 
                 ! --- Most of natural BCs need vpar
                 if (with_vpar) then

@@ -837,6 +837,12 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,REAL_FMT) 'sheath_V_wall         ', sheath_V_wall
     write(*,'(1X,A,30I3)') 'floating_u on boundary types:', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%floating_u )
   end if
+  if ( any(bcs(:)%sheath_j) ) then
+    write(*,REAL_FMT) 'sheath_Lambda         ', sheath_Lambda
+    write(*,REAL_FMT) 'sheath_V_wall         ', sheath_V_wall
+    write(*,LOGI_FMT) 'sheath_j_current_row  ', sheath_j_current_row
+    write(*,'(1X,A,30I3)') 'sheath_j on boundary types:', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%sheath_j )
+  end if
 
   write(*,LOGI_FMT) 'bc_natural_open       ', bc_natural_open
   write(*,LOGI_FMT) 'produce_live_data     ', produce_live_data

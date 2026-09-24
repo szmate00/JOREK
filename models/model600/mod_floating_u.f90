@@ -22,7 +22,7 @@ module mod_floating_u
   implicit none
   private
 
-  public :: floating_u_norm, floating_u_volts, floating_u_selftest
+  public :: floating_u_norm, floating_u_volts, floating_u_selftest, sheath_j_norm
 
 contains
 
@@ -100,6 +100,30 @@ logical function floating_u_selftest(my_id)
     write(*,'(A,2es14.6)') ' ERROR: floating_u normalisation selftest failed (a_n, volts at 1 eV):', a_n, volts
 
 end function floating_u_selftest
+
+
+!> Normalisation of the sheath current row (Artola eqs. 5, 7, 8): the ion saturation current in the
+!! toroidal-current variable is j_sat = c_sat*rho*Vpar with c_sat = -e*F0*n0*sqrt(mu0/rho0), and the
+!! exponent of the characteristic is e*Phi/(k_B*Te) = a_n*u/(2*Te_JOREK). c_sat carries the sign of F0
+!! like zj itself, so the current INTO the wall, -zj*(B_pol.n)/F0, is independent of the field sign.
+pure subroutine sheath_j_norm(a_n, c_sat)
+
+  use constants,   only: MU_ZERO, ATOMIC_MASS_UNIT, EL_CHG
+  use phys_module, only: F0, central_density, central_mass
+
+  implicit none
+  real*8, intent(out) :: a_n, c_sat
+
+  real*8 :: m_i, n_0, rho0
+
+  m_i   = central_mass * ATOMIC_MASS_UNIT
+  n_0   = central_density * 1.d20
+  rho0  = n_0 * m_i
+
+  a_n   =   2.d0 * EL_CHG * F0 * sqrt(MU_ZERO * rho0) / m_i
+  c_sat = - EL_CHG * F0 * n_0 * sqrt(MU_ZERO / rho0)
+
+end subroutine sheath_j_norm
 
 
 end module mod_floating_u

@@ -269,6 +269,7 @@ if (my_id .eq. 0) then
   call MPI_PACK(wall_diag_profile_every,1,MPI_INTEGER,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(thermoelectric_ohm,     1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(thermoelectric_coef,    1,MPI_REAL8,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+  call MPI_PACK(sheath_j_current_row,   1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(deuterium_adas,         1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(deuterium_adas_1e20,    1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
   call MPI_PACK(old_deuterium_atomic,   1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
@@ -300,6 +301,7 @@ if (my_id .eq. 0) then
     
     call MPI_PACK(bcs(i)%mach1            , 1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
     call MPI_PACK(bcs(i)%floating_u       , 1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
+    call MPI_PACK(bcs(i)%sheath_j         , 1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
 
     call MPI_PACK(bcs(i)%natural%rho      , 1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
     call MPI_PACK(bcs(i)%natural%T        , 1,MPI_LOGICAL,buffer,bufsize,position,MPI_COMM_WORLD,ierr)
@@ -1267,6 +1269,7 @@ if (my_id .ne. 0) then
   call MPI_UNPACK(buffer,bufsize,position,wall_diag_profile_every,1,MPI_INTEGER,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,thermoelectric_ohm,     1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,thermoelectric_coef,    1,MPI_REAL8,MPI_COMM_WORLD,ierr)
+  call MPI_UNPACK(buffer,bufsize,position,sheath_j_current_row,   1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,deuterium_adas,         1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,deuterium_adas_1e20,    1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
   call MPI_UNPACK(buffer,bufsize,position,old_deuterium_atomic,   1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
@@ -1298,6 +1301,7 @@ if (my_id .ne. 0) then
 
     call MPI_UNPACK(buffer,bufsize,position,bcs(i)%mach1            , 1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
     call MPI_UNPACK(buffer,bufsize,position,bcs(i)%floating_u       , 1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
+    call MPI_UNPACK(buffer,bufsize,position,bcs(i)%sheath_j         , 1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
 
     call MPI_UNPACK(buffer,bufsize,position,bcs(i)%natural%rho      , 1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)
     call MPI_UNPACK(buffer,bufsize,position,bcs(i)%natural%T        , 1,MPI_LOGICAL,MPI_COMM_WORLD,ierr)

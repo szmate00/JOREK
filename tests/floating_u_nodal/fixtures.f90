@@ -25,7 +25,7 @@ module phys_module
   end type
   type bc_type
     type(natural_type) :: natural
-    logical :: floating_u=.false.,mach1=.true.
+    logical :: floating_u=.false.,mach1=.true.,sheath_j=.false.
   end type
   type(bc_type) :: bcs(0:max_bnd_types)
   real*8 :: time_evol_theta=1.d0,time_evol_zeta=0.5d0,tstep=1.d0,tstep_prev=1.d0
@@ -35,7 +35,7 @@ module phys_module
   logical :: floating_u_mach_flux=.false.,floating_u_wall_flux=.false.,floating_u_transport_diag=.false.
   real*8 :: floating_u_probe_R=1.6d0,floating_u_probe_Z=-1.11d0
   logical :: vpar_smoothing=.false.,mach_one_bnd_integral=.false.,mach1_omit_drift=.false.
-  logical :: wall_diag=.true.
+  logical :: wall_diag=.true.,sheath_j_current_row=.true.
   integer :: wall_diag_every=1,index_now=1,wall_diag_profile_every=0
   real*8  :: t_now=0.d0,T_min=2.d-6
   real*8 :: vpar_smoothing_coef(3)=[0.02d0,0.016d0,0.005754d0]
@@ -102,6 +102,19 @@ contains
   real*8 function corr_neg_dens(t) result(c)
     real*8,intent(in)::t
     c=max(t,1.d-10)
+  end function
+  real*8 function dcorr_neg_temp_dT(t) result(c)
+    use phys_module, only: T_min_neg,corr_neg_temp_coef
+    real*8,intent(in)::t
+    real*8::knee
+    knee=T_min_neg*sum(corr_neg_temp_coef)
+    c=1.d0
+    if (t<knee) c=exp((t-knee)/(T_min_neg*corr_neg_temp_coef(2)))
+  end function
+  real*8 function dcorr_neg_dens_drho(t) result(c)
+    real*8,intent(in)::t
+    c=1.d0
+    if (t<1.d-10) c=0.d0
   end function
 end module
 module diffusivities

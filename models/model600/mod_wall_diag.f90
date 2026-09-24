@@ -13,6 +13,9 @@
 !!              min/mean/max with the location of the max (with mach1_omit_drift this is what the nodal row
 !!              imposes; with the drift term the row's target differs by its ExB term), max Mach |Vpar*B|/cs
 !!              with location, max cs|b.n|, max drift demand |vE.n|/(cs|b.n|), number of Gauss points
+!! [sheath_j]   per type carrying the sheath current row: fraction of its length at electron saturation, fraction
+!!              with |j/j_sat| > 1, min/max j/j_sat (negative = electron current, +1 = ion saturation), largest
+!!              |j/j_sat| with (R,Z), wall potential min/max [V], net current into the wall over the saturation current
 !! [wall prof]  only if wall_diag_profile_every > 0: the full wall profile, one line per Gauss point, every that
 !!              many steps and on the step where the wall minimum of rho or Te is non-positive or has halved
 module mod_wall_diag
@@ -20,7 +23,7 @@ module mod_wall_diag
   implicit none
   private
 
-  public :: wall_diag_reset, wall_diag_add, wall_diag_report, wall_diag_now
+  public :: wall_diag_reset, wall_diag_add, wall_diag_sheath_add, wall_diag_report, wall_diag_now
 
   integer, parameter :: nt   = 30                !< max_bnd_types
   integer, parameter :: ns   = 15                !< state vector length
@@ -30,6 +33,9 @@ module mod_wall_diag
   real*8, save :: x_veo(nt), x_vei(nt), x_mach(nt)
   real*8, save :: n_rho(nt), n_Te(nt)
   real*8, save :: l_rho(2,nt), l_Te(2,nt), l_veo(2,nt), l_vei(2,nt), l_mach(2,nt)
+  ! --- sheath current row: wall length carrying it, electron-saturated length, length with |j/j_sat| > 1, min/max
+  ! --- j/j_sat, largest |j/j_sat| and where, min/max u, net current into the wall and the saturation current
+  real*8, save :: j_len(nt), j_esat(nt), j_over(nt), j_min(nt), j_max(nt), j_abs(nt), l_jabs(2,nt), ju_min(nt), ju_max(nt), j_inet(nt), j_isat(nt)
   real*8, save, allocatable :: buf(:,:)
   integer, save :: nbuf = 0
   real*8, save :: prev_rho = huge(1.d0), prev_Te = huge(1.d0)
@@ -42,7 +48,7 @@ contains
 logical function wall_diag_now()
   use phys_module, only: wall_diag, wall_diag_every, bcs, index_now
   implicit none
-  wall_diag_now = wall_diag .and. any(bcs(:)%floating_u) .and. ( mod(index_now, max(wall_diag_every, 1)) .eq. 0 )
+  wall_diag_now = wall_diag .and. ( any(bcs(:)%floating_u) .or. any(bcs(:)%sheath_j) ) .and. ( mod(index_now, max(wall_diag_every, 1)) .eq. 0 )
 end function wall_diag_now
 
 
@@ -55,6 +61,8 @@ subroutine wall_diag_reset()
   x_veo = -huge(1.d0) ; x_vei = huge(1.d0) ; x_mach = 0.d0
   n_rho = huge(1.d0) ; n_Te = huge(1.d0)
   l_rho = 0.d0 ; l_Te = 0.d0 ; l_veo = 0.d0 ; l_vei = 0.d0 ; l_mach = 0.d0
+  j_len = 0.d0 ; j_esat = 0.d0 ; j_over = 0.d0 ; j_min = huge(1.d0) ; j_max = -huge(1.d0) ; j_abs = 0.d0 ; l_jabs = 0.d0
+  ju_min = huge(1.d0) ; ju_max = -huge(1.d0) ; j_inet = 0.d0 ; j_isat = 0.d0
   if ( active .and. .not. allocated(buf) ) allocate(buf(ns,ncap))
   nbuf = 0
 end subroutine wall_diag_reset
@@ -98,6 +106,30 @@ subroutine wall_diag_add(bnd_type, w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vE
 end subroutine wall_diag_add
 
 
+!> One wall Gauss point carrying the sheath current row: zj and j_sat (JOREK units), Bn = B_pol.n, u, capped =
+!! electron saturation active (x >= Lambda).
+subroutine wall_diag_sheath_add(bnd_type, w, R, Z, zj, jsat, Bn, u, capped)
+  implicit none
+  integer, intent(in) :: bnd_type
+  real*8,  intent(in) :: w, R, Z, zj, jsat, Bn, u
+  logical, intent(in) :: capped
+  if ( .not. active ) return
+  if ( bnd_type .lt. 1 .or. bnd_type .gt. nt ) return
+  !$omp critical (wall_diag_sheath)
+  j_len(bnd_type) = j_len(bnd_type) + w
+  if ( capped ) j_esat(bnd_type) = j_esat(bnd_type) + w
+  if ( jsat .ne. 0.d0 ) then
+    j_min(bnd_type) = min(j_min(bnd_type), zj/jsat) ; j_max(bnd_type) = max(j_max(bnd_type), zj/jsat)
+    if ( abs(zj/jsat) .gt. 1.d0 ) j_over(bnd_type) = j_over(bnd_type) + w
+    if ( abs(zj/jsat) .gt. j_abs(bnd_type) ) then ; j_abs(bnd_type) = abs(zj/jsat) ; l_jabs(:,bnd_type) = (/ R, Z /) ; endif
+  endif
+  ju_min(bnd_type) = min(ju_min(bnd_type), u) ; ju_max(bnd_type) = max(ju_max(bnd_type), u)
+  j_inet(bnd_type) = j_inet(bnd_type) - zj * Bn * R * w          ! current into the wall ~ -zj*(B_pol.n)/F0
+  j_isat(bnd_type) = j_isat(bnd_type) + abs(jsat * Bn) * R * w
+  !$omp end critical (wall_diag_sheath)
+end subroutine wall_diag_sheath_add
+
+
 subroutine wall_diag_report(my_id, node_list)
 
   use constants,          only: MU_ZERO, ATOMIC_MASS_UNIT, EL_CHG
@@ -116,6 +148,8 @@ subroutine wall_diag_report(my_id, node_list)
   real*8  :: loc(2,5,nt), loc_g(2,5,nt), lm(2,nt), lm_g(2,nt)
   real*8  :: f_res(nt), f_loc(2,nt), fu_a_n, fu_C_T, fu_C_V, fres, ur
   real*8  :: v_norm, T_eV, n_20, phi_V, wall_rho, wall_Te
+  real*8  :: gj_len(nt), gj_esat(nt), gj_over(nt), gj_min(nt), gj_max(nt), gj_abs(nt), gju_min(nt), gju_max(nt), gj_inet(nt), gj_isat(nt)
+  real*8  :: lj(2,nt), lj_g(2,nt)
   integer :: it, ib, ierr, inode, k
   logical :: prof
 
@@ -150,6 +184,21 @@ subroutine wall_diag_report(my_id, node_list)
   enddo
   call MPI_ALLREDUCE(loc, loc_g, 10*nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(lm,  lm_g,   2*nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(j_len,  gj_len,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(j_esat, gj_esat, nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(j_over, gj_over, nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(j_min,  gj_min,  nt, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(j_max,  gj_max,  nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(j_abs,  gj_abs,  nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(ju_min, gju_min, nt, MPI_DOUBLE_PRECISION, MPI_MIN, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(ju_max, gju_max, nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(j_inet, gj_inet, nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(j_isat, gj_isat, nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+  lj = -huge(1.d0)
+  do it = 1, nt
+    if ( j_abs(it) .eq. gj_abs(it) ) lj(:,it) = l_jabs(:,it)
+  enddo
+  call MPI_ALLREDUCE(lj, lj_g, 2*nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
 
   if ( sum(g_len) .le. 0.d0 ) return
   sink_bohm = 0.d0
@@ -204,6 +253,14 @@ subroutine wall_diag_report(my_id, node_list)
         gr_min(it)*v_norm, gr_sum(it)/max(g_npt(it),1.d0)*v_norm, gr_max(it)*v_norm, loc_g(:,5,it), &
         g_mach(it), lm_g(:,it), gc_max(it)*v_norm, gd_max(it), g_npt(it)
     enddo
+    if ( any(gj_len .gt. 0.d0) ) then
+      write(*,'(A)') ' [sheath_j] type  e-sat  |j|>jsat   j/jsat min     max    max|j/jsat| at (R,Z)      Phi[V] min      max     Inet/Isat'
+      do it = 1, nt
+        if ( gj_len(it) .le. 0.d0 ) cycle
+        write(*,'(A,I4,2F9.3,2ES11.2,2F9.4,2F12.3,ES12.3)') ' [sheath_j] ', it, gj_esat(it)/gj_len(it), gj_over(it)/gj_len(it), &
+          gj_min(it), gj_max(it), lj_g(:,it), gju_min(it)*phi_V, gju_max(it)*phi_V, gj_inet(it)/max(gj_isat(it), tiny(1.d0))
+      enddo
+    endif
     if ( prof ) write(*,'(A,I8,A)') ' [wall prof] step', index_now, &
       '  full wall profile follows (one line per Gauss point, all ranks): type R Z rho[1e20] Ti Te[eV] Phi[V] Vpar*Bn vE.n cs|b.n| vn[m/s] b.n M dTe/ds[eV/m] dPhi/ds[V/m]'
   endif

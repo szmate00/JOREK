@@ -12,6 +12,7 @@ gfortran -c $F -Wall $M/mod_floating_u.f90 $M/mod_wall_diag.f90 $M/mod_boundary_
 objs="fixtures.o mod_floating_u.o mod_wall_diag.o mod_boundary_matrix_open.o"
 gfortran $F -o test_nodal_flux $objs "$here/test_nodal_flux.f90" && ./test_nodal_flux
 gfortran $F -o test_wall_diag $objs "$here/test_wall_diag.f90" && ./test_wall_diag | head -4
+gfortran $F -o test_sheath_j $objs "$here/test_sheath_j.f90" && ./test_sheath_j
 gfortran $F -o dump_new $objs "$here/dump_edge.f90" && ./dump_new && mv dump.bin dump_new.bin
 ref=${DEV_REF:-$(git -C "$root" merge-base develop HEAD)}
 ( cd old && git -C "$root" show "$ref":models/model600/mod_boundary_matrix_open.f90 > bmo_old.f90 && cp ../*.mod . \

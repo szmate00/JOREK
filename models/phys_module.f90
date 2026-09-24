@@ -62,7 +62,8 @@ module phys_module
   logical :: deuterium_adas_1e20  !< use OPEN ADAS with fixed density=1e20 to calculate ionization, recombination and radiation coeffients for deuterium
   logical :: mach_one_bnd_integral!< use a boundary integral (boundary_matrix_open) to implement Mach=one boundary condition
   logical :: mach1_omit_drift     !< drop the ExB drift term factor/Btot*R^2*u_b/psi_b from the nodal Mach-1 row: Vpar = +-cs/|B| (model600)
-  logical :: wall_diag            !< print the [floating_u]/[mach1] wall diagnostics tables to the log under bcs%floating_u (model600)
+  logical :: wall_diag            !< print the [floating_u]/[mach1]/[sheath_j] wall diagnostics tables to the log under bcs%floating_u / bcs%sheath_j (model600)
+  logical :: sheath_j_current_row !< the form of bcs%sheath_j: characteristic in the zj row, u from the vorticity equation (the only form on this branch; kept for namelist compatibility)
   integer :: wall_diag_every      !< ... every this many time steps
   integer :: wall_diag_profile_every !< full wall profile every this many steps (0: never)
   logical :: vpar_smoothing       !< apply a smoothing function to smooth jumps in Vpar at B.n=0
@@ -206,6 +207,7 @@ module phys_module
     type (type_natural_bc)   :: natural
     logical                  :: mach1 
     logical                  :: floating_u !< floating-potential BC on u: Phi - V_wall = Lambda*Te/e (model600)
+    logical                  :: sheath_j   !< sheath current BC: zj = j_sat*(1 - exp(Lambda - e*Phi/Te)) as the wall zj row, u from the vorticity equation (model600)
   end type type_bcs
 
   type (type_bcs), dimension(max_bnd_types) :: bcs   
