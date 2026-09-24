@@ -26,7 +26,7 @@ module mod_wall_diag
   public :: wall_diag_reset, wall_diag_add, wall_diag_sheath_add, wall_diag_report, wall_diag_now
 
   integer, parameter :: nt   = 30                !< max_bnd_types
-  integer, parameter :: ns   = 15                !< state vector length
+  integer, parameter :: ns   = 17                !< state vector length
   integer, parameter :: ncap = 50000             !< wall Gauss points kept per rank for [wall prof]
   real*8, save :: s_len(nt), s_in(nt), s_exb(nt), s_npt(nt), s_sink(nt), s_bohm(nt)
   real*8, save :: r_min(nt), r_sum(nt), r_max(nt), l_res(2,nt), c_max(nt), d_max(nt)
@@ -70,11 +70,12 @@ end subroutine wall_diag_reset
 
 !> One wall Gauss point, JOREK units; w = Gauss weight * dl. u is the potential variable, Te_s and u_s the
 !! tangential derivatives per unit length.
-!! sink = rho*max(v_fl - vn, 0)*R*dl the excess sink of the sheath-set flux at this point, bohm = rho*v_fl*R*dl its floor.
-subroutine wall_diag_add(bnd_type, w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vEn, cs, u, Te_s, u_s, sink, bohm)
+!! sink = rho*max(v_fl - vn, 0)*R*dl the excess sink of the sheath-set flux at this point, bohm = rho*v_fl*R*dl its floor;
+!! jr = zj/j_sat and x = Lambda - e*Phi/Te where the sheath current row acts (0 elsewhere).
+subroutine wall_diag_add(bnd_type, w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vEn, cs, u, Te_s, u_s, sink, bohm, jr, x)
   implicit none
   integer, intent(in) :: bnd_type
-  real*8,  intent(in) :: w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vEn, cs, u, Te_s, u_s, sink, bohm
+  real*8,  intent(in) :: w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vEn, cs, u, Te_s, u_s, sink, bohm, jr, x
   real*8 :: vn, cb, res, mach, st(ns)
   if ( .not. active ) return
   if ( bnd_type .lt. 1 .or. bnd_type .gt. nt ) return
@@ -82,7 +83,7 @@ subroutine wall_diag_add(bnd_type, w, R, Z, rho, Ti, Te, Vpar, Btot, Bn, b_n, vE
   cb   = cs * abs(b_n)
   res  = Bn * Vpar - cb
   mach = abs(Vpar) * Btot / max(cs, tiny(1.d0))
-  st   = (/ dble(bnd_type), R, Z, rho, Ti, Te, u, Bn*Vpar, vEn, cb, vn, b_n, mach, Te_s, u_s /)
+  st   = (/ dble(bnd_type), R, Z, rho, Ti, Te, u, Bn*Vpar, vEn, cb, vn, b_n, mach, Te_s, u_s, jr, x /)
   !$omp critical (wall_diag)
   s_len(bnd_type) = s_len(bnd_type) + w
   if ( vn .lt. 0.d0 )      s_in(bnd_type)  = s_in(bnd_type)  + w
@@ -262,7 +263,7 @@ subroutine wall_diag_report(my_id, node_list)
       enddo
     endif
     if ( prof ) write(*,'(A,I8,A)') ' [wall prof] step', index_now, &
-      '  full wall profile follows (one line per Gauss point, all ranks): type R Z rho[1e20] Ti Te[eV] Phi[V] Vpar*Bn vE.n cs|b.n| vn[m/s] b.n M dTe/ds[eV/m] dPhi/ds[V/m]'
+      '  full wall profile follows (one line per Gauss point, all ranks): type R Z rho[1e20] Ti Te[eV] Phi[V] Vpar*Bn vE.n cs|b.n| vn[m/s] b.n M dTe/ds[eV/m] dPhi/ds[V/m] j/jsat x'
   endif
   if ( prof ) then
     do k = 1, nbuf
@@ -275,8 +276,8 @@ contains
   subroutine write_state(label, st)
     character(len=*), intent(in) :: label
     real*8,           intent(in) :: st(ns)
-    write(*,'(A,I5,2F8.4,12ES11.3)') label, nint(st(1)), st(2:3), st(4)*n_20, st(5)*T_eV, st(6)*T_eV, &
-      st(7)*phi_V, st(8:11)*v_norm, st(12), st(13), st(14)*T_eV, st(15)*phi_V
+    write(*,'(A,I5,2F8.4,14ES11.3)') label, nint(st(1)), st(2:3), st(4)*n_20, st(5)*T_eV, st(6)*T_eV, &
+      st(7)*phi_V, st(8:11)*v_norm, st(12), st(13), st(14)*T_eV, st(15)*phi_V, st(16), st(17)
   end subroutine write_state
 
 end subroutine wall_diag_report

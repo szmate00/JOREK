@@ -34,7 +34,7 @@ awk -v T="$typ" '
 ' "$log"
 echo
 echo "## 3. [wall prof] type $typ, R in [$rmin, $rmax], last $nlast profile steps"
-echo "# step  type  R  Z  rho[1e20]  Ti[eV]  Te[eV]  Phi[V]  Vpar*Bn  vE.n  cs|b.n|  vn[m/s]  b.n  M  dTe/ds[eV/m]  dPhi/ds[V/m]"
+echo "# step  type  R  Z  rho[1e20]  Ti[eV]  Te[eV]  Phi[V]  Vpar*Bn  vE.n  cs|b.n|  vn[m/s]  b.n  M  dTe/ds[eV/m]  dPhi/ds[V/m]  j/jsat  x"
 awk -v T="$typ" -v A="$rmin" -v B="$rmax" -v N="$nlast" '
   $1=="[wall" && $2=="prof]" && $3=="step" { step=$4; if (!(step in seen)) { order[++n]=step; seen[step]=1 } ; next }
   $1=="[wall" && $2=="prof]" && $3==T && step!="" && $4+0>=A && $4+0<=B { line[step]=line[step] sprintf("%8s  %s\n", step, substr($0, index($0,$3))) ; next }

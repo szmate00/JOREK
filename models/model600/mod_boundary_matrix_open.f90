@@ -60,7 +60,7 @@ real*8     :: r0, r0_s, r0_t, r0_p, r0_x, r0_y, rho, rho_s, rho_t, rho_x, rho_y
 real*8     :: c_1, c_2, c_3, c_angle, neutral_source
 real*8     :: element_size_ij, element_size_kl, element_size_perp
 real*8     :: grad_t(2), B0_R, B0_Z, factor_cs_bnd_integral
-real*8     :: wd_orient, wd_vEn                                  ! wall diagnostics: outward ExB normal speed
+real*8     :: wd_orient, wd_vEn, wd_jr                           ! wall diagnostics: outward ExB normal speed, zj/j_sat
 logical    :: sf_on                                              ! sheath-set wall flux on this edge (floating_u + mach1 types)
 real*8     :: sf_orient, sf_vEn, sf_Bn, sf_vn, sf_fl            ! outward ExB / parallel / total normal speed, its floor
 real*8     :: fx_n, fx_v, fx_p, fx_u, fx_T                      ! normal-flow measure of the sheath fluxes and its columns
@@ -433,12 +433,14 @@ do ms=1, n_gauss
     ! --- vE.n = -orient*R*u_s/dl is the outward ExB normal speed (v_E = (-R*u_Z, +R*u_R)); B_pol.n = bdotn*Btot.
     if ( with_vpar .and. mp .eq. 1 ) then
       wd_orient = sign(1.d0, y_s(ms)*normal(1) - x_s(ms)*normal(2))
+      wd_jr = 0.d0
+      if ( sj_jsat .ne. 0.d0 ) wd_jr = eq_g(mp,var_zj,ms) / sj_jsat
       wd_vEn    = - wd_orient * BigR * eq_s(mp,var_u,ms) / dl
       call wall_diag_add(bnd_type1, ws*dl, BigR, y_g(ms), r0, Ti0, Te0, Vpar0, Btot, bdotn*Btot, bdotn, wd_vEn, cs0, &
-                         eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl, r0*ex_n, r0*sf_fl*BigR*dl)
+                         eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl, r0*ex_n, r0*sf_fl*BigR*dl, wd_jr, sc_x)
       if ( bnd_type2 .ne. bnd_type1 ) &
         call wall_diag_add(bnd_type2, ws*dl, BigR, y_g(ms), r0, Ti0, Te0, Vpar0, Btot, bdotn*Btot, bdotn, wd_vEn, cs0, &
-                           eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl, r0*ex_n, r0*sf_fl*BigR*dl)
+                           eq_g(mp,var_u,ms), Te0_s/dl, eq_s(mp,var_u,ms)/dl, r0*ex_n, r0*sf_fl*BigR*dl, wd_jr, sc_x)
     endif
 
 
