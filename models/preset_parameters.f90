@@ -456,6 +456,7 @@ subroutine preset_parameters
   ! --- Floating potential / sheath current (model600)
   bcs(:)%floating_u = .false.
   bcs(:)%sheath_j   = .false.
+  bcs(:)%zj_zero    = .false.
 
   bcs(  1)%mach1 = .true.
   bcs(3:5)%mach1 = .true.

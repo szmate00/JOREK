@@ -411,6 +411,18 @@ do i=1, n_local_elms !=== do elements
                        index_node, k, in, index_node, k, in,            &
                        zbig, index_min, index_max, a_mat)
 
+                ! --- Zero wall current (bcs%zj_zero): the Dirichlet row alone keeps zj at its t = 0 value, the
+                ! --- equilibrium's current density at the wall, for the whole run - a permanent current source next
+                ! --- to the sheath types, and inconsistent with the floating potential imposed on the same nodes
+                ! --- (the zero-current point of the characteristic). This RHS drives every pinned zj trace DOF
+                ! --- (value and tangential derivative, all harmonics) to zero instead, exactly, in one solve.
+                if ( (k == var_zj) .and. bcs(bnd_type)%zj_zero ) then
+                  call boundary_conditions_add_RHS(                              &
+                         index_node, var_zj, in, index_min, index_max, RHS_loc,  &
+                         - zbig * node_list%node(inode)%values(in, index_tmp, var_zj), &
+                         a_mat%i_tor_min, a_mat%i_tor_max)
+                endif
+
                 ! --- Floating potential: u = C_T*Te + C_V*V_wall on every u trace DOF the floating BC owns,
                 ! --- and on the u DOFs of a sheath type that are NOT released (below the angle, or a
                 ! --- derivative along a non-sheath edge). The Te column and the RHS make the row exact;

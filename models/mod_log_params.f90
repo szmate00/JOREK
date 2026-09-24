@@ -878,6 +878,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   write(*,LOGI_FMT) 'mach1_weak_inflow     ', mach1_weak_inflow
   if ( any(bcs(:)%sheath_j) ) then
     write(*,'(1X,A,30I3)') 'sheath_j on boundary types:', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%sheath_j )
+    write(*,'(1X,A,30I3)') 'zj_zero  on boundary types:', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%zj_zero )
     write(*,REAL_FMT) 'sheath_Lambda         ', sheath_Lambda
     write(*,REAL_FMT) 'sheath_V_wall         ', sheath_V_wall
     write(*,LOGI_FMT) 'sheath_j_float_u      ', sheath_j_float_u

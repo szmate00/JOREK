@@ -66,6 +66,18 @@ floating_u_diag       = .t.
 term): the measurement of the wall current the plasma delivers under the floating potential, in the
 `[sheath_j]` table. Run it first.
 
+## Zero current on floating wall segments (`bcs(i)%zj_zero`, 2026-09-24)
+
+The Dirichlet zj row alone keeps the wall current at its t = 0 value, the equilibrium's current density at the wall,
+for the whole run. On the floating types (3, 9) that is a permanent current source next to the sheath types and
+contradicts the floating potential imposed on the same nodes (the zero-current point of the characteristic); the
+independent review (`doc/review_sheath_j_2026-09-24.md`) identified the frozen type-9 current at the inner strike
+point as the source that every late runaway starts from, its ratio to j_sat growing as the target cools. With
+`bcs(i)%zj_zero = .t.` the pinned zj trace DOFs of that type are driven to zero (value and tangential derivative,
+all harmonics, exactly in one solve), as SOLEDGE does on every non-sheath boundary. Recommended on 3 and 9 (and 2);
+on a sheath type it acts only on the DOFs that are not released (below the angle, or a derivative along a
+non-sheath edge).
+
 ## Reading the log
 
 ```

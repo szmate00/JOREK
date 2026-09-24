@@ -215,6 +215,7 @@ module phys_module
     logical                  :: mach1 
     logical                  :: floating_u !< floating-potential BC on u: Phi - V_wall = Lambda*Te/e (model600)
     logical                  :: sheath_j   !< sheath current-voltage BC on u (potential form), wall current from its definition zj = Delta*psi (model600)
+    logical                  :: zj_zero    !< Dirichlet wall current zj = 0 on this type (a floating wall segment carries no net current) instead of the value frozen at t = 0 (model600)
   end type type_bcs
 
   type (type_bcs), dimension(max_bnd_types) :: bcs   
