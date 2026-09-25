@@ -30,7 +30,8 @@ module mod_floating_diag
   real*8, save :: s_over(nt)                              !< wall length with |j/j_sat| > 1
   ! --- [wall J]: implicit boundary currents of the released vorticity row vs the sheath capacity, integrated per
   ! --- type (per unit edge parameter) and the largest local ratio of each with its location
-  real*8, save :: wj_cap(nt), wj_mag(nt), wj_exb(nt), wj_vis(nt), wj_rmag(nt), wj_rexb(nt), wj_rvis(nt), wj_loc(2,3,nt)
+  integer, parameter, public :: nwj = 5                 !< mag, exb, vis, kin, dia (see wallj_diag_add)
+  real*8, save :: wj_cap(nt), wj_int(nwj,nt), wj_rmax(nwj,nt), wj_loc(2,nwj,nt)
 
 contains
 
@@ -45,27 +46,27 @@ subroutine floating_diag_reset()
   s_slen = 0.d0 ; s_esat = 0.d0 ; j_min = huge(1.d0) ; j_max = -huge(1.d0)
   u_min = huge(1.d0) ; u_max = -huge(1.d0) ; s_inet = 0.d0 ; s_isat = 0.d0
   j_abs = 0.d0 ; j_abs_R = 0.d0 ; j_abs_Z = 0.d0 ; s_over = 0.d0
-  wj_cap = 0.d0 ; wj_mag = 0.d0 ; wj_exb = 0.d0 ; wj_vis = 0.d0 ; wj_rmag = 0.d0 ; wj_rexb = 0.d0 ; wj_rvis = 0.d0 ; wj_loc = 0.d0
+  wj_cap = 0.d0 ; wj_int = 0.d0 ; wj_rmax = 0.d0 ; wj_loc = 0.d0
 end subroutine floating_diag_reset
 
 
-!> One wall Gauss point, every type: sheath capacity and the three implicit vorticity-row wall currents, per unit edge
-!! parameter (w = Gauss weight).
-subroutine wallj_diag_add(bnd_type, w, R, Z, cap, mag, exb, vis)
+!> One wall Gauss point, every type: sheath capacity and the implicit vorticity-row wall currents, per unit edge
+!! parameter (w = Gauss weight). cur(1:nwj) = magnetisation R^2|p_s|, ExB advection of vorticity rho R^4|w||u_s|,
+!! viscous flux, kinetic-energy flux (v_E^2/2)|d_s(R^2 rho)|, diamagnetic 2|tauIC| R^3 |Pi_Z| |du/dn| dl.
+subroutine wallj_diag_add(bnd_type, w, R, Z, cap, cur)
   implicit none
   integer, intent(in) :: bnd_type
-  real*8,  intent(in) :: w, R, Z, cap, mag, exb, vis
-  real*8 :: rm, re, rv
+  real*8,  intent(in) :: w, R, Z, cap, cur(nwj)
+  real*8  :: rr
+  integer :: i
   if ( bnd_type .lt. 1 .or. bnd_type .gt. nt ) return
-  rm = mag / max(cap, tiny(1.d0)) ; re = exb / max(cap, tiny(1.d0)) ; rv = vis / max(cap, tiny(1.d0))
   !$omp critical (wallj_diag)
   wj_cap(bnd_type) = wj_cap(bnd_type) + cap * w
-  wj_mag(bnd_type) = wj_mag(bnd_type) + mag * w
-  wj_exb(bnd_type) = wj_exb(bnd_type) + exb * w
-  wj_vis(bnd_type) = wj_vis(bnd_type) + vis * w
-  if ( rm .gt. wj_rmag(bnd_type) ) then ; wj_rmag(bnd_type) = rm ; wj_loc(:,1,bnd_type) = (/ R, Z /) ; endif
-  if ( re .gt. wj_rexb(bnd_type) ) then ; wj_rexb(bnd_type) = re ; wj_loc(:,2,bnd_type) = (/ R, Z /) ; endif
-  if ( rv .gt. wj_rvis(bnd_type) ) then ; wj_rvis(bnd_type) = rv ; wj_loc(:,3,bnd_type) = (/ R, Z /) ; endif
+  do i = 1, nwj
+    wj_int(i,bnd_type) = wj_int(i,bnd_type) + cur(i) * w
+    rr = cur(i) / max(cap, tiny(1.d0))
+    if ( rr .gt. wj_rmax(i,bnd_type) ) then ; wj_rmax(i,bnd_type) = rr ; wj_loc(:,i,bnd_type) = (/ R, Z /) ; endif
+  enddo
   !$omp end critical (wallj_diag)
 end subroutine wallj_diag_add
 
@@ -132,7 +133,8 @@ subroutine floating_diag_report(my_id)
   real*8  :: len(nt), inflow(nt), mom(nt), den(nt), ven(nt), rmin(nt), tmin(nt), mach(nt), timin(nt)
   real*8  :: slen(nt), esat(nt), jmn(nt), jmx(nt), umn(nt), umx(nt), inet(nt), isat(nt), u_volt
   real*8  :: jab(nt), jloc(2,nt), jloc_g(2,nt), over(nt)
-  real*8  :: gcap(nt), gmag(nt), gexb(nt), gvis(nt), grm(nt), gre(nt), grv(nt), wl(2,3,nt), wl_g(2,3,nt)
+  real*8  :: gcap(nt), gint(nwj,nt), grmx(nwj,nt), wl(2,nwj,nt), wl_g(2,nwj,nt)
+  integer :: iw
   real*8  :: loc(3,2,nt), loc_g(3,2,nt), v_norm, T_eV
   integer :: it, ierr
 
@@ -155,20 +157,16 @@ subroutine floating_diag_report(my_id)
   call MPI_ALLREDUCE(s_isat, isat,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(j_abs,  jab,   nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(s_over, over,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
-  call MPI_ALLREDUCE(wj_cap, gcap,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
-  call MPI_ALLREDUCE(wj_mag, gmag,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
-  call MPI_ALLREDUCE(wj_exb, gexb,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
-  call MPI_ALLREDUCE(wj_vis, gvis,  nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
-  call MPI_ALLREDUCE(wj_rmag, grm,  nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
-  call MPI_ALLREDUCE(wj_rexb, gre,  nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
-  call MPI_ALLREDUCE(wj_rvis, grv,  nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(wj_cap,  gcap,  nt,     MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(wj_int,  gint,  nwj*nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(wj_rmax, grmx,  nwj*nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
   wl = -huge(1.d0)
   do it = 1, nt
-    if ( wj_rmag(it) .eq. grm(it) ) wl(:,1,it) = wj_loc(:,1,it)
-    if ( wj_rexb(it) .eq. gre(it) ) wl(:,2,it) = wj_loc(:,2,it)
-    if ( wj_rvis(it) .eq. grv(it) ) wl(:,3,it) = wj_loc(:,3,it)
+    do iw = 1, nwj
+      if ( wj_rmax(iw,it) .eq. grmx(iw,it) ) wl(:,iw,it) = wj_loc(:,iw,it)
+    enddo
   enddo
-  call MPI_ALLREDUCE(wl, wl_g, 6*nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(wl, wl_g, 2*nwj*nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
   jloc = -huge(1.d0)
   do it = 1, nt
     if ( j_abs(it) .eq. jab(it) ) jloc(:,it) = (/ j_abs_R(it), j_abs_Z(it) /)
@@ -211,11 +209,11 @@ subroutine floating_diag_report(my_id)
 
   ! --- implicit vorticity-row wall currents vs the sheath capacity, integrated per type and the largest local ratios
   if ( any(gcap .gt. 0.d0) ) then
-    write(*,'(A)') ' [wall J]   type  mag/Icap  exb/Icap  vis/Icap | max mag/jcap at (R,Z)        max exb/jcap at (R,Z)        max vis/jcap at (R,Z)'
+    write(*,'(A)') ' [wall J]   type  mag/Icap  exb/Icap  vis/Icap  kin/Icap  dia/Icap | max mag/jcap at (R,Z)        max exb/jcap at (R,Z)        max vis/jcap at (R,Z)        max kin/jcap at (R,Z)        max dia/jcap at (R,Z)'
     do it = 1, nt
       if ( gcap(it) .le. 0.d0 ) cycle
-      write(*,'(A,I4,3ES10.2,A,3(ES10.2,2F8.4,1X))') ' [wall J] ', it, gmag(it)/gcap(it), gexb(it)/gcap(it), gvis(it)/gcap(it), ' |', &
-        grm(it), wl_g(:,1,it), gre(it), wl_g(:,2,it), grv(it), wl_g(:,3,it)
+      write(*,'(A,I4,5ES10.2,A,5(ES10.2,2F8.4,1X))') ' [wall J] ', it, ( gint(iw,it)/gcap(it), iw = 1, nwj ), ' |', &
+        ( grmx(iw,it), wl_g(:,iw,it), iw = 1, nwj )
     enddo
   endif
 

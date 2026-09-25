@@ -82,12 +82,24 @@ non-sheath edge).
 ## The [wall J] diagnostic (2026-09-25)
 
 `[wall J]` (with `floating_u_diag`): per boundary type, the implicit boundary currents of the released vorticity row
-against the sheath's capacity, all per unit edge parameter as they enter the u row with the same test function:
-capacity j_sat*|psi_s| (the wall flux of v*[psi,zj]), the magnetisation current R^2*|p_s| (wall flux of the pressure
-bracket), the ExB advection of vorticity rho*R^2*|w|*|u_s|, and the viscous flux visco*R^3*|dw/dn|*dl (constant
-visco as an estimate). Integrated ratios per type and the largest local ratio of each with its (R,Z). Anything of
-order 0.3 or more at a strike point is a current the sheath is asked to pass that no sheath can (independent review,
-`doc/review_sheath_j_2026-09-24.md`, item F4).
+against the sheath's capacity, all per unit edge parameter as they enter the u row with the same test function
+(s along the wall, n outward); capacity j_sat*|psi_s| (the wall flux of v*[psi,zj]):
+
+| column | current | boundary part of the assembled term |
+|---|---|---|
+| mag | R^2 \|p_s\| | pressure bracket R^2 [v,p] |
+| exb | rho R^4 \|w\| \|u_s\| | ExB advection of vorticity rho R^4 w [v,u] |
+| vis | visco R \|d_n(R^2 w)\| dl (old setup: visco R \|d_n w\| dl) | -visco R grad v . grad(R^2 w) |
+| kin | (v_E^2/2) \|d_s(R^2 rho)\| | -(v_E^2/2) [v, R^2 rho] |
+| dia | 2 \|tauIC\| R^3 \|Pi_Z\| \|d_n u\| dl | -2 tauIC R^3 Pi_Z grad v . grad u |
+
+Integrated ratios per type and the largest local ratio of each with its (R,Z). Anything of order 0.3 or more at a
+strike point is a current the sheath is asked to pass that no sheath can (independent review,
+`doc/review_sheath_j_2026-09-24.md`, item F4). Not measurable at the boundary (element-local data): the
+ionisation / kinetic particle-source term R^3 S grad v . grad u and the kinetic pressure coupling; zero in these
+runs: tg_num, Wdia, the toroidal viscous part. With `sheath_j_cancel_flux` the mag (total-derivative part) and vis
+terms are cancelled in the row; the print still shows their size. The exb column had R^2 instead of R^4 before
+2026-09-25 (harmless: w is Dirichlet zero on the wall, so the term is zero anyway).
 
 A SOLPS-style linearisation slope in the Jacobian (`sheath_j_patankar`, floor max(e^x, 1) on df/dx, residual
 unchanged) was tried on 2026-09-25 and removed again: it left the row unsatisfied over 17-21% of the inner target

@@ -17,7 +17,7 @@ use phys_module
 use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
-use mod_floating_diag, only: floating_diag_add, sheath_diag_add, wallj_diag_add
+use mod_floating_diag, only: floating_diag_add, sheath_diag_add, wallj_diag_add, nwj
 use mod_floating_u,    only: sheath_j_norm, floating_u_norm, sheath_j_ramp
 use mod_plasma_functions, only: viscosity
 
@@ -72,7 +72,7 @@ logical    :: so_capped
 logical    :: sj_cf                                              ! cancel the implicit viscous and magnetisation wall currents of the u row on this edge (sheath_j_cancel_flux)
 real*8     :: cf_fo, cf_fn, cf_nu, cf_dnu, cf_w0, cf_wx, cf_wy, cf_dwdn, cf_G, cf_vis, cf_mag, cf_p0, cf_p0x, cf_p0y
 real*8     :: cf_dsx, cf_dsy, cf_dtx, cf_dty, cf_dp, cf_dpx, cf_dpy, cf_tx, cf_ty, cf_gTx, cf_gTy
-real*8     :: wj_an, wj_csat, wj_cap, wj_mag, wj_exb, wj_vis, wj_p0s, wj_w0, wj_w0s, wj_w0t, wj_w0x, wj_w0y   ! [wall J] diagnostic
+real*8     :: wj_an, wj_csat, wj_cap, wj_cur(nwj), wj_p0s, wj_w0, wj_w0s, wj_w0t, wj_w0x, wj_w0y, wj_u0x, wj_u0y   ! [wall J] diagnostic
 logical    :: xpoint2
 integer    :: n_tor_local 
 logical    :: apply_natural_bc(0:n_var)
@@ -521,26 +521,36 @@ do ms=1, n_gauss
 
     ! --- [wall J] diagnostic (print only): the implicit boundary currents of the released vorticity row at this
     ! --- wall point against the sheath's capacity, all per unit edge parameter as they enter the u row with the
-    ! --- same test function: capacity j_sat*|psi_s| (the wall flux of v*[psi,zj]); magnetisation current
-    ! --- R^2*|p_s| (wall flux of the pressure bracket R^2*[v,p]); ExB advection of vorticity rho*R^2*|w|*|u_s|
-    ! --- (wall flux of rho*R^2*w*[v,u]); viscous flux visco*R^3*|dw/dn|*dl (wall flux of -visco*R^3*grad v.grad w,
-    ! --- with the constant visco as an estimate of visco_T). Every type, first plane.
+    ! --- same test function (s along the wall, n outward): capacity j_sat*|psi_s| (the wall flux of v*[psi,zj]);
+    ! ---   1 magnetisation  R^2*|p_s|                     wall flux of the pressure bracket  R^2*[v,p]
+    ! ---   2 ExB advection  rho*R^4*|w|*|u_s|             wall flux of  rho*R^4*w*[v,u]
+    ! ---   3 viscous        visco*R*|d_n(R^2 w)|*dl       wall flux of  -visco*R*grad v.grad(R^2 w)  (old setup: visco*R*|d_n w|*dl)
+    ! ---   4 kinetic energy (v_E^2/2)*|d_s(R^2 rho)|      wall flux of  -(v_E^2/2)*[v, R^2 rho]
+    ! ---   5 diamagnetic    2*|tauIC|*R^3*|Pi_Z|*|d_n u|*dl   wall flux of  -2*tauIC*R^3*Pi_Z*grad v.grad u
+    ! --- Not measurable here (element-local data): the ionisation/kinetic particle-source term R^3*S*grad v.grad u
+    ! --- and the kinetic pressure coupling; zero in these runs: tg_num, Wdia, the toroidal (n > 0) viscous part.
+    ! --- Every type, first plane. With sheath_j_cancel_flux terms 1 (its total-derivative part) and 3 are
+    ! --- cancelled in the row; the print still shows their size.
     if ( floating_u_diag .and. mp .eq. 1 ) then
       call sheath_j_norm(wj_an, wj_csat)
       wj_cap = abs( wj_csat * r0_corr * cs0 / Btot ) * abs(ps0_s)
-      if (with_TiTe) then
-        wj_p0s = r0_s * (Ti0 + Te0) + r0 * (Ti0_s + Te0_s)
-      else
-        wj_p0s = r0_s * T0 + r0 * T0_s
-      endif
-      wj_mag = BigR**2 * abs(wj_p0s)
+      wj_p0s = r0_s * T0 + r0 * T0_s                        ! T0 = Ti0 + Te0 (or T)
       wj_w0  = eq_g(mp,var_w,ms) ; wj_w0s = eq_s(mp,var_w,ms) ; wj_w0t = eq_t(mp,var_w,ms)
       wj_w0x = (   y_t(ms) * wj_w0s - y_s(ms) * wj_w0t ) / xjac
       wj_w0y = ( - x_t(ms) * wj_w0s + x_s(ms) * wj_w0t ) / xjac
-      wj_exb = r0 * BigR**2 * abs(wj_w0) * abs(eq_s(mp,var_u,ms))
-      wj_vis = visco * BigR**3 * abs( wj_w0x*normal(1) + wj_w0y*normal(2) ) * dl
-      call wallj_diag_add(bnd_type1, ws, BigR, y_g(ms), wj_cap, wj_mag, wj_exb, wj_vis)
-      if ( bnd_type2 .ne. bnd_type1 ) call wallj_diag_add(bnd_type2, ws, BigR, y_g(ms), wj_cap, wj_mag, wj_exb, wj_vis)
+      wj_u0x = (   y_t(ms) * eq_s(mp,var_u,ms) - y_s(ms) * eq_t(mp,var_u,ms) ) / xjac
+      wj_u0y = ( - x_t(ms) * eq_s(mp,var_u,ms) + x_s(ms) * eq_t(mp,var_u,ms) ) / xjac
+      wj_cur(1) = BigR**2 * abs(wj_p0s)
+      wj_cur(2) = r0 * BigR**4 * abs(wj_w0) * abs(eq_s(mp,var_u,ms))
+      if ( visco_old_setup ) then
+        wj_cur(3) = visco * BigR * abs( wj_w0x*normal(1) + wj_w0y*normal(2) ) * dl
+      else
+        wj_cur(3) = visco * BigR * abs( BigR**2 * ( wj_w0x*normal(1) + wj_w0y*normal(2) ) + 2.d0*BigR*wj_w0*normal(1) ) * dl
+      endif
+      wj_cur(4) = 0.5d0 * BigR**2 * ( wj_u0x**2 + wj_u0y**2 ) * abs( 2.d0*BigR*x_s(ms)*r0 + BigR**2*r0_s )
+      wj_cur(5) = 2.d0 * abs(tauIC) * BigR**3 * abs( r0_y*Ti0 + r0*Ti0_y ) * abs( wj_u0x*normal(1) + wj_u0y*normal(2) ) * dl
+      call wallj_diag_add(bnd_type1, ws, BigR, y_g(ms), wj_cap, wj_cur)
+      if ( bnd_type2 .ne. bnd_type1 ) call wallj_diag_add(bnd_type2, ws, BigR, y_g(ms), wj_cap, wj_cur)
     endif
 
     ! --- Cancelled wall fluxes at this Gauss point (per unit edge parameter, added to the u row as +v*(...)*tstep):

@@ -38,6 +38,7 @@ module phys_module
   logical :: sheath_j_current_row=.false., sheath_j_cancel_flux=.false.
   real*8  :: visco=1.d-5, T_min=1.d-4, T_max_visco=1.d0, Te_0=0.01d0, T_0=0.02d0
   logical :: visco_old_setup=.false., visco_T_dependent=.false.
+  real*8  :: tauIC=0.005d0
   real*8  :: sheath_j_ion_slope=0.d0, sheath_j_e_slope=0.d0
   integer :: nstep_n(7)=0
   real*8  :: vpar_smoothing_coef(3)=[0.02d0,0.016d0,0.005754d0]
