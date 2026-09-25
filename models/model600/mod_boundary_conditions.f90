@@ -39,6 +39,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass, sheath_V_wall 
 use mod_floating_u, only: floating_u_norm
+use mod_wall_smooth, only: wall_smooth_active, wall_smooth_te
 use phys_module, only: min_sheath_angle, sheath_j_float_u, sheath_j_min_angle
 use constants, only: PI
 use tr_module
@@ -108,6 +109,8 @@ real*8  :: d2Mach1BC, d2Mach1BC_v, d2Mach1BC_T, d2Mach1BC_Tb, d2Mach1BC_Tbb
 
 integer :: node_indices( (n_order+1)/2, (n_order+1)/2 ), index_tmp, kk, ll
 real*8  :: fu_a_n, fu_C_T, fu_C_V, fu_target   ! floating-potential row: u = C_T*Te + C_V*V_wall
+real*8  :: fu_Te                               ! the Te DOF the target uses: raw, or the filtered lagged one (sheath_Te_smooth)
+logical :: fu_lag                              ! target lagged (filtered): no Te column
 integer :: fu_var_T                            ! temperature trace variable: Te, or T in a single-T build
 logical :: sj_edge(2), sj_rel_val, sj_rel_der, sj_rel, fu_dof   ! sheath edge per direction; value / this visit's derivative released
 integer :: sj_ivd(2), jdir, jv2, jnb
@@ -430,9 +433,17 @@ do i=1, n_local_elms !=== do elements
                 fu_dof = bcs(bnd_type)%floating_u .or. ( bcs(bnd_type)%sheath_j .and. .not. sj_rel ) &
                          .or. ( bcs(bnd_type)%sheath_j .and. sheath_j_float_u )
                 if ( (k == var_u) .and. fu_dof ) then
-                  fu_target = fu_C_T * node_list%node(inode)%values(in, index_tmp, fu_var_T)
+                  ! --- sheath_Te_smooth: the target uses the tangentially filtered Te (n = 1), lagged, so the row
+                  ! --- has no Te column there; the potential then cannot vary along the wall faster than the filter
+                  fu_Te  = node_list%node(inode)%values(in, index_tmp, fu_var_T)
+                  fu_lag = .false.
+                  if ( wall_smooth_active() .and. (in .eq. 1) ) then
+                    fu_Te  = wall_smooth_te(inode, index_tmp, fu_Te)
+                    fu_lag = .true.
+                  endif
+                  fu_target = fu_C_T * fu_Te
                   if ( (index_tmp .eq. 1) .and. (in .eq. 1) ) fu_target = fu_target + fu_C_V * sheath_V_wall
-                  call boundary_conditions_add_one_entry(                        &
+                  if ( .not. fu_lag ) call boundary_conditions_add_one_entry(    &
                          index_node, var_u, in, index_node, fu_var_T, in,        &
                          - zbig * fu_C_T, index_min, index_max, a_mat)
                   call boundary_conditions_add_RHS(                              &

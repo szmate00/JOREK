@@ -329,6 +329,7 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
 #if JOREK_MODEL == 600
   use mod_boundary_edges, only: boundary_edges_build
   use mod_floating_diag,  only: floating_diag_reset, floating_diag_report
+  use mod_wall_smooth,    only: wall_smooth_build
 #endif
   
   !$ use omp_lib
@@ -473,6 +474,8 @@ subroutine construct_matrix(mhd_sim, local_elms, n_local_elms, a_mat, rhs_vec, h
   ! --- Exterior-side table for the open-boundary integral: the weak Bohm row and the floating
   ! --- potential must never be assembled on an interior side with two labelled endpoints.
   if ( mach1_weak .or. any(bcs(:)%floating_u) ) call boundary_edges_build(element_list, node_list, my_id)
+  ! --- tangentially filtered wall Te for the floating target and the sheath characteristic (sheath_Te_smooth)
+  if ( sheath_Te_smooth .gt. 0 ) call wall_smooth_build(element_list, node_list, sheath_Te_smooth)
   if ( floating_u_diag ) call floating_diag_reset()
 #endif
 

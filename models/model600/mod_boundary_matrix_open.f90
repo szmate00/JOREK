@@ -19,6 +19,7 @@ use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
 use mod_floating_diag, only: floating_diag_add, sheath_diag_add, wallj_diag_add, wallb_diag_add, floating_prof_add, nwj, nwb
 use mod_floating_u,    only: sheath_j_norm, floating_u_norm, sheath_j_ramp
+use mod_wall_smooth,   only: wall_smooth_active, wall_smooth_te
 use mod_plasma_functions, only: viscosity
 
 implicit none
@@ -75,6 +76,8 @@ real*8     :: cf_dsx, cf_dsy, cf_dtx, cf_dty, cf_dp, cf_dpx, cf_dpy, cf_tx, cf_t
 real*8     :: cf_ux, cf_uy, cf_vE2, cf_Mr, cf_kin, cf_dMr     ! kinetic-energy flux (v_E^2/2) d_s(R^2 rho) and its columns
 real*8     :: wb_cur(nwb), wb_dtpsi, wb_dux, wb_duy            ! [wall B] signed balance
 real*8     :: sj_angle                                           ! gate of the current row (sheath_j_min_angle or min_sheath_angle), radians
+real*8     :: tesm_g(n_plane,n_gauss), sj_Te, sj_TeF, sj_cs       ! filtered wall Te at the Gauss points (sheath_Te_smooth): the Te of x and of j_sat's cs; F = 1 raw (Te columns kept), 0 filtered+lagged (no Te columns)
+integer    :: kT_sm
 real*8     :: wj_an, wj_csat, wj_cap, wj_cur(nwj), wj_p0s, wj_w0, wj_w0s, wj_w0t, wj_w0x, wj_w0y, wj_u0x, wj_u0y   ! [wall J] diagnostic
 logical    :: xpoint2
 integer    :: n_tor_local 
@@ -131,6 +134,9 @@ endif
 x_g  = 0.d0; x_s  = 0.d0; x_t  = 0.d0; x_ss  = 0.d0; 
 y_g  = 0.d0; y_s  = 0.d0; y_t  = 0.d0; y_ss  = 0.d0; 
 eq_g = 0.d0; eq_s = 0.d0; eq_t = 0.d0; eq_ss = 0.d0; eq_p = 0.d0;
+tesm_g = 0.d0
+kT_sm = var_T
+if ( with_TiTe ) kT_sm = var_Te
 
 delta_g = 0.d0; delta_s = 0.d0; delta_t = 0.d0
 
@@ -240,6 +246,13 @@ do i=1,2    ! sum over 2 verices
             eq_t(mp,k,ms)  = eq_t(mp,k,ms)  + nodes(i)%values(in,j3,k) * element_size_ij * H1(i,j,ms)   * HZ(in,mp) * element_size_perp
             eq_p(mp,k,ms)  = eq_p(mp,k,ms)  + nodes(i)%values(in,j2,k) * element_size_ij * H1(i,j,ms)   * HZ_p(in,mp)
             eq_ss(mp,k,ms) = eq_ss(mp,k,ms) + nodes(i)%values(in,j2,k) * element_size_ij * H1_ss(i,j,ms)* HZ(in,mp)
+            if ( k .eq. kT_sm ) then       ! the filtered wall Te (n = 1 filtered, other harmonics raw) at this point
+              if ( in .eq. 1 ) then
+                tesm_g(mp,ms) = tesm_g(mp,ms) + wall_smooth_te(element%vertex(vertex(i)), j2, nodes(i)%values(in,j2,k)) * element_size_ij * H1(i,j,ms) * HZ(in,mp)
+              else
+                tesm_g(mp,ms) = tesm_g(mp,ms) + nodes(i)%values(in,j2,k) * element_size_ij * H1(i,j,ms) * HZ(in,mp)
+              endif
+            endif
 
             delta_g(mp,k,ms) = delta_g(mp,k,ms) + nodes(i)%deltas(in,j2,k) * element_size_ij * H1(i,j,ms)   * HZ(in,mp)
             delta_s(mp,k,ms) = delta_s(mp,k,ms) + nodes(i)%deltas(in,j2,k) * element_size_ij * H1_s(i,j,ms) * HZ(in,mp)
@@ -455,7 +468,19 @@ do ms=1, n_gauss
     ! --- independent of the sign of F0.
     sj_here = sj_on .and. ( abs(bdotn) .ge. sin(sj_angle) )
     sj_jsat = 0.d0 ; sj_psin = 0.d0 ; sj_w = 0.d0
-    if ( sj_here ) sj_jsat = sj_csat * r0_corr * normal_sign * cs0 / Btot     ! corr_neg rho: j_sat keeps its sign
+    ! --- sheath_Te_smooth: the characteristic and j_sat use the tangentially filtered wall Te, lagged (no Te columns)
+    sj_Te = Te0 ; sj_TeF = 1.d0 ; sj_cs = cs0
+    if ( wall_smooth_active() ) then
+      sj_Te  = tesm_g(mp,ms)
+      if ( .not. with_TiTe ) sj_Te = 0.5d0 * tesm_g(mp,ms)
+      sj_TeF = 0.d0
+      if (with_TiTe) then
+        sj_cs = sqrt( gamma * ( Ti0_corr + corr_neg_temp1(sj_Te) ) )
+      else
+        sj_cs = sqrt( gamma * 2.d0 * corr_neg_temp1(sj_Te) )
+      endif
+    endif
+    if ( sj_here ) sj_jsat = sj_csat * r0_corr * normal_sign * sj_cs / Btot     ! corr_neg rho: j_sat keeps its sign
     if ( sj_surf ) then
       sj_psin = ps0_x * normal(1) + ps0_y * normal(2)     ! dpsi/dn, outward
       sj_w    = dl / BigR                                 ! weight of the surface term
@@ -477,8 +502,8 @@ do ms=1, n_gauss
     if ( sj_here .and. sheath_j_current_row ) then
       ! --- corr_neg-corrected Te and rho, as in every other natural row: a raw Te <= 0 would flip the sign
       ! --- of x and a raw rho <= 0 the sign of j_sat. sc_dTc = d(Te_corr)/dTe carries into the Te column.
-      sc_Tc  = Te0_corr
-      sc_dTc = dcorr_neg_temp_dT(Te0)
+      sc_Tc  = corr_neg_temp1(sj_Te)
+      sc_dTc = dcorr_neg_temp_dT(sj_Te) * sj_TeF
       ! --- Ion branch (x < 0, Phi above floating): f = 1 - exp(x) - s*x with s = sheath_j_ion_slope, the
       ! --- finite slope of ion saturation (sheath expansion). With s = 0 the characteristic has no voltage
       ! --- root wherever the plasma delivers j >= j_sat, and the vorticity row then drives Phi to infinity
@@ -799,13 +824,13 @@ do ms=1, n_gauss
 
                   ! --- Current-slot form: exact columns of zj - j_sat*f
                   amat(var_zj,var_zj)  =   v * sc_w * psi          ! amat is assigned per (k,l,in), never accumulated
-                  amat(var_zj,var_rho) = - v * sc_w * sj_csat * normal_sign * cs0 / Btot * sc_f * sc_drc * rho
+                  amat(var_zj,var_rho) = - v * sc_w * sj_csat * normal_sign * sj_cs / Btot * sc_f * sc_drc * rho
                   amat(var_zj,var_u)   = - v * sc_w * sj_jsat * sc_dfdu * psi
                   if (with_TiTe) then
-                    amat(var_zj,var_Ti)  = - v * sc_w * sj_csat * r0_corr * normal_sign / Btot * sc_f * cs_Ti       ! r0_corr as in j_sat (was r0: wrong Jacobian in a depleted cell)
-                    amat(var_zj,var_Te)  = - v * sc_w * ( sj_csat * r0_corr * normal_sign / Btot * sc_f * cs_Te + sj_jsat * sc_dfdTe * Te )
+                    amat(var_zj,var_Ti)  = - v * sc_w * sj_csat * r0_corr * normal_sign / Btot * sc_f * gamma * Ti / (2.d0 * sj_cs)   ! r0_corr as in j_sat; cs of j_sat
+                    amat(var_zj,var_Te)  = - v * sc_w * ( sj_csat * r0_corr * normal_sign / Btot * sc_f * gamma * Te / (2.d0 * sj_cs) * sj_TeF + sj_jsat * sc_dfdTe * Te )
                   else
-                    amat(var_zj,var_T)   = - v * sc_w * ( sj_csat * r0_corr * normal_sign / Btot * sc_f * cs_T + sj_jsat * sc_dfdTe * 0.5d0 * T )
+                    amat(var_zj,var_T)   = - v * sc_w * ( sj_csat * r0_corr * normal_sign / Btot * sc_f * gamma * T / (2.d0 * sj_cs) * sj_TeF + sj_jsat * sc_dfdTe * 0.5d0 * T )
                   endif
 
                   ! --- Sheath potential row: exact columns of u - C_V*V_wall - (2Te/a_n)*(Lambda - ln X)

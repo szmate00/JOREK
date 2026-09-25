@@ -21,12 +21,15 @@ program test_sheath_j
   use mod_boundary_matrix_open
   use mod_floating_u,    only: floating_u_norm, sheath_j_norm
   use mod_floating_diag, only: floating_diag_reset, floating_diag_report
+  use mod_wall_smooth,   only: wall_smooth_build, wall_smooth_active, wall_smooth_te
   use basis_at_gaussian, only: set_basis
   implicit none
   integer, parameter :: nd = 4*4*n_var
   integer, parameter :: fd_vars(5) = [var_u, var_zj, var_rho, var_Ti, var_Te]
   type(type_element) :: e
-  type(type_node)    :: nodes(4), base(4)
+  type(type_node)    :: nodes(4), base(4), keep(4)
+  type(type_node_list)    :: nl
+  type(type_element_list) :: el
   real*8  :: a(nd,nd), r(nd), ap(nd,nd), rp(nd), am(nd,nd), rm(nd)
   real*8  :: eps, err, worst, scale, a_n, C_T, C_V, c_sat, ufl, bslope, tot, cslope, pval, fdv, want
   integer, parameter :: cf_vars(5) = [var_w, var_rho, var_Ti, var_Te, var_u]
@@ -348,6 +351,42 @@ program test_sheath_j
   floating_u_prof_every = 0 ; floating_u_diag = .false. ; nodes = base; call assemble(a, r)
   if ( any(a /= ap) .or. any(r /= rp) ) error stop 'FAIL: [wall prof] changed the equations'
   write(*,'(a)') ' PASS: [wall prof] leaves the equations untouched'
+  ! --- sheath_Te_smooth: the filtered wall Te enters x and j_sat, lagged. Fixture: one element, all four nodes
+  ! --- labelled, so the wall chain is the closed loop 1-2-3-4-1. Te = 0.004 at nodes 1,2 and 0.008 at 3,4: one
+  ! --- pass gives 0.005 at 1,2 and 0.007 at 3,4. The zj rows with the filter on must equal the rows assembled
+  ! --- with the raw Te set to 0.005 and the filter off, except that the Te column is zero with the filter.
+  keep = base
+  base(3:4)%values(1,1,var_Te) = 0.008d0
+  nl%n_nodes = 4 ; allocate( nl%node(4) ) ; nl%node = base
+  el%n_elements = 1 ; el%element(1) = e
+  call wall_smooth_build(el, nl, 1)
+  if ( .not. wall_smooth_active() ) error stop 'FAIL: wall_smooth_build did not activate'
+  if ( abs(wall_smooth_te(1,1,0.d0) - 0.005d0) > 1.d-15 .or. abs(wall_smooth_te(3,1,0.d0) - 0.007d0) > 1.d-15 ) then
+    write(*,*) 'FAIL: wall smoothing values', wall_smooth_te(1,1,0.d0), wall_smooth_te(3,1,0.d0)
+    error stop 1
+  endif
+  nodes = base; call assemble(a, r)                         ! filter on
+  call wall_smooth_build(el, nl, 0)                         ! filter off
+  base(1:2)%values(1,1,var_Te) = 0.005d0
+  nodes = base; call assemble(ap, rp)                       ! raw Te = the filtered value
+  worst = 0.d0
+  do isgn = 1, nd
+    if ( .not. isvar(isgn, var_zj) ) cycle
+    worst = max(worst, abs(r(isgn) - rp(isgn)) / max(1.d0, abs(rp(isgn))))
+    do col = 1, nd
+      if ( isvar(col, var_Te) ) then
+        if ( a(isgn,col) /= 0.d0 ) error stop 'FAIL: Te column of the zj row not zero with the filter on'
+      else
+        worst = max(worst, abs(a(isgn,col) - ap(isgn,col)) / max(1.d0, abs(ap(isgn,col))))
+      endif
+    enddo
+  enddo
+  if ( worst > 1.d-12 ) then
+    write(*,*) 'FAIL: filtered zj rows differ from the raw-Te rows', worst
+    error stop 1
+  endif
+  base = keep ; deallocate( nl%node )
+  write(*,'(a,es9.2)') ' PASS: sheath_Te_smooth: filtered Te enters x and j_sat, rows equal the raw rows at the filtered value, no Te column, worst ', worst
   sheath_j_ion_slope = 0.03d0 ; base(:)%values(1,1,var_u) = 2.d0*ufl
   nodes = base; call assemble(a, r)
   worst = 0.d0

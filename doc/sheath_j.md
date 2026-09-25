@@ -169,6 +169,25 @@ type, R, Z, rho, Ti, Te, Phi, Vpar*Bn, vE.n, cs|b.n|, vn, b.n, dTe/ds, dPhi/ds, 
 the current row is carried), r = dPhi/ds / (Lambda dTe/ds) (1 where the potential gradient is the floating one) and
 delta = (Phi - Lambda Te)/Te (0 at floating). Read b.n and dTe/ds at the corner from it before choosing the angle.
 
+## Tangentially filtered wall Te (`sheath_Te_smooth`, 2026-09-27)
+
+The wall potential follows Te (u = C_T Te on floating segments; the current row anchors u near C_T Te where the
+current is small), so its tangential gradient is Lambda dTe/ds and the ExB normal flow it drives is Lambda dTe/ds/B.
+At the inner 4/9 corner that was 1-4e4 m/s, ~20x the Bohm outflow cs|b.n|, in every run, from a Te step of tens of
+eV across one or two elements, and the corner cell emptied under it. b.n is smooth there (the step-1 `[wall prof]`:
+1.15 deg at the corner, 1.1-1.4 on the neighbours), so the angle gate cannot single the corner out.
+
+`sheath_Te_smooth = N` (default 0): the Te the wall rows see is filtered along the wall, N passes of the 3-point
+[1/4 1/2 1/4] average over the two wall neighbours of every wall node (all four DOF components, n = 1 harmonic; one
+pass = one element of smoothing, the length scale is the grid). `mod_wall_smooth.f90`: the wall chain from the
+exterior labelled sides of the local elements, allreduced; built once per matrix construction. It enters (i) the
+floating target u = C_T Te_sm (mod_boundary_conditions; lagged, so no Te column there) and (ii) the characteristic's
+x and j_sat's cs at the sheath Gauss points (mod_boundary_matrix_open, `tesm_g`; lagged, Te columns of the zj row
+zero). The plasma's own Te, the Bohm row, the sheath particle/heat fluxes and the recycling use the raw Te. Harness:
+on a one-element loop with a Te step the filtered values are 0.005/0.007, and the zj rows equal the rows assembled
+with the raw Te set to the filtered value, with a zero Te column. In `[wall prof]`, r = dPhi/ds/(Lambda dTe/ds)
+drops below 1 where the filter acts.
+
 ## Reading the log
 
 ```

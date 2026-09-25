@@ -26,6 +26,8 @@ $fc $flags \
   "$repo_dir/tests/floating_transport/fixtures.f90" \
   "$repo_dir/models/model600/mod_floating_diag.f90" \
   "$repo_dir/models/model600/mod_floating_u.f90" \
+  "$repo_dir/models/model600/mod_boundary_edges.f90" \
+  "$repo_dir/models/model600/mod_wall_smooth.f90" \
   "$repo_dir/models/model600/mod_boundary_matrix_open.f90" \
   "$repo_dir/tests/floating_transport/test_weak_mach.f90" -o test_weak_mach
 ./test_weak_mach
@@ -34,6 +36,8 @@ $fc $flags \
   "$repo_dir/tests/floating_transport/fixtures.f90" \
   "$repo_dir/models/model600/mod_floating_diag.f90" \
   "$repo_dir/models/model600/mod_floating_u.f90" \
+  "$repo_dir/models/model600/mod_boundary_edges.f90" \
+  "$repo_dir/models/model600/mod_wall_smooth.f90" \
   "$repo_dir/models/model600/mod_boundary_matrix_open.f90" \
   "$repo_dir/tests/floating_transport/test_sheath_j.f90" -o test_sheath_j
 ./test_sheath_j
