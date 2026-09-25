@@ -97,8 +97,8 @@ Integrated ratios per type and the largest local ratio of each with its (R,Z). A
 strike point is a current the sheath is asked to pass that no sheath can (independent review,
 `doc/review_sheath_j_2026-09-24.md`, item F4). Not measurable at the boundary (element-local data): the
 ionisation / kinetic particle-source term R^3 S grad v . grad u and the kinetic pressure coupling; zero in these
-runs: tg_num, Wdia, the toroidal viscous part. With `sheath_j_cancel_flux` the mag (total-derivative part) and vis
-terms are cancelled in the row; the print still shows their size. The exb column had R^2 instead of R^4 before
+runs: tg_num, Wdia, the toroidal viscous part. With `sheath_j_cancel_flux` the mag (total-derivative part), vis
+and kin terms are cancelled in the row; the print still shows their size. The exb column had R^2 instead of R^4 before
 2026-09-25 (harmless: w is Dirichlet zero on the wall, so the term is zero anyway).
 
 A SOLPS-style linearisation slope in the Jacobian (`sheath_j_patankar`, floor max(e^x, 1) on df/dx, residual
@@ -119,16 +119,30 @@ sheath sets. `[wall J]` measured two of them at O(1-100) j_sat where the runs di
   (`R^2 d_s p = d_s(R^2 p) - 2 R R_s p`): a target does not collect the diamagnetic current (Rozhansky et al.
   2001; SOLPS closes the target balance without it), only the grad-B part `2 R p n_Z` is real.
 
-`sheath_j_cancel_flux = .t.` (default) adds both back with the opposite sign as surface terms of the u row, with
-exact columns on w (trace and normal-derivative DOFs), rho, Ti and Te (including the viscosity's temperature
-dependence), on every edge with a sheath node at either end, no angle gate, current-row form only. What is left in
-the wall balance is the polarisation flux, the grad-B pressure flux and the sheath current. Weakly this is the
-`d_n w = 0` (zero viscous current) condition of the drift-fluid codes with w itself still Dirichlet; the cleaner
-end state, w released with its definition row plus a Neumann penalty on its normal derivative, is the next step
-if this one moves the crash. Terms not cancelled (small in the runs so far): the ExB advection of vorticity
-`rho R^2 w d_s u` (measured ~0) and the `v_E^2/2 [v,rho]` and diamagnetic `tauIC` boundary parts (unmeasured).
-Harness: value-DOF rows integrate to the analytic `-visco c int R^3 dR - [R^2 p]` for w = c Z (old setup:
-`int R dR`), every column matches FD to 4e-9, no row without a sheath node or with the flag off.
+- the **kinetic-energy flux** `(v_E^2/2) d_s(R^2 rho)`, the wall part of the convective polarisation term
+  `-(v_E^2/2)[v, R^2 rho]`: with the first two cancelled it led the collapse at the inner 4/9 junction (run of
+  2026-09-26, step 372: 45 -> 93 -> 678 -> 9e3 j_sat locally, two prints ahead of everything else).
+
+`sheath_j_cancel_flux = .t.` (default) adds all three back with the opposite sign as surface terms of the u row,
+with exact columns on w (trace and normal-derivative DOFs), rho, Ti, Te (including the viscosity's temperature
+dependence) and u (through v_E^2), on every edge with a sheath node at either end, no angle gate, current-row form
+only. What is left in the wall balance is the polarisation flux (the capacitor), the grad-B pressure flux, the
+small diamagnetic part and the sheath current: the closure of the drift-fluid codes, no perpendicular current
+through the target. Weakly this is the `d_n w = 0` (zero viscous current) condition with w itself still
+Dirichlet; the cleaner end state, w released with its definition row plus a Neumann penalty on its normal
+derivative, is the next step if this one moves the crash. Harness: value-DOF rows integrate to the analytic
+viscous + magnetisation + kinetic sum for w = c Z, u = c_u R, rho = rho0 + rho1 R (old setup: `int R dR` for the
+viscous part), every column matches FD, no row without a sheath node or with the flag off.
+
+`[wall B]` (with `floating_u_diag`): the **signed** wall contents of the u row integrated per type, in units of the
+type's saturation current and in the sign they have in the row's right-hand side (s = n rotated by +90 degrees,
+`d_s psi = R B_pol.n`): `Ish = -zj d_s psi` (the sheath current; compare with `Inet/Isat` of `[sheath_j]`, same
+number up to sign convention and an R weighting), `gradB = +2 R p n_Z` (what the cancellation leaves of the
+pressure flux), `pol = -rho R^3 d_n(delta u)/tstep` (the capacitor, LAGGED: last increment rescaled to this step),
+`dia`, then `rest = -(Ish + gradB + pol + dia)`, which is the sum of what the boundary cannot evaluate: the interior
+parallel current arriving at the wall and the particle-source term. The cancelled fluxes mag, vis, kin are printed
+signed as well. A type whose `rest` is large and of the sign of the electron current is being fed from the interior
+or from the source term, not from any wall flux.
 
 ## Reading the log
 

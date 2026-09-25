@@ -17,7 +17,7 @@ use phys_module
 use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
-use mod_floating_diag, only: floating_diag_add, sheath_diag_add, wallj_diag_add, nwj
+use mod_floating_diag, only: floating_diag_add, sheath_diag_add, wallj_diag_add, wallb_diag_add, nwj, nwb
 use mod_floating_u,    only: sheath_j_norm, floating_u_norm, sheath_j_ramp
 use mod_plasma_functions, only: viscosity
 
@@ -33,7 +33,7 @@ real*8     :: y_g(n_gauss), y_s(n_gauss), y_t(n_gauss), y_ss(n_gauss)
 
 real*8     :: eq_g(n_plane,n_var,n_gauss), eq_s(n_plane,n_var,n_gauss), eq_p(n_plane,n_var,n_gauss)
 real*8     :: eq_t(n_plane,n_var,n_gauss), eq_ss(n_plane,n_var,n_gauss)
-real*8     :: delta_g(n_plane,n_var,n_gauss), delta_s(n_plane,n_var,n_gauss)
+real*8     :: delta_g(n_plane,n_var,n_gauss), delta_s(n_plane,n_var,n_gauss), delta_t(n_plane,n_var,n_gauss)
 
 real*8     :: ELM(n_vertex_max*n_var*n_degrees*n_tor,n_vertex_max*n_var*n_degrees*n_tor)
 real*8     :: RHS(n_vertex_max*n_var*n_degrees*n_tor)
@@ -72,6 +72,8 @@ logical    :: so_capped
 logical    :: sj_cf                                              ! cancel the implicit viscous and magnetisation wall currents of the u row on this edge (sheath_j_cancel_flux)
 real*8     :: cf_fo, cf_fn, cf_nu, cf_dnu, cf_w0, cf_wx, cf_wy, cf_dwdn, cf_G, cf_vis, cf_mag, cf_p0, cf_p0x, cf_p0y
 real*8     :: cf_dsx, cf_dsy, cf_dtx, cf_dty, cf_dp, cf_dpx, cf_dpy, cf_tx, cf_ty, cf_gTx, cf_gTy
+real*8     :: cf_ux, cf_uy, cf_vE2, cf_Mr, cf_kin, cf_dMr     ! kinetic-energy flux (v_E^2/2) d_s(R^2 rho) and its columns
+real*8     :: wb_cur(nwb), wb_dtpsi, wb_dux, wb_duy            ! [wall B] signed balance
 real*8     :: wj_an, wj_csat, wj_cap, wj_cur(nwj), wj_p0s, wj_w0, wj_w0s, wj_w0t, wj_w0x, wj_w0y, wj_u0x, wj_u0y   ! [wall J] diagnostic
 logical    :: xpoint2
 integer    :: n_tor_local 
@@ -127,7 +129,7 @@ x_g  = 0.d0; x_s  = 0.d0; x_t  = 0.d0; x_ss  = 0.d0;
 y_g  = 0.d0; y_s  = 0.d0; y_t  = 0.d0; y_ss  = 0.d0; 
 eq_g = 0.d0; eq_s = 0.d0; eq_t = 0.d0; eq_ss = 0.d0; eq_p = 0.d0;
 
-delta_g = 0.d0; delta_s = 0.d0;
+delta_g = 0.d0; delta_s = 0.d0; delta_t = 0.d0
 
 direction_perp(1) = 6 / direction(2)     ! =3 if direction(2)=2, =2 if direction(2)=3
 direction_perp(2) = 4
@@ -191,9 +193,12 @@ so_al = sheath_j_ramp(t_now)     ! ramp factor of the current dependence, 0 (flo
 ! --- total-derivative part of the pressure-bracket flux R^2*dp/ds, which a target does not collect (Rozhansky
 ! --- 2001; SOLPS closes the target balance without it). Both are added back with the opposite sign on every
 ! --- edge with a sheath node at either end (a released value DOF's support spans both incident edges; on pinned
-! --- DOFs the Dirichlet weight makes the term invisible). What remains in the balance is the polarisation flux,
-! --- the grad-B part of the pressure flux, 2*R*p*n_Z, and the sheath current. Weakly this is the zero viscous
-! --- current condition dw/dn = 0 of the drift-fluid codes, with w itself still Dirichlet.
+! --- DOFs the Dirichlet weight makes the term invisible). The third cancelled flux is the kinetic-energy part of
+! --- the convective polarisation current, (v_E^2/2)*d_s(R^2 rho), which led the junction collapse of the run with
+! --- the first two cancelled (2026-09-26, step 372). What remains in the balance is the polarisation flux (the
+! --- capacitor), the grad-B part of the pressure flux, 2*R*p*n_Z, the small diamagnetic part and the sheath
+! --- current: the closure of the drift-fluid codes, no perpendicular current through the target. Weakly this is
+! --- the zero viscous current condition dw/dn = 0 with w itself still Dirichlet.
 sj_cf = sheath_j_cancel_flux .and. sheath_j_current_row .and. ( bcs(bnd_type1)%sheath_j .or. bcs(bnd_type2)%sheath_j )
 if ( sj_cf ) apply_natural_bc(var_u) = .true.
 
@@ -235,6 +240,7 @@ do i=1,2    ! sum over 2 verices
 
             delta_g(mp,k,ms) = delta_g(mp,k,ms) + nodes(i)%deltas(in,j2,k) * element_size_ij * H1(i,j,ms)   * HZ(in,mp)
             delta_s(mp,k,ms) = delta_s(mp,k,ms) + nodes(i)%deltas(in,j2,k) * element_size_ij * H1_s(i,j,ms) * HZ(in,mp)
+            delta_t(mp,k,ms) = delta_t(mp,k,ms) + nodes(i)%deltas(in,j3,k) * element_size_ij * H1(i,j,ms)   * HZ(in,mp) * element_size_perp
 
           enddo
         enddo
@@ -247,6 +253,7 @@ enddo
 ! changes deltas for variable time steps
 delta_g = delta_g * tstep / tstep_prev
 delta_s = delta_s * tstep / tstep_prev
+delta_t = delta_t * tstep / tstep_prev
 
 n_tor_local = i_tor_max - i_tor_min +1
 !--------------------------------------------------- sum over the Gaussian integration points
@@ -519,6 +526,48 @@ do ms=1, n_gauss
       call sheath_diag_add(bnd_type1, ws*dl, eq_g(mp,var_zj,ms), sj_jsat, so_capped, &
                            eq_g(mp,var_u,ms), mw_Bn, BigR, y_g(ms), so_capped)
 
+    ! --- Cancelled wall fluxes at this Gauss point (per unit edge parameter, added to the u row as +v*(...)*tstep):
+    ! ---   viscous:       + visco_T*R*( fo*R^2*dw/dn + fn*2*R*w*n_R )*dl,  the boundary flux of the assembled
+    ! ---                  -visco_T*R*grad v.grad(R^2 w) (fo = 1, fn = 1; visco_old_setup: fo = 1/R^2, fn = 0);
+    ! ---   magnetisation: - d/ds(R^2 p)*dl = -( -n_Z*(2Rp + R^2 p_R) + n_R*R^2 p_Z )*dl,  the total-derivative
+    ! ---                  part of the flux R^2*dp/ds of the assembled R^2*[v,p]; p = rho*(Ti+Te).
+    ! --- n is the outward normal, s runs along the wall with n rotated by +90 degrees. cf_ds*/cf_dt*: (R,Z)
+    ! --- derivatives per unit s- and t-derivative of a basis function, for the columns.
+    ! ---   kinetic:       + (v_E^2/2)*d/ds(R^2 rho)*dl,  the boundary flux of the assembled -(v_E^2/2)*[v, R^2 rho],
+    ! ---                  v_E^2 = R^2*|grad u|^2 (columns on u through v_E^2 and on rho).
+    cf_vis = 0.d0 ; cf_mag = 0.d0 ; cf_kin = 0.d0 ; cf_G = 0.d0 ; cf_nu = 0.d0 ; cf_dnu = 0.d0 ; cf_fo = 0.d0 ; cf_fn = 0.d0
+    cf_ux = 0.d0 ; cf_uy = 0.d0 ; cf_vE2 = 0.d0 ; cf_Mr = 0.d0
+    cf_dsx =   y_t(ms) / xjac ; cf_dsy = - x_t(ms) / xjac        ! (R,Z) derivatives per unit s- and t-derivative
+    cf_dtx = - y_s(ms) / xjac ; cf_dty =   x_s(ms) / xjac
+    if ( sj_cf ) then
+      cf_fo = 1.d0 ; cf_fn = 1.d0
+      if ( visco_old_setup ) then
+        cf_fo = 1.d0 / BigR**2 ; cf_fn = 0.d0
+      endif
+      if (with_TiTe) then
+        call viscosity(visco, Te0, Te0_corr, Te_0, cf_nu, cf_dnu)
+        cf_dnu = cf_dnu * dcorr_neg_temp_dT(Te0)
+      else
+        call viscosity(visco, T0, T0_corr, T_0, cf_nu, cf_dnu)
+        cf_dnu = cf_dnu * dcorr_neg_temp_dT(T0)
+      endif
+      cf_w0   = eq_g(mp,var_w,ms)
+      cf_wx   = cf_dsx * eq_s(mp,var_w,ms) + cf_dtx * eq_t(mp,var_w,ms)
+      cf_wy   = cf_dsy * eq_s(mp,var_w,ms) + cf_dty * eq_t(mp,var_w,ms)
+      cf_dwdn = cf_wx * normal(1) + cf_wy * normal(2)
+      cf_G    = BigR * ( cf_fo * BigR**2 * cf_dwdn + cf_fn * 2.d0 * BigR * cf_w0 * normal(1) ) * dl
+      cf_vis  = cf_nu * cf_G
+      cf_p0   = r0 * T0
+      cf_p0x  = r0_x * T0 + r0 * ( Ti0_x + Te0_x )
+      cf_p0y  = r0_y * T0 + r0 * ( Ti0_y + Te0_y )
+      cf_mag  = - ( - normal(2) * ( 2.d0 * BigR * cf_p0 + BigR**2 * cf_p0x ) + normal(1) * BigR**2 * cf_p0y ) * dl
+      cf_ux   = cf_dsx * eq_s(mp,var_u,ms) + cf_dtx * eq_t(mp,var_u,ms)
+      cf_uy   = cf_dsy * eq_s(mp,var_u,ms) + cf_dty * eq_t(mp,var_u,ms)
+      cf_vE2  = BigR**2 * ( cf_ux**2 + cf_uy**2 )
+      cf_Mr   = - normal(2) * ( 2.d0 * BigR * r0 + BigR**2 * r0_x ) + normal(1) * BigR**2 * r0_y      ! d/ds(R^2 rho)
+      cf_kin  = 0.5d0 * cf_vE2 * cf_Mr * dl
+    endif
+
     ! --- [wall J] diagnostic (print only): the implicit boundary currents of the released vorticity row at this
     ! --- wall point against the sheath's capacity, all per unit edge parameter as they enter the u row with the
     ! --- same test function (s along the wall, n outward): capacity j_sat*|psi_s| (the wall flux of v*[psi,zj]);
@@ -551,41 +600,37 @@ do ms=1, n_gauss
       wj_cur(5) = 2.d0 * abs(tauIC) * BigR**3 * abs( r0_y*Ti0 + r0*Ti0_y ) * abs( wj_u0x*normal(1) + wj_u0y*normal(2) ) * dl
       call wallj_diag_add(bnd_type1, ws, BigR, y_g(ms), wj_cap, wj_cur)
       if ( bnd_type2 .ne. bnd_type1 ) call wallj_diag_add(bnd_type2, ws, BigR, y_g(ms), wj_cap, wj_cur)
-    endif
 
-    ! --- Cancelled wall fluxes at this Gauss point (per unit edge parameter, added to the u row as +v*(...)*tstep):
-    ! ---   viscous:       + visco_T*R*( fo*R^2*dw/dn + fn*2*R*w*n_R )*dl,  the boundary flux of the assembled
-    ! ---                  -visco_T*R*grad v.grad(R^2 w) (fo = 1, fn = 1; visco_old_setup: fo = 1/R^2, fn = 0);
-    ! ---   magnetisation: - d/ds(R^2 p)*dl = -( -n_Z*(2Rp + R^2 p_R) + n_R*R^2 p_Z )*dl,  the total-derivative
-    ! ---                  part of the flux R^2*dp/ds of the assembled R^2*[v,p]; p = rho*(Ti+Te).
-    ! --- n is the outward normal, s runs along the wall with n rotated by +90 degrees. cf_ds*/cf_dt*: (R,Z)
-    ! --- derivatives per unit s- and t-derivative of a basis function, for the columns.
-    cf_vis = 0.d0 ; cf_mag = 0.d0 ; cf_G = 0.d0 ; cf_nu = 0.d0 ; cf_dnu = 0.d0 ; cf_fo = 0.d0 ; cf_fn = 0.d0
-    cf_dsx = 0.d0 ; cf_dsy = 0.d0 ; cf_dtx = 0.d0 ; cf_dty = 0.d0
-    if ( sj_cf ) then
-      cf_fo = 1.d0 ; cf_fn = 1.d0
+      ! --- [wall B] (print only): the SIGNED wall contents of the u row per unit edge parameter, in the sign they
+      ! --- have in the row's right-hand side F (rhs = tstep*F), s = n rotated +90 deg, d_s psi = R*(B_pol.n):
+      ! ---   1 Ish   - zj*d_s(psi)*dl                    wall part of  v*[psi,zj]  (the sheath current, zj = characteristic)
+      ! ---   2 gradB + 2*R*p*n_Z*dl                      grad-B remainder of the pressure flux after the cancellation
+      ! ---   3 pol   - rho*R^3*d_n(delta u)/tstep*dl     polarisation flux, LAGGED (last increment rescaled to this step)
+      ! ---   4 dia   - 2*tauIC*R^3*Pi_Z*d_n(u)*dl
+      ! ---   5 mag   + R^2*d_s(p)*dl                     cancelled (up to gradB) when sheath_j_cancel_flux
+      ! ---   6 vis   - visco*R*d_n(R^2 w)*dl             cancelled
+      ! ---   7 kin   - (v_E^2/2)*d_s(R^2 rho)*dl         cancelled
+      ! ---   8 Isat  |j_sat*d_s(psi)|*dl                 normalisation
+      ! --- Everything the u row of a released node sees at the wall except the interior parallel current and the
+      ! --- particle-source term, which the boundary cannot evaluate: rest = -(1+2+3+4) is their sum.
+      wb_dtpsi  = - normal(2) * ps0_x + normal(1) * ps0_y
+      wb_dux    = cf_dsx * delta_s(mp,var_u,ms) + cf_dtx * delta_t(mp,var_u,ms)
+      wb_duy    = cf_dsy * delta_s(mp,var_u,ms) + cf_dty * delta_t(mp,var_u,ms)
+      wb_cur(1) = - eq_g(mp,var_zj,ms) * wb_dtpsi * dl
+      wb_cur(2) = + 2.d0 * BigR * r0 * T0 * normal(2) * dl
+      wb_cur(3) = - r0 * BigR**3 * ( wb_dux*normal(1) + wb_duy*normal(2) ) / tstep * dl
+      wb_cur(4) = - 2.d0 * tauIC * BigR**3 * ( r0_y*Ti0 + r0*Ti0_y ) * ( wj_u0x*normal(1) + wj_u0y*normal(2) ) * dl
+      wb_cur(5) = + BigR**2 * ( - normal(2) * ( r0_x*T0 + r0*(Ti0_x+Te0_x) ) + normal(1) * ( r0_y*T0 + r0*(Ti0_y+Te0_y) ) ) * dl
       if ( visco_old_setup ) then
-        cf_fo = 1.d0 / BigR**2 ; cf_fn = 0.d0
-      endif
-      if (with_TiTe) then
-        call viscosity(visco, Te0, Te0_corr, Te_0, cf_nu, cf_dnu)
-        cf_dnu = cf_dnu * dcorr_neg_temp_dT(Te0)
+        wb_cur(6) = - visco * BigR * ( wj_w0x*normal(1) + wj_w0y*normal(2) ) * dl
       else
-        call viscosity(visco, T0, T0_corr, T_0, cf_nu, cf_dnu)
-        cf_dnu = cf_dnu * dcorr_neg_temp_dT(T0)
+        wb_cur(6) = - visco * BigR * ( BigR**2 * ( wj_w0x*normal(1) + wj_w0y*normal(2) ) + 2.d0*BigR*wj_w0*normal(1) ) * dl
       endif
-      cf_dsx =   y_t(ms) / xjac ; cf_dsy = - x_t(ms) / xjac
-      cf_dtx = - y_s(ms) / xjac ; cf_dty =   x_s(ms) / xjac
-      cf_w0   = eq_g(mp,var_w,ms)
-      cf_wx   = cf_dsx * eq_s(mp,var_w,ms) + cf_dtx * eq_t(mp,var_w,ms)
-      cf_wy   = cf_dsy * eq_s(mp,var_w,ms) + cf_dty * eq_t(mp,var_w,ms)
-      cf_dwdn = cf_wx * normal(1) + cf_wy * normal(2)
-      cf_G    = BigR * ( cf_fo * BigR**2 * cf_dwdn + cf_fn * 2.d0 * BigR * cf_w0 * normal(1) ) * dl
-      cf_vis  = cf_nu * cf_G
-      cf_p0   = r0 * T0
-      cf_p0x  = r0_x * T0 + r0 * ( Ti0_x + Te0_x )
-      cf_p0y  = r0_y * T0 + r0 * ( Ti0_y + Te0_y )
-      cf_mag  = - ( - normal(2) * ( 2.d0 * BigR * cf_p0 + BigR**2 * cf_p0x ) + normal(1) * BigR**2 * cf_p0y ) * dl
+      wb_cur(7) = - 0.5d0 * BigR**2 * ( wj_u0x**2 + wj_u0y**2 ) &
+                  * ( - normal(2) * ( 2.d0*BigR*r0 + BigR**2*r0_x ) + normal(1) * BigR**2 * r0_y ) * dl
+      wb_cur(8) = abs( wj_csat * r0_corr * cs0 / Btot * wb_dtpsi ) * dl
+      call wallb_diag_add(bnd_type1, ws, wb_cur)
+      if ( bnd_type2 .ne. bnd_type1 ) call wallb_diag_add(bnd_type2, ws, wb_cur)
     endif
 
     if ( floating_u_diag .and. mw_on ) then
@@ -637,7 +682,7 @@ do ms=1, n_gauss
             rhs_ij(var_u)     = - v * so_w * so_res
 
             ! --- Cancelled wall fluxes of the vorticity row (sheath_j_cancel_flux)
-            rhs_ij(var_u)     = rhs_ij(var_u) + v * ( cf_vis + cf_mag ) * tstep
+            rhs_ij(var_u)     = rhs_ij(var_u) + v * ( cf_vis + cf_mag + cf_kin ) * tstep
 
             ! --- Sheath heat flux (c_angle for mininum heat fluxes at grazing angles)
             if (with_TiTe) then
@@ -762,6 +807,11 @@ do ms=1, n_gauss
                     cf_dp  = psi * T0 ; cf_dpx = cf_dsx*psi_s * T0 + psi * cf_gTx ; cf_dpy = cf_dsy*psi_s * T0 + psi * cf_gTy
                     amat(var_u,var_rho) = amat(var_u,var_rho) + v * ( - normal(2) * ( 2.d0*BigR*cf_dp + BigR**2*cf_dpx ) &
                                                                       + normal(1) * BigR**2 * cf_dpy ) * dl * theta * tstep
+                    ! kinetic-energy flux: rho column through d_s(R^2 rho), u column through v_E^2 = R^2 |grad u|^2
+                    cf_dMr = - normal(2) * ( 2.d0*BigR*psi + BigR**2*cf_dsx*psi_s ) + normal(1) * BigR**2 * cf_dsy*psi_s
+                    amat(var_u,var_rho) = amat(var_u,var_rho) - v * 0.5d0 * cf_vE2 * cf_dMr * dl * theta * tstep
+                    amat(var_u,var_u)   = amat(var_u,var_u)   - v * BigR**2 * ( cf_ux * cf_dsx*psi_s + cf_uy * cf_dsy*psi_s ) &
+                                                                  * cf_Mr * dl * theta * tstep
                     ! temperatures: dp = r0*psi, dp_R = r0_R*psi + r0*psi_R; the viscosity's own temperature dependence
                     cf_dp  = r0 * psi ; cf_dpx = r0_x * psi + r0 * cf_dsx*psi_s ; cf_dpy = r0_y * psi + r0 * cf_dsy*psi_s
                     if (with_TiTe) then
@@ -920,7 +970,11 @@ do ms=1, n_gauss
                     - v * cf_nu * BigR * cf_fo * BigR**2 * ( cf_tx*normal(1) + cf_ty*normal(2) ) * dl * theta * tstep * ws
                   ELM(index_ij+(var_u-1)*(n_tor_local),index_kl+(var_rho-1)*(n_tor_local)) = &
                   ELM(index_ij+(var_u-1)*(n_tor_local),index_kl+(var_rho-1)*(n_tor_local))   &
-                    + v * BigR**2 * ( - normal(2) * cf_tx + normal(1) * cf_ty ) * T0 * dl * theta * tstep * ws
+                    + v * BigR**2 * ( - normal(2) * cf_tx + normal(1) * cf_ty ) * T0 * dl * theta * tstep * ws   &
+                    - v * 0.5d0 * cf_vE2 * BigR**2 * ( - normal(2) * cf_tx + normal(1) * cf_ty ) * dl * theta * tstep * ws
+                  ELM(index_ij+(var_u-1)*(n_tor_local),index_kl+(var_u-1)*(n_tor_local)) = &
+                  ELM(index_ij+(var_u-1)*(n_tor_local),index_kl+(var_u-1)*(n_tor_local))   &
+                    - v * BigR**2 * ( cf_ux * cf_tx + cf_uy * cf_ty ) * cf_Mr * dl * theta * tstep * ws
                   if (with_TiTe) then
                     ELM(index_ij+(var_u-1)*(n_tor_local),index_kl+(var_Ti-1)*(n_tor_local)) = &
                     ELM(index_ij+(var_u-1)*(n_tor_local),index_kl+(var_Ti-1)*(n_tor_local))   &

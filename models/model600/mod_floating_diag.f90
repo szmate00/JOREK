@@ -15,7 +15,7 @@ module mod_floating_diag
   implicit none
   private
 
-  public :: floating_diag_reset, floating_diag_add, floating_diag_report, sheath_diag_add, wallj_diag_add
+  public :: floating_diag_reset, floating_diag_add, floating_diag_report, sheath_diag_add, wallj_diag_add, wallb_diag_add
 
   integer, parameter :: nt = 30            !< max_bnd_types
   real*8, save :: s_len(nt), s_in(nt), s_mom(nt), s_den(nt)
@@ -32,6 +32,8 @@ module mod_floating_diag
   ! --- type (per unit edge parameter) and the largest local ratio of each with its location
   integer, parameter, public :: nwj = 5                 !< mag, exb, vis, kin, dia (see wallj_diag_add)
   real*8, save :: wj_cap(nt), wj_int(nwj,nt), wj_rmax(nwj,nt), wj_loc(2,nwj,nt)
+  integer, parameter, public :: nwb = 8                 !< [wall B]: Ish, gradB, pol, dia, mag, vis, kin, Isat (signed, see wallb_diag_add)
+  real*8, save :: wb_int(nwb,nt)
 
 contains
 
@@ -46,7 +48,7 @@ subroutine floating_diag_reset()
   s_slen = 0.d0 ; s_esat = 0.d0 ; j_min = huge(1.d0) ; j_max = -huge(1.d0)
   u_min = huge(1.d0) ; u_max = -huge(1.d0) ; s_inet = 0.d0 ; s_isat = 0.d0
   j_abs = 0.d0 ; j_abs_R = 0.d0 ; j_abs_Z = 0.d0 ; s_over = 0.d0
-  wj_cap = 0.d0 ; wj_int = 0.d0 ; wj_rmax = 0.d0 ; wj_loc = 0.d0
+  wj_cap = 0.d0 ; wj_int = 0.d0 ; wj_rmax = 0.d0 ; wj_loc = 0.d0 ; wb_int = 0.d0
 end subroutine floating_diag_reset
 
 
@@ -69,6 +71,20 @@ subroutine wallj_diag_add(bnd_type, w, R, Z, cap, cur)
   enddo
   !$omp end critical (wallj_diag)
 end subroutine wallj_diag_add
+
+
+!> One wall Gauss point, every type: the SIGNED wall contents of the u row per unit edge parameter (w = Gauss weight),
+!! cur(1:nwb) = sheath current, grad-B pressure flux, lagged polarisation flux, diamagnetic flux, magnetisation flux,
+!! viscous flux, kinetic-energy flux, saturation current (normalisation).
+subroutine wallb_diag_add(bnd_type, w, cur)
+  implicit none
+  integer, intent(in) :: bnd_type
+  real*8,  intent(in) :: w, cur(nwb)
+  if ( bnd_type .lt. 1 .or. bnd_type .gt. nt ) return
+  !$omp critical (wallb_diag)
+  wb_int(:,bnd_type) = wb_int(:,bnd_type) + cur(:) * w
+  !$omp end critical (wallb_diag)
+end subroutine wallb_diag_add
 
 
 !> One wall Gauss point carrying the sheath current row.
@@ -133,7 +149,7 @@ subroutine floating_diag_report(my_id)
   real*8  :: len(nt), inflow(nt), mom(nt), den(nt), ven(nt), rmin(nt), tmin(nt), mach(nt), timin(nt)
   real*8  :: slen(nt), esat(nt), jmn(nt), jmx(nt), umn(nt), umx(nt), inet(nt), isat(nt), u_volt
   real*8  :: jab(nt), jloc(2,nt), jloc_g(2,nt), over(nt)
-  real*8  :: gcap(nt), gint(nwj,nt), grmx(nwj,nt), wl(2,nwj,nt), wl_g(2,nwj,nt)
+  real*8  :: gcap(nt), gint(nwj,nt), grmx(nwj,nt), wl(2,nwj,nt), wl_g(2,nwj,nt), gb(nwb,nt), bn
   integer :: iw
   real*8  :: loc(3,2,nt), loc_g(3,2,nt), v_norm, T_eV
   integer :: it, ierr
@@ -160,6 +176,7 @@ subroutine floating_diag_report(my_id)
   call MPI_ALLREDUCE(wj_cap,  gcap,  nt,     MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(wj_int,  gint,  nwj*nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
   call MPI_ALLREDUCE(wj_rmax, grmx,  nwj*nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
+  call MPI_ALLREDUCE(wb_int,  gb,    nwb*nt, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
   wl = -huge(1.d0)
   do it = 1, nt
     do iw = 1, nwj
@@ -214,6 +231,16 @@ subroutine floating_diag_report(my_id)
       if ( gcap(it) .le. 0.d0 ) cycle
       write(*,'(A,I4,5ES10.2,A,5(ES10.2,2F8.4,1X))') ' [wall J] ', it, ( gint(iw,it)/gcap(it), iw = 1, nwj ), ' |', &
         ( grmx(iw,it), wl_g(:,iw,it), iw = 1, nwj )
+    enddo
+    ! --- signed wall balance of the u row, integrated per type, in units of the type's saturation current, in the
+    ! --- sign of the row's right-hand side: rest = -(Ish + gradB + pol + dia) is what the boundary cannot see
+    ! --- (interior parallel current, particle-source term); mag/vis/kin are the cancelled fluxes (sheath_j_cancel_flux)
+    write(*,'(A)') ' [wall B]   type     Ish/Isat   gradB/Isat  pol/Isat(lag) dia/Isat |    rest/Isat | cancelled:   mag/Isat    vis/Isat    kin/Isat'
+    do it = 1, nt
+      if ( gcap(it) .le. 0.d0 ) cycle
+      bn = max( gb(8,it), tiny(1.d0) )
+      write(*,'(A,I4,4ES12.3,A,ES12.3,A,3ES12.3)') ' [wall B] ', it, gb(1,it)/bn, gb(2,it)/bn, gb(3,it)/bn, gb(4,it)/bn, ' |', &
+        - ( gb(1,it) + gb(2,it) + gb(3,it) + gb(4,it) ) / bn, ' |            ', gb(5,it)/bn, gb(6,it)/bn, gb(7,it)/bn
     enddo
   endif
 
