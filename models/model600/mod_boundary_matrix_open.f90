@@ -68,7 +68,6 @@ real*8     :: sj_an, sj_csat, sj_CT, sj_CV, sj_jsat, sj_psin, sj_w, sj_esp, sj_T
 real*8     :: sc_x, sc_ex, sc_f, sc_dfdu, sc_dfdTe, sc_res, sc_w, sc_Tc, sc_dTc, sc_drc   ! current-slot form (sheath_j_current_row)
 real*8     :: so_X, so_Xc, so_g, so_res, so_cu, so_czj, so_crho, so_cTe, so_ccs, so_w, so_al   ! sheath potential row
 logical    :: so_capped
-real*8     :: sc_dfx                                             ! df/dx used in the Jacobian: e^x exact, or floored at 1 (sheath_j_patankar)
 real*8     :: wj_an, wj_csat, wj_cap, wj_mag, wj_exb, wj_vis, wj_p0s, wj_w0, wj_w0s, wj_w0t, wj_w0x, wj_w0y   ! [wall J] diagnostic
 logical    :: xpoint2
 integer    :: n_tor_local 
@@ -460,17 +459,10 @@ do ms=1, n_gauss
       sc_x     = sheath_Lambda - sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*sc_Tc)
       sc_ex    = exp( min(sc_x, sheath_Lambda) )
       sc_f     = 1.d0 - sc_ex - sheath_j_ion_slope * min(sc_x, 0.d0)
-      ! --- Jacobian slope. Exact: d(1-e^x)/dx = -e^x, zero beyond the cap and exponentially small on the ion
-      ! --- branch, so the row has no grip on u exactly where the plasma delivers j >= j_sat and one linear solve
-      ! --- throws the potential (measured: kV in 2-3 steps at a cooling strike point). SOLPS BCPOT=11 linearises
-      ! --- the sheath current with the slope max(j_i, j_e)*e/Te, never below the floating conductance
-      ! --- (b2stbc_phys.F, t0): here max(e^min(x,Lambda), 1), i.e. 1 on the ion branch and e^Lambda at the cap.
-      ! --- Residual unchanged, steady state unchanged; a lagged-Jacobian choice like the lagged Btot columns.
-      sc_dfx = 0.d0
-      if ( sc_x .lt. sheath_Lambda ) sc_dfx = sc_ex
-      if ( sheath_j_patankar ) sc_dfx = max( sc_ex, 1.d0 )
-      sc_dfdu  =   sc_dfx * sj_an / (2.d0*sc_Tc)
-      sc_dfdTe = - sc_dfx * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*sc_Tc**2) * sc_dTc
+      if ( sc_x .lt. sheath_Lambda ) then
+        sc_dfdu  =   sc_ex * sj_an / (2.d0*sc_Tc)
+        sc_dfdTe = - sc_ex * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*sc_Tc**2) * sc_dTc
+      endif
       if ( sc_x .lt. 0.d0 ) then                                      ! d(-s*x)/du and /dTe
         sc_dfdu  = sc_dfdu  + sheath_j_ion_slope * sj_an / (2.d0*sc_Tc)
         sc_dfdTe = sc_dfdTe - sheath_j_ion_slope * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*sc_Tc**2) * sc_dTc

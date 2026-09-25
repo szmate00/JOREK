@@ -886,7 +886,6 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,LOGI_FMT) 'sheath_j_current_row  ', sheath_j_current_row
     write(*,REAL_FMT) 'sheath_j_ion_slope    ', sheath_j_ion_slope
     write(*,REAL_FMT) 'sheath_j_e_slope      ', sheath_j_e_slope
-    write(*,LOGI_FMT) 'sheath_j_patankar     ', sheath_j_patankar
   end if
   write(*,LOGI_FMT) 'thermoelectric_ohm    ', thermoelectric_ohm
   if ( thermoelectric_ohm ) then

@@ -495,8 +495,10 @@ This is exactly `BCPOT = 11`'s t0. It changes no converged state. It bounds each
 Te x (excess/j_sat), and it removes the overshoot mechanism behind the period-2 cycle. It is a lagged-Jacobian term,
 the same class as the lagged B and sign(B.n) columns already in the row, and its coefficient is a physical
 conductance with no free number. Whether it counts as a "stabiliser" under the campaign's rules is the user's call.
-The review argues that it does not. *Status:* implemented as `sheath_j_patankar` (default on) together with the
-`[wall J]` print diagnostic of F4 (commit 276b91f40); first run pending at the time of writing.
+The review argues that it does not. *Status:* implemented as `sheath_j_patankar` together with the `[wall J]`
+print diagnostic of F4 (commit 276b91f40), run once and removed again (2026-09-25): the floored slope left the row
+unsatisfied over 17-21% of the inner target (j/j_sat 1.6-2.4 where the residual allows at most 1) and the run died
+at step 608 against 672 without it. The diagnostic stays.
 
 **F3. A consistent initial state.** Start with u at the floating value on open field lines (smoothly masked across
 the separatrix) and w = Delta u consistent with it, so that every sheath node starts at x ~ 0, the best-conditioned
@@ -591,8 +593,8 @@ physics can deliver.
 **What to do, in order.**
 1. **Zero current on the non-sheath wall segments** (SOLEDGE's rule). Implemented (`bcs%zj_zero`) and run: it was
    not the killer, the crash repeated unchanged (step 672). Kept for consistency.
-2. **SOLPS's sheath linearisation** (Patankar slope, residual exact). It bounds each step to a few Te and removes the
-   overshoot cycles. Implemented (`sheath_j_patankar`), first run pending.
+2. **SOLPS's sheath linearisation** (Patankar slope, residual exact). Tried and removed: with the slope floored the
+   row is effectively unenforced on the ion-saturated part of the target, and the run ended earlier (608 vs 672).
 3. **Start consistently**: floating wall potential and no open-field-line current at t = 0, instead of ramping the
    characteristic.
 4. **Measure, then remove, the implicit vorticity-row wall currents.**

@@ -78,17 +78,7 @@ all harmonics, exactly in one solve), as SOLEDGE does on every non-sheath bounda
 on a sheath type it acts only on the DOFs that are not released (below the angle, or a derivative along a
 non-sheath edge).
 
-## SOLPS linearisation slope and the [wall J] diagnostic (`sheath_j_patankar`, 2026-09-25)
-
-The exact Jacobian of the characteristic, d(1 - e^x)/dx = -e^x, is zero beyond the electron cap and exponentially
-small on the ion branch: exactly where a target node is asked for j >= j_sat the row has no grip on the potential,
-and JOREK's single linear solve per step then places u from the vorticity equation alone (measured: kV in 2-3 steps
-at a cooling inner strike point, runs of 2026-09-24/25). SOLPS-ITER BCPOT=11 linearises the sheath current with the
-slope max(j_i, j_e)*e/Te, never below the floating conductance (`b2stbc_phys.F`, `t0`). `sheath_j_patankar = .t.`
-(default) does the same here: the Jacobian uses max(e^min(x,Lambda), 1), i.e. 1 on the ion branch and e^Lambda at
-the cap; the residual and the steady state are unchanged. It bounds one step's potential move to about
-Te*|j/j_sat - 1| while the interior current re-routes. It is a lagged-Jacobian choice, the same class as the lagged
-Btot columns, with no free number; `.f.` restores the exact derivative.
+## The [wall J] diagnostic (2026-09-25)
 
 `[wall J]` (with `floating_u_diag`): per boundary type, the implicit boundary currents of the released vorticity row
 against the sheath's capacity, all per unit edge parameter as they enter the u row with the same test function:
@@ -97,6 +87,10 @@ bracket), the ExB advection of vorticity rho*R^2*|w|*|u_s|, and the viscous flux
 visco as an estimate). Integrated ratios per type and the largest local ratio of each with its (R,Z). Anything of
 order 0.3 or more at a strike point is a current the sheath is asked to pass that no sheath can (independent review,
 `doc/review_sheath_j_2026-09-24.md`, item F4).
+
+A SOLPS-style linearisation slope in the Jacobian (`sheath_j_patankar`, floor max(e^x, 1) on df/dx, residual
+unchanged) was tried on 2026-09-25 and removed again: it left the row unsatisfied over 17-21% of the inner target
+(j/j_sat 1.6-2.4 where the residual allows at most 1) and the run died at 608 against 672 without it.
 
 ## Reading the log
 
