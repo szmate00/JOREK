@@ -35,8 +35,9 @@ module phys_module
   real*8  :: mach1_weak_drift_bound=0.d0
   logical :: mach1_weak_drift_cut=.false., mach1_weak_cut=.false., mach1_weak_inflow=.true., sheath_j_float_u=.false.
   real*8  :: sheath_j_ramp_time=-1.d0, t_now=0.d0, tstep_n(7)=0.d0
-  logical :: sheath_j_current_row=.false.
-  real*8  :: visco=1.d-5
+  logical :: sheath_j_current_row=.false., sheath_j_cancel_flux=.false.
+  real*8  :: visco=1.d-5, T_min=1.d-4, T_max_visco=1.d0, Te_0=0.01d0, T_0=0.02d0
+  logical :: visco_old_setup=.false., visco_T_dependent=.false.
   real*8  :: sheath_j_ion_slope=0.d0, sheath_j_e_slope=0.d0
   integer :: nstep_n(7)=0
   real*8  :: vpar_smoothing_coef(3)=[0.02d0,0.016d0,0.005754d0]
@@ -172,4 +173,32 @@ contains
   end function
 end module
 module mod_interp
+end module
+module mod_plasma_functions   ! copy of viscosity() from models/mod_plasma_functions.f90
+  use phys_module
+  implicit none
+contains
+  pure subroutine viscosity(visco, T_raw, T_corr,T0, visco_T, dvisco_dT, d2visco_d2T)
+    real*8, intent(in)             :: visco, T_raw, T_corr, T0
+    real*8, intent(out)            :: visco_T
+    real*8, optional, intent(out)  :: dvisco_dT, d2visco_d2T
+    if ( visco_T_dependent ) then
+      visco_T     =   visco * (T_corr/T0)**(-1.5d0)
+      if (present(dvisco_dT))   dvisco_dT   = - visco * (1.5d0)  * T_corr**(-2.5d0) * T0**(1.5d0)
+      if (present(d2visco_d2T)) d2visco_d2T =   visco * (3.75d0) * T_corr**(-3.5d0) * T0**(1.5d0)
+      if (T_raw .lt. T_min) then
+        visco_T     = visco  * (T_min/T0)**(-1.5d0)
+        if (present(dvisco_dT  )) dvisco_dT   = 0.d0
+        if (present(d2visco_d2T)) d2visco_d2T = 0.d0
+      else if (T_raw .gt. T_max_visco) then
+        visco_T     =   visco * (T_max_visco/T0)**(-1.5d0)
+        if (present(dvisco_dT  )) dvisco_dT   = 0.d0
+        if (present(d2visco_d2T)) d2visco_d2T = 0.d0
+      endif
+    else
+      visco_T     = visco
+      if (present(dvisco_dT))   dvisco_dT   = 0.d0
+      if (present(d2visco_d2T)) d2visco_d2T = 0.d0
+    end if
+  end subroutine viscosity
 end module

@@ -511,7 +511,11 @@ boundary integrals of the magnetisation current (R^2 d_s p), the E x B vorticity
 compared with the sheath capacity j_sat |B_pol.n|. If any of them is above ~0.3 I_sat at a strike point, subtract it
 on the sheath edges with compensating boundary integrals in the u rows, and give w its definition row with the
 surface term instead of a frozen Dirichlet value. This is the analogue of Rozhansky's cancellation of the
-divergence-free diamagnetic current in B2.5.
+divergence-free diamagnetic current in B2.5. *Status (2026-09-25):* the diagnostic found the viscous flux at
+4-20 j_sat and the magnetisation current at 0.6-12 j_sat at the strike points, both rising with the Te front; the
+compensating u-row terms are implemented (`sheath_j_cancel_flux`, default on) with w still Dirichlet, i.e. the
+weak `d_n w = 0` of the drift-fluid codes. Releasing w needs a second condition (a Neumann penalty on its normal
+derivative), otherwise the fourth-order u-w problem is one boundary condition short; that is the next step.
 
 **F5. j_sat from the total ion flux, with a separate electron term.** Use the same Gamma = n max(v_n, v_fl) that the
 rho and T rows and the recycling use, and the electron current e n v_te/sqrt(2 pi) |b.n| exp(-e dPhi/Te) with

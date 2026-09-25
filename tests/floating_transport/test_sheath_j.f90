@@ -9,6 +9,10 @@
 !!     FD with X inside its bounds; at either bound the zj/rho/cs columns vanish and the u column stays.
 !!  5. the ion saturation current flows into the wall for both signs of F0.
 !!  6. the diagnostics leave the equations untouched.
+!!  7. cancelled wall fluxes (sheath_j_cancel_flux, current-row form): value-DOF rows of u integrate to
+!!     -visco*c*int R^3 dR - [R^2 p] for w = c*Z and uniform p (old setup: int R dR); every w/rho/Ti/Te column of
+!!     the u rows (trace and normal-derivative DOFs) matches FD with a temperature-dependent viscosity; no u row
+!!     with the flag off or without a sheath node.
 program test_sheath_j
   use mod_parameters
   use phys_module
@@ -23,7 +27,8 @@ program test_sheath_j
   type(type_element) :: e
   type(type_node)    :: nodes(4), base(4)
   real*8  :: a(nd,nd), r(nd), ap(nd,nd), rp(nd), am(nd,nd), rm(nd)
-  real*8  :: eps, err, worst, scale, a_n, C_T, C_V, c_sat, ufl, bslope, tot
+  real*8  :: eps, err, worst, scale, a_n, C_T, C_V, c_sat, ufl, bslope, tot, cslope, pval, fdv, want
+  integer, parameter :: cf_vars(4) = [var_w, var_rho, var_Ti, var_Te]
   integer :: i, k, var, dof, col, row, isgn
 
   call set_basis()
@@ -210,6 +215,94 @@ program test_sheath_j
     enddo
   enddo
   write(*,'(a,es9.2)') ' PASS: current-slot form: zj row only, every column matches FD, worst rel err ', worst
+  ! --- 7. cancelled wall fluxes (sheath_j_cancel_flux), current-row form still on
+  ! --- (a) values: w = c*Z gives dw/dn = -c on the bottom edge (outward normal -Z); uniform p = rho*(Ti+Te).
+  ! ---     Sum of the value-DOF rows of u (partition of unity, tstep = 1):
+  ! ---       default setup:   -visco*c*int_1^2 R^3 dR - int_1^2 d/dR(R^2 p) dR = -15/4*visco*c - 3*p
+  ! ---       visco_old_setup: -visco*c*int_1^2 R   dR - 3*p                    = -3/2*visco*c - 3*p
+  sheath_j_cancel_flux = .true.
+  cslope = 0.05d0 ; pval = 0.2d0*(0.003d0+0.004d0)
+  do i = 1, 4
+    base(i)%values(1,1,var_w) = cslope*base(i)%x(1,1,2)
+    base(i)%values(1,3,var_w) = cslope/3.d0
+  enddo
+  nodes = base; call assemble(a, r)
+  if ( .not. anyrow(a, r, var_u) ) error stop 'FAIL: cancelled fluxes assemble no u row'
+  tot  = r(n_var*4*0 + var_u) + r(n_var*4*1 + var_u)
+  want = -15.d0/4.d0*visco*cslope - 3.d0*pval
+  if ( abs(tot - want) > 1.d-9*(visco*cslope + pval) ) then
+    write(*,*) 'FAIL: cancelled fluxes, default setup: value rows sum', tot, want
+    error stop 1
+  endif
+  visco_old_setup = .true. ; nodes = base; call assemble(a, r)
+  tot  = r(n_var*4*0 + var_u) + r(n_var*4*1 + var_u)
+  want = -1.5d0*visco*cslope - 3.d0*pval
+  if ( abs(tot - want) > 1.d-9*(visco*cslope + pval) ) then
+    write(*,*) 'FAIL: cancelled fluxes, old setup: value rows sum', tot, want
+    error stop 1
+  endif
+  visco_old_setup = .false.
+  write(*,'(a)') ' PASS: cancelled wall fluxes: value rows integrate to -visco*c*int R^3 - [R^2 p] (old setup: int R)'
+  ! --- (b) FD of every w/rho/Ti/Te column of the u rows at a generic state, viscosity temperature dependent
+  visco_T_dependent = .true. ; visco = 1.d-3
+  do i = 1, 4
+    base(i)%values(1,1,var_w)   = 0.03d0 + 0.02d0*base(i)%x(1,1,1) + 0.05d0*base(i)%x(1,1,2)
+    base(i)%values(1,2,var_w)   = 0.02d0 ; base(i)%values(1,3,var_w) = 0.05d0/3.d0 ; base(i)%values(1,4,var_w) = 0.01d0
+    base(i)%values(1,1,var_rho) = 0.2d0 + 0.05d0*base(i)%x(1,1,1)
+    base(i)%values(1,2,var_rho) = 0.05d0 ; base(i)%values(1,3,var_rho) = 0.01d0
+    base(i)%values(1,1,var_Ti)  = 0.003d0 + 0.0005d0*base(i)%x(1,1,1)
+    base(i)%values(1,2,var_Ti)  = 0.0005d0 ; base(i)%values(1,3,var_Ti) = 0.0002d0
+    base(i)%values(1,1,var_Te)  = 0.004d0 + 0.0007d0*base(i)%x(1,1,1)
+    base(i)%values(1,2,var_Te)  = 0.0007d0 ; base(i)%values(1,3,var_Te) = -0.0003d0
+  enddo
+  nodes = base; call assemble(a, r)
+  worst = 0.d0
+  do i = 1, size(cf_vars)
+    var = cf_vars(i)
+    tot = 0.d0                                ! non-empty columns of this variable
+    do row = 1, 2
+      do dof = 1, 4
+        col = n_var*4*(row-1) + n_var*(dof-1) + var
+        nodes = base; nodes(row)%values(1,dof,var) = nodes(row)%values(1,dof,var) + eps; call assemble(ap, rp)
+        nodes = base; nodes(row)%values(1,dof,var) = nodes(row)%values(1,dof,var) - eps; call assemble(am, rm)
+        scale = 0.d0
+        do isgn = 1, nd
+          if ( isvar(isgn, var_u) ) scale = max( scale, abs(a(isgn,col)), abs((rp(isgn)-rm(isgn))/(2*eps)) )
+        enddo
+        if ( scale == 0.d0 ) cycle            ! e.g. a value DOF of w: no normal derivative on an edge with n = -Z
+        tot = tot + 1.d0
+        do isgn = 1, nd
+          if ( .not. isvar(isgn, var_u) ) cycle
+          fdv = -(rp(isgn)-rm(isgn))/(2*eps)
+          err = abs( a(isgn,col) - fdv ) / scale
+          worst = max(worst, err)
+          if ( err > 1.d-5 ) then
+            write(*,'(a,4i5,3es12.3)') ' FAIL: cancelled fluxes FD var,node,dof,row,err,amat,fd', var, row, dof, isgn, err, a(isgn,col), fdv
+            error stop 1
+          endif
+        enddo
+      enddo
+    enddo
+    if ( tot < 3.d0 ) then
+      write(*,'(a,i5,f5.0)') ' FAIL: cancelled fluxes: too few non-empty columns for var', var, tot
+      error stop 1
+    endif
+  enddo
+  write(*,'(a,es9.2)') ' PASS: cancelled wall fluxes: every w/rho/Ti/Te column of the u rows matches FD, worst rel err ', worst
+  ! --- (c) gating: no u row without a sheath node or with the flag off
+  bcs(1)%sheath_j = .false. ; nodes = base; call assemble(ap, rp)
+  if ( anyrow(ap, rp, var_u) ) error stop 'FAIL: cancelled fluxes assembled without a sheath node'
+  bcs(1)%sheath_j = .true.
+  sheath_j_cancel_flux = .false. ; nodes = base; call assemble(ap, rp)
+  if ( anyrow(ap, rp, var_u) ) error stop 'FAIL: cancelled fluxes assembled with the flag off'
+  write(*,'(a)') ' PASS: cancelled wall fluxes: only on sheath edges and only with sheath_j_cancel_flux'
+  visco_T_dependent = .false. ; visco = 1.d-5
+  do i = 1, 4
+    base(i)%values(1,:,var_w) = 0.d0
+    base(i)%values(1,:,var_rho) = 0.d0 ; base(i)%values(1,1,var_rho) = 0.2d0
+    base(i)%values(1,:,var_Ti)  = 0.d0 ; base(i)%values(1,1,var_Ti)  = 0.003d0
+    base(i)%values(1,:,var_Te)  = 0.d0 ; base(i)%values(1,1,var_Te)  = 0.004d0
+  enddo
   ! --- ion branch with a finite slope: x < 0 (u above floating), FD the u and Te columns
   sheath_j_ion_slope = 0.03d0 ; base(:)%values(1,1,var_u) = 2.d0*ufl
   nodes = base; call assemble(a, r)

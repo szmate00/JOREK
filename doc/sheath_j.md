@@ -57,6 +57,7 @@ mach1_weak            = .t.
 mach1_weak_drift      = .t.  ! the D configuration of floating-u-clean, unchanged at a restart
 mach1_weak_drift_cut  = .t.
 floating_u_diag       = .t.
+sheath_j_cancel_flux  = .t.  ! default: viscous and magnetisation wall fluxes out of the wall balance (see below)
 ```
 
 `dirichlet%u` and `dirichlet%zj` stay `.true.` on the sheath types. `sheath_Lambda` (3) and
@@ -91,6 +92,31 @@ order 0.3 or more at a strike point is a current the sheath is asked to pass tha
 A SOLPS-style linearisation slope in the Jacobian (`sheath_j_patankar`, floor max(e^x, 1) on df/dx, residual
 unchanged) was tried on 2026-09-25 and removed again: it left the row unsatisfied over 17-21% of the inner target
 (j/j_sat 1.6-2.4 where the residual allows at most 1) and the run died at 608 against 672 without it.
+
+## Cancelled wall fluxes (`sheath_j_cancel_flux`, 2026-09-25)
+
+The vorticity equation is assembled integrated by parts. While u was Dirichlet the boundary terms of that
+integration never mattered; at a released sheath node they are in the row, as currents through the wall that no
+sheath sets. `[wall J]` measured two of them at O(1-100) j_sat where the runs died:
+
+- the **viscous vorticity flux** `visco*R*d_n(R^2 w)` (`visco_old_setup`: `visco*R*d_n w`): w is Dirichlet at the
+  wall, frozen at its t = 0 value, while the interior w follows the potential, so `d_n w` at the wall is a grid
+  mismatch, not a flux; 4 j_sat steady at the cold end of the inner target with a matching 5 j_sat electron
+  current, 18 j_sat at the point that ran away (run of 2026-09-25, step 608);
+- the **magnetisation current** `d_s(R^2 p)`, the total-derivative part of the pressure-bracket flux `R^2 d_s p`
+  (`R^2 d_s p = d_s(R^2 p) - 2 R R_s p`): a target does not collect the diamagnetic current (Rozhansky et al.
+  2001; SOLPS closes the target balance without it), only the grad-B part `2 R p n_Z` is real.
+
+`sheath_j_cancel_flux = .t.` (default) adds both back with the opposite sign as surface terms of the u row, with
+exact columns on w (trace and normal-derivative DOFs), rho, Ti and Te (including the viscosity's temperature
+dependence), on every edge with a sheath node at either end, no angle gate, current-row form only. What is left in
+the wall balance is the polarisation flux, the grad-B pressure flux and the sheath current. Weakly this is the
+`d_n w = 0` (zero viscous current) condition of the drift-fluid codes with w itself still Dirichlet; the cleaner
+end state, w released with its definition row plus a Neumann penalty on its normal derivative, is the next step
+if this one moves the crash. Terms not cancelled (small in the runs so far): the ExB advection of vorticity
+`rho R^2 w d_s u` (measured ~0) and the `v_E^2/2 [v,rho]` and diamagnetic `tauIC` boundary parts (unmeasured).
+Harness: value-DOF rows integrate to the analytic `-visco c int R^3 dR - [R^2 p]` for w = c Z (old setup:
+`int R dR`), every column matches FD to 4e-9, no row without a sheath node or with the flag off.
 
 ## Reading the log
 
