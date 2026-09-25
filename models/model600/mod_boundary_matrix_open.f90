@@ -17,7 +17,7 @@ use phys_module
 use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
-use mod_floating_diag, only: floating_diag_add, sheath_diag_add
+use mod_floating_diag, only: floating_diag_add, sheath_diag_add, wallj_diag_add
 use mod_floating_u,    only: sheath_j_norm, floating_u_norm, sheath_j_ramp
 
 implicit none
@@ -68,6 +68,8 @@ real*8     :: sj_an, sj_csat, sj_CT, sj_CV, sj_jsat, sj_psin, sj_w, sj_esp, sj_T
 real*8     :: sc_x, sc_ex, sc_f, sc_dfdu, sc_dfdTe, sc_res, sc_w, sc_Tc, sc_dTc, sc_drc   ! current-slot form (sheath_j_current_row)
 real*8     :: so_X, so_Xc, so_g, so_res, so_cu, so_czj, so_crho, so_cTe, so_ccs, so_w, so_al   ! sheath potential row
 logical    :: so_capped
+real*8     :: sc_dfx                                             ! df/dx used in the Jacobian: e^x exact, or floored at 1 (sheath_j_patankar)
+real*8     :: wj_an, wj_csat, wj_cap, wj_mag, wj_exb, wj_vis, wj_p0s, wj_w0, wj_w0s, wj_w0t, wj_w0x, wj_w0y   ! [wall J] diagnostic
 logical    :: xpoint2
 integer    :: n_tor_local 
 logical    :: apply_natural_bc(0:n_var)
@@ -458,10 +460,17 @@ do ms=1, n_gauss
       sc_x     = sheath_Lambda - sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*sc_Tc)
       sc_ex    = exp( min(sc_x, sheath_Lambda) )
       sc_f     = 1.d0 - sc_ex - sheath_j_ion_slope * min(sc_x, 0.d0)
-      if ( sc_x .lt. sheath_Lambda ) then
-        sc_dfdu  =   sc_ex * sj_an / (2.d0*sc_Tc)
-        sc_dfdTe = - sc_ex * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*sc_Tc**2) * sc_dTc
-      endif
+      ! --- Jacobian slope. Exact: d(1-e^x)/dx = -e^x, zero beyond the cap and exponentially small on the ion
+      ! --- branch, so the row has no grip on u exactly where the plasma delivers j >= j_sat and one linear solve
+      ! --- throws the potential (measured: kV in 2-3 steps at a cooling strike point). SOLPS BCPOT=11 linearises
+      ! --- the sheath current with the slope max(j_i, j_e)*e/Te, never below the floating conductance
+      ! --- (b2stbc_phys.F, t0): here max(e^min(x,Lambda), 1), i.e. 1 on the ion branch and e^Lambda at the cap.
+      ! --- Residual unchanged, steady state unchanged; a lagged-Jacobian choice like the lagged Btot columns.
+      sc_dfx = 0.d0
+      if ( sc_x .lt. sheath_Lambda ) sc_dfx = sc_ex
+      if ( sheath_j_patankar ) sc_dfx = max( sc_ex, 1.d0 )
+      sc_dfdu  =   sc_dfx * sj_an / (2.d0*sc_Tc)
+      sc_dfdTe = - sc_dfx * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*sc_Tc**2) * sc_dTc
       if ( sc_x .lt. 0.d0 ) then                                      ! d(-s*x)/du and /dTe
         sc_dfdu  = sc_dfdu  + sheath_j_ion_slope * sj_an / (2.d0*sc_Tc)
         sc_dfdTe = sc_dfdTe - sheath_j_ion_slope * sj_an * ( eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall ) / (2.d0*sc_Tc**2) * sc_dTc
@@ -500,6 +509,30 @@ do ms=1, n_gauss
     if ( floating_u_diag .and. sj_here ) &
       call sheath_diag_add(bnd_type1, ws*dl, eq_g(mp,var_zj,ms), sj_jsat, so_capped, &
                            eq_g(mp,var_u,ms), mw_Bn, BigR, y_g(ms), so_capped)
+
+    ! --- [wall J] diagnostic (print only): the implicit boundary currents of the released vorticity row at this
+    ! --- wall point against the sheath's capacity, all per unit edge parameter as they enter the u row with the
+    ! --- same test function: capacity j_sat*|psi_s| (the wall flux of v*[psi,zj]); magnetisation current
+    ! --- R^2*|p_s| (wall flux of the pressure bracket R^2*[v,p]); ExB advection of vorticity rho*R^2*|w|*|u_s|
+    ! --- (wall flux of rho*R^2*w*[v,u]); viscous flux visco*R^3*|dw/dn|*dl (wall flux of -visco*R^3*grad v.grad w,
+    ! --- with the constant visco as an estimate of visco_T). Every type, first plane.
+    if ( floating_u_diag .and. mp .eq. 1 ) then
+      call sheath_j_norm(wj_an, wj_csat)
+      wj_cap = abs( wj_csat * r0_corr * cs0 / Btot ) * abs(ps0_s)
+      if (with_TiTe) then
+        wj_p0s = r0_s * (Ti0 + Te0) + r0 * (Ti0_s + Te0_s)
+      else
+        wj_p0s = r0_s * T0 + r0 * T0_s
+      endif
+      wj_mag = BigR**2 * abs(wj_p0s)
+      wj_w0  = eq_g(mp,var_w,ms) ; wj_w0s = eq_s(mp,var_w,ms) ; wj_w0t = eq_t(mp,var_w,ms)
+      wj_w0x = (   y_t(ms) * wj_w0s - y_s(ms) * wj_w0t ) / xjac
+      wj_w0y = ( - x_t(ms) * wj_w0s + x_s(ms) * wj_w0t ) / xjac
+      wj_exb = r0 * BigR**2 * abs(wj_w0) * abs(eq_s(mp,var_u,ms))
+      wj_vis = visco * BigR**3 * abs( wj_w0x*normal(1) + wj_w0y*normal(2) ) * dl
+      call wallj_diag_add(bnd_type1, ws, BigR, y_g(ms), wj_cap, wj_mag, wj_exb, wj_vis)
+      if ( bnd_type2 .ne. bnd_type1 ) call wallj_diag_add(bnd_type2, ws, BigR, y_g(ms), wj_cap, wj_mag, wj_exb, wj_vis)
+    endif
 
     if ( floating_u_diag .and. mw_on ) then
       call floating_diag_add(bnd_type1, ws*dl, mw_vn, mw_vEn, mw_Bn, mw_res, cs0*abs(bdotn), abs(Vpar0)*Btot/cs0, r0, Ti0, Te0, BigR, y_g(ms))

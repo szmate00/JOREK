@@ -210,6 +210,36 @@ program test_sheath_j
     enddo
   enddo
   write(*,'(a,es9.2)') ' PASS: current-slot form: zj row only, every column matches FD, worst rel err ', worst
+  ! --- SOLPS (Patankar) slope: residual identical, u column of the zj rows floored at the floating value on the ion
+  ! --- side (>= exact, nonzero) and nonzero at the electron cap where the exact one is zero
+  base(:)%values(1,1,var_u) = 2.d0*ufl                     ! ion side, x < 0
+  sheath_j_patankar = .false.; nodes = base; call assemble(a, r)
+  sheath_j_patankar = .true. ; nodes = base; call assemble(ap, rp)
+  if ( any(rp /= r) ) error stop 'FAIL: sheath_j_patankar changed the residual'
+  do isgn = 1, nd
+    if ( .not. isvar(isgn, var_zj) ) cycle
+    do col = 1, nd
+      if ( .not. isvar(col, var_u) ) cycle
+      if ( abs(ap(isgn,col)) < abs(a(isgn,col)) ) error stop 'FAIL: Patankar u column smaller than the exact one on the ion side'
+    enddo
+  enddo
+  base(:)%values(1,1,var_u) = -3.d0*ufl                    ! beyond the electron cap, x > Lambda
+  sheath_j_patankar = .false.; nodes = base; call assemble(a, r)
+  sheath_j_patankar = .true. ; nodes = base; call assemble(ap, rp)
+  if ( any(rp /= r) ) error stop 'FAIL: sheath_j_patankar changed the residual at the cap'
+  worst = 0.d0
+  do isgn = 1, nd
+    if ( .not. isvar(isgn, var_zj) ) cycle
+    do col = 1, nd
+      if ( .not. isvar(col, var_u) ) cycle
+      if ( a(isgn,col) /= 0.d0 ) error stop 'FAIL: exact u column not zero at the cap'
+      worst = max(worst, abs(ap(isgn,col)))
+    enddo
+  enddo
+  if ( worst == 0.d0 ) error stop 'FAIL: Patankar u column zero at the cap'
+  sheath_j_patankar = .false.
+  base(:)%values(1,1,var_u) = 0.8d0*ufl
+  write(*,'(a)') ' PASS: sheath_j_patankar: residual unchanged, u column floored on the ion side and nonzero at the cap'
   ! --- ion branch with a finite slope: x < 0 (u above floating), FD the u and Te columns
   sheath_j_ion_slope = 0.03d0 ; base(:)%values(1,1,var_u) = 2.d0*ufl
   nodes = base; call assemble(a, r)

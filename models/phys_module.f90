@@ -71,6 +71,7 @@ module phys_module
   real*8  :: sheath_j_ramp_time     !< time (JOREK units) over which the sheath potential's current dependence ramps from 0 to 1; 0 = until the last tstep_n phase begins, <0 = no ramp
   logical :: sheath_j_current_row   !< sheath in the CURRENT slot: zj = j_sat*f(u) as the zj row, u from the vorticity equation (the sheath-jsat-vpar-38ab278 structure)
   real*8  :: sheath_j_ion_slope     !< finite slope of the ion-saturation branch, f = 1 - exp(x) - s*x for x < 0 (sheath expansion; Langmuir-probe I-V); 0 = hard saturation, Phi -> infinity wherever j >= j_sat
+  logical :: sheath_j_patankar      !< SOLPS BCPOT=11 linearisation of the sheath characteristic: the Jacobian slope df/dx is floored at the floating value, max(e^min(x,Lambda), 1) (never zero: 1 on the ion branch, e^Lambda at the electron cap); residual and steady state unchanged
   real*8  :: sheath_j_e_slope       !< finite slope beyond electron saturation, f = 1 - e^Lambda - s_e*(x - Lambda) for x > Lambda; 0 = hard cap, Phi -> -infinity wherever the plasma pushes more than (e^Lambda - 1)*j_sat
   logical :: vpar_smoothing       !< apply a smoothing function to smooth jumps in Vpar at B.n=0
   real*8  :: vpar_smoothing_coef(3) !< coefficients for the smoothing profile of the parallel velocity
