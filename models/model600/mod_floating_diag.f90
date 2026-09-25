@@ -15,7 +15,7 @@ module mod_floating_diag
   implicit none
   private
 
-  public :: floating_diag_reset, floating_diag_add, floating_diag_report, sheath_diag_add, wallj_diag_add, wallb_diag_add
+  public :: floating_diag_reset, floating_diag_add, floating_diag_report, sheath_diag_add, wallj_diag_add, wallb_diag_add, floating_prof_add
 
   integer, parameter :: nt = 30            !< max_bnd_types
   real*8, save :: s_len(nt), s_in(nt), s_mom(nt), s_den(nt)
@@ -34,6 +34,11 @@ module mod_floating_diag
   real*8, save :: wj_cap(nt), wj_int(nwj,nt), wj_rmax(nwj,nt), wj_loc(2,nwj,nt)
   integer, parameter, public :: nwb = 8                 !< [wall B]: Ish, gradB, pol, dia, mag, vis, kin, Isat (signed, see wallb_diag_add)
   real*8, save :: wb_int(nwb,nt)
+  ! --- [wall prof]: one state vector per wall Gauss point kept per rank when floating_u_prof_every > 0
+  integer, parameter :: nps = 16, ncap = 50000
+  real*8, save, allocatable :: pbuf(:,:)
+  integer, save :: npbuf = 0
+  real*8, save :: prev_rho = huge(1.d0), prev_Te = huge(1.d0)
 
 contains
 
@@ -49,6 +54,7 @@ subroutine floating_diag_reset()
   u_min = huge(1.d0) ; u_max = -huge(1.d0) ; s_inet = 0.d0 ; s_isat = 0.d0
   j_abs = 0.d0 ; j_abs_R = 0.d0 ; j_abs_Z = 0.d0 ; s_over = 0.d0
   wj_cap = 0.d0 ; wj_int = 0.d0 ; wj_rmax = 0.d0 ; wj_loc = 0.d0 ; wb_int = 0.d0
+  npbuf = 0
 end subroutine floating_diag_reset
 
 
@@ -85,6 +91,26 @@ subroutine wallb_diag_add(bnd_type, w, cur)
   wb_int(:,bnd_type) = wb_int(:,bnd_type) + cur(:) * w
   !$omp end critical (wallb_diag)
 end subroutine wallb_diag_add
+
+
+!> [wall prof]: one wall Gauss point, JOREK units. Te_s, u_s per unit length; jj = j/j_sat and x where the current
+!! row is carried (sj), else printed as 0.
+subroutine floating_prof_add(bnd_type, R, Z, rho, Ti, Te, u, VparBn, vEn, cb, vn, b_n, Te_s, u_s, jj, x, sj)
+  implicit none
+  integer, intent(in) :: bnd_type
+  real*8,  intent(in) :: R, Z, rho, Ti, Te, u, VparBn, vEn, cb, vn, b_n, Te_s, u_s, jj, x
+  logical, intent(in) :: sj
+  real*8 :: sjf
+  if ( bnd_type .lt. 1 .or. bnd_type .gt. nt ) return
+  sjf = 0.d0 ; if ( sj ) sjf = 1.d0
+  !$omp critical (floating_prof)
+  if ( .not. allocated(pbuf) ) allocate( pbuf(nps,ncap) )
+  if ( npbuf .lt. ncap ) then
+    npbuf = npbuf + 1
+    pbuf(:,npbuf) = (/ dble(bnd_type), R, Z, rho, Ti, Te, u, VparBn, vEn, cb, vn, b_n, Te_s, u_s, jj*sjf, x*sjf /)
+  endif
+  !$omp end critical (floating_prof)
+end subroutine floating_prof_add
 
 
 !> One wall Gauss point carrying the sheath current row.
@@ -140,7 +166,7 @@ end subroutine floating_diag_add
 subroutine floating_diag_report(my_id)
 
   use constants,   only: MU_ZERO, ATOMIC_MASS_UNIT, EL_CHG
-  use phys_module, only: central_density, central_mass, F0
+  use phys_module, only: central_density, central_mass, F0, floating_u_prof_every, index_now, sheath_Lambda
   use mpi_mod
 
   implicit none
@@ -150,6 +176,9 @@ subroutine floating_diag_report(my_id)
   real*8  :: slen(nt), esat(nt), jmn(nt), jmx(nt), umn(nt), umx(nt), inet(nt), isat(nt), u_volt
   real*8  :: jab(nt), jloc(2,nt), jloc_g(2,nt), over(nt)
   real*8  :: gcap(nt), gint(nwj,nt), grmx(nwj,nt), wl(2,nwj,nt), wl_g(2,nwj,nt), gb(nwb,nt), bn
+  real*8  :: wall_rho, wall_Te, pr, pd
+  logical :: prof
+  integer :: k
   integer :: iw
   real*8  :: loc(3,2,nt), loc_g(3,2,nt), v_norm, T_eV
   integer :: it, ierr
@@ -199,12 +228,38 @@ subroutine floating_diag_report(my_id)
   enddo
   call MPI_ALLREDUCE(loc, loc_g, 6*nt, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
 
-  if ( my_id .ne. 0 ) return
-  if ( all(len .le. 0.d0) ) return
-
   v_norm = 1.d0 / sqrt(MU_ZERO * central_density * 1.d20 * central_mass * ATOMIC_MASS_UNIT)   ! m/s per unit
   T_eV   = 1.d0 / (EL_CHG * MU_ZERO * central_density * 1.d20)                                ! eV per unit
   u_volt = F0 / sqrt(MU_ZERO * central_density * 1.d20 * central_mass * ATOMIC_MASS_UNIT)     ! volts per unit u
+
+  ! --- [wall prof]: every floating_u_prof_every steps, and on the step where the wall minimum of rho or Te is
+  ! --- non-positive or has halved. Every rank prints its own points (the header from rank 0).
+  prof = .false.
+  if ( floating_u_prof_every .gt. 0 .and. any(len .gt. 0.d0) ) then
+    wall_rho = huge(1.d0) ; wall_Te = huge(1.d0)
+    do it = 1, nt
+      if ( len(it) .le. 0.d0 ) cycle
+      wall_rho = min(wall_rho, rmin(it)) ; wall_Te = min(wall_Te, tmin(it))
+    enddo
+    prof = ( mod(index_now, floating_u_prof_every) .eq. 0 ) .or. wall_rho .le. 0.d0 .or. wall_Te .le. 0.d0 &
+           .or. wall_rho .lt. 0.5d0*prev_rho .or. wall_Te .lt. 0.5d0*prev_Te
+    prev_rho = wall_rho ; prev_Te = wall_Te
+  endif
+  if ( prof ) then
+    if ( my_id .eq. 0 ) write(*,'(A,I8,A)') ' [wall prof] step', index_now, &
+      '  one line per wall Gauss point, all ranks: type R Z rho[1e20] Ti[eV] Te[eV] Phi[V] Vpar*Bn vE.n cs|b.n| vn[m/s] b.n dTe/ds[eV/m] dPhi/ds[V/m] j/jsat x r=dPhi/ds/(L*dTe/ds) delta=(Phi-L*Te)/Te'
+    do k = 1, npbuf
+      pr = 0.d0
+      if ( abs(pbuf(13,k)) .gt. 0.d0 ) pr = pbuf(14,k)*u_volt / ( sheath_Lambda * pbuf(13,k)*T_eV )
+      pd = ( pbuf(7,k)*u_volt / max(pbuf(6,k)*T_eV, 1.d-6) ) - sheath_Lambda
+      write(*,'(A,I4,2F8.4,ES11.3,2ES10.2,ES11.3,4ES11.3,ES10.2,2ES11.3,2ES11.3,2ES10.2)') ' [wall prof] ', nint(pbuf(1,k)), &
+        pbuf(2:3,k), pbuf(4,k)*central_density, pbuf(5,k)*T_eV, pbuf(6,k)*T_eV, pbuf(7,k)*u_volt, pbuf(8:11,k)*v_norm, pbuf(12,k), &
+        pbuf(13,k)*T_eV, pbuf(14,k)*u_volt, pbuf(15,k), pbuf(16,k), pr, pd
+    enddo
+  endif
+
+  if ( my_id .ne. 0 ) return
+  if ( all(len .le. 0.d0) ) return
 
   write(*,'(A)') ' [floating_u] type  inflow   max vE.n[m/s]  at (R,Z)             mom      max M    min rho    at (R,Z)           min Ti[eV] min Te[eV]  at (R,Z)'
   do it = 1, nt

@@ -71,6 +71,8 @@ module phys_module
   real*8  :: sheath_j_ramp_time     !< time (JOREK units) over which the sheath potential's current dependence ramps from 0 to 1; 0 = until the last tstep_n phase begins, <0 = no ramp
   logical :: sheath_j_current_row   !< sheath in the CURRENT slot: zj = j_sat*f(u) as the zj row, u from the vorticity equation (the sheath-jsat-vpar-38ab278 structure)
   real*8  :: sheath_j_ion_slope     !< finite slope of the ion-saturation branch, f = 1 - exp(x) - s*x for x < 0 (sheath expansion; Langmuir-probe I-V); 0 = hard saturation, Phi -> infinity wherever j >= j_sat
+  real*8  :: sheath_j_min_angle     !< incidence angle [deg] above which the sheath current row is carried and the u/zj DOFs released; < 0: min_sheath_angle (the flux floors keep min_sheath_angle either way)
+  integer :: floating_u_prof_every  !< with floating_u_diag: every that many steps (and when the wall minimum of rho or Te halves or goes non-positive) print [wall prof], one line per wall Gauss point; 0 = never
   logical :: sheath_j_cancel_vis    !< with sheath_j_cancel_flux: also cancel the viscous wall flux (.f.: only the magnetisation and, if on, the kinetic part)
   logical :: sheath_j_cancel_kin    !< with sheath_j_cancel_flux: also cancel the kinetic-energy wall flux
   logical :: sheath_j_cancel_flux   !< cancel the implicit wall currents of the released vorticity row on sheath edges: the viscous vorticity flux from the Dirichlet w and the magnetisation (total-derivative) part of the pressure-bracket flux; weakly dw/dn = 0 and no diamagnetic current into the target

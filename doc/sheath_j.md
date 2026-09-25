@@ -152,6 +152,23 @@ source is not in the u row at all, so it is not a candidate.) The cancelled flux
 as well. A type whose `rest` is large and of the sign of the electron current is being fed from the interior, not
 from any wall flux.
 
+## Angle gate of the current row and the wall profile print (2026-09-27)
+
+`sheath_j_min_angle` (degrees, default -1 = use `min_sheath_angle`): the incidence angle above which the current row
+is carried at a Gauss point and the u/zj DOFs are released at a node (same number in `mod_boundary_matrix_open` and
+`mod_boundary_conditions`). Below it a sheath-type node keeps the pinned floating potential and zero current. Unlike
+`min_sheath_angle` it leaves the particle/heat flux floors (`cs*sin(min_sheath_angle)`) and the kinetic recycling
+untouched. Purpose: the 4/9 corner cell, where |b.n| ~ 0.02 (1.1 deg) and the ExB inflow Lambda*dTe/ds/B is ~20x
+the Bohm outflow cs|b.n|, collapses under the current row (every run, last at step 672 with the continued
+characteristic); with the gate above the corner's incidence the row stays on the plates only where the field lines
+end steeply enough to refill the cell. The price is the current on the grazing corner cells.
+
+`floating_u_prof_every` (steps, default 0): with `floating_u_diag`, prints `[wall prof]`, one line per wall Gauss
+point (all ranks), every N steps and on the step where the wall minimum of rho or Te halves or goes non-positive:
+type, R, Z, rho, Ti, Te, Phi, Vpar*Bn, vE.n, cs|b.n|, vn, b.n, dTe/ds, dPhi/ds, j/jsat, x (the last two only where
+the current row is carried), r = dPhi/ds / (Lambda dTe/ds) (1 where the potential gradient is the floating one) and
+delta = (Phi - Lambda Te)/Te (0 at floating). Read b.n and dTe/ds at the corner from it before choosing the angle.
+
 ## Reading the log
 
 ```

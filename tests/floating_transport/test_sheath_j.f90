@@ -331,7 +331,23 @@ program test_sheath_j
     base(i)%values(1,:,var_Ti)  = 0.d0 ; base(i)%values(1,1,var_Ti)  = 0.003d0
     base(i)%values(1,:,var_Te)  = 0.d0 ; base(i)%values(1,1,var_Te)  = 0.004d0
   enddo
-  ! --- ion branch with a finite slope: x < 0 (u above floating), FD the u and Te columns
+  ! --- separate gate of the current row: above the fixture's incidence no zj row; below it as before; the flux
+  ! --- floors (c_angle) are untouched, so the rho row is identical for both settings
+  sheath_j_min_angle = 89.d0 ; nodes = base; call assemble(ap, rp)
+  if ( anyrow(ap, rp, var_zj) ) error stop 'FAIL: current row assembled above sheath_j_min_angle'
+  sheath_j_min_angle = -1.d0 ; nodes = base; call assemble(a, r)
+  if ( .not. anyrow(a, r, var_zj) ) error stop 'FAIL: current row missing with sheath_j_min_angle < 0'
+  do isgn = 1, nd
+    if ( isvar(isgn, var_rho) .and. ( any(a(isgn,:) /= ap(isgn,:)) .or. r(isgn) /= rp(isgn) ) ) error stop 'FAIL: sheath_j_min_angle changed the rho row'
+  enddo
+  write(*,'(a)') ' PASS: sheath_j_min_angle gates the current row only; rho row (flux floors) unchanged'
+  ! --- [wall prof]: buffered and printed, equations untouched
+  floating_u_prof_every = 1 ; index_now = 1 ; floating_u_diag = .true.
+  call floating_diag_reset() ; nodes = base; call assemble(ap, rp)
+  call floating_diag_report(0)
+  floating_u_prof_every = 0 ; floating_u_diag = .false. ; nodes = base; call assemble(a, r)
+  if ( any(a /= ap) .or. any(r /= rp) ) error stop 'FAIL: [wall prof] changed the equations'
+  write(*,'(a)') ' PASS: [wall prof] leaves the equations untouched'
   sheath_j_ion_slope = 0.03d0 ; base(:)%values(1,1,var_u) = 2.d0*ufl
   nodes = base; call assemble(a, r)
   worst = 0.d0

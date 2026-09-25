@@ -28,7 +28,8 @@ module phys_module
   end type
   type(bc_type) :: bcs(0:max_bnd_types)
   real*8  :: time_evol_theta=1.d0, time_evol_zeta=0.5d0, tstep=1.d0, tstep_prev=1.d0
-  real*8  :: min_sheath_angle=1.d0, F0=2.97d0, gamma=5.d0/3.d0
+  real*8  :: min_sheath_angle=1.d0, F0=2.97d0, gamma=5.d0/3.d0, sheath_j_min_angle=-1.d0
+  integer :: floating_u_prof_every=0, index_now=0
   real*8  :: T_min_neg=3.d-5, T_1=0.01d0, corr_neg_temp_coef(2)=[0.5d0,0.5d0]
   real*8  :: central_density=1.d0, central_mass=2.014d0, sheath_Lambda=3.d0, sheath_V_wall=0.d0
   logical :: vpar_smoothing=.false., mach_one_bnd_integral=.false., mach1_weak=.false., mach1_weak_drift=.false., floating_u_diag=.false.

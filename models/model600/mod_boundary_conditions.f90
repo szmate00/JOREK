@@ -39,7 +39,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass, sheath_V_wall 
 use mod_floating_u, only: floating_u_norm
-use phys_module, only: min_sheath_angle, sheath_j_float_u
+use phys_module, only: min_sheath_angle, sheath_j_float_u, sheath_j_min_angle
 use constants, only: PI
 use tr_module
 use mpi_mod
@@ -264,7 +264,7 @@ do i=1, n_local_elms !=== do elements
             sj_ivd(jdir) = 3
           endif
           sj_edge(jdir) = bcs(node_list%node(jnb)%boundary)%sheath_j .and. &
-                          ( node_incidence(jdir) .ge. sin(min_sheath_angle*PI/180.d0) )
+                          ( node_incidence(jdir) .ge. sin(merge(sheath_j_min_angle, min_sheath_angle, sheath_j_min_angle .ge. 0.d0)*PI/180.d0) )
         enddo
       endif
       sj_rel_val = any(sj_edge)

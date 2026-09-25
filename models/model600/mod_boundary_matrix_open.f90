@@ -17,7 +17,7 @@ use phys_module
 use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
-use mod_floating_diag, only: floating_diag_add, sheath_diag_add, wallj_diag_add, wallb_diag_add, nwj, nwb
+use mod_floating_diag, only: floating_diag_add, sheath_diag_add, wallj_diag_add, wallb_diag_add, floating_prof_add, nwj, nwb
 use mod_floating_u,    only: sheath_j_norm, floating_u_norm, sheath_j_ramp
 use mod_plasma_functions, only: viscosity
 
@@ -74,6 +74,7 @@ real*8     :: cf_fo, cf_fn, cf_nu, cf_dnu, cf_w0, cf_wx, cf_wy, cf_dwdn, cf_G, c
 real*8     :: cf_dsx, cf_dsy, cf_dtx, cf_dty, cf_dp, cf_dpx, cf_dpy, cf_tx, cf_ty, cf_gTx, cf_gTy
 real*8     :: cf_ux, cf_uy, cf_vE2, cf_Mr, cf_kin, cf_dMr     ! kinetic-energy flux (v_E^2/2) d_s(R^2 rho) and its columns
 real*8     :: wb_cur(nwb), wb_dtpsi, wb_dux, wb_duy            ! [wall B] signed balance
+real*8     :: sj_angle                                           ! gate of the current row (sheath_j_min_angle or min_sheath_angle), radians
 real*8     :: wj_an, wj_csat, wj_cap, wj_cur(nwj), wj_p0s, wj_w0, wj_w0s, wj_w0t, wj_w0x, wj_w0y, wj_u0x, wj_u0y   ! [wall J] diagnostic
 logical    :: xpoint2
 integer    :: n_tor_local 
@@ -92,6 +93,8 @@ rhs_ij = 0.d0
 amat   = 0.d0
 
 c_angle = min_sheath_angle     * PI / 180.d0 ! --- angle factor for minimum heat and particle fluxes (in radians here)
+sj_angle = c_angle                           ! --- gate of the sheath current row; sheath_j_min_angle overrides it (same rule as the DOF release)
+if ( sheath_j_min_angle .ge. 0.d0 ) sj_angle = sheath_j_min_angle * PI / 180.d0
 
 !--------------------- reorder the nodes to have the same direction as full element (maybe not necesary)
 if ((vertex(1) .eq. 3) .and. (vertex(2) .eq. 4)) then
@@ -450,7 +453,7 @@ do ms=1, n_gauss
     ! --- Sheath BC at this Gauss point. j_sat = c_sat*rho*Vpar_Bohm, Vpar_Bohm = sign(B.n)*cs/|B| (Artola eq. 5
     ! --- with the marginal Bohm row). Written for the current INTO the wall, -zj*(B_pol.n)/F0 = e*n*cs*|b.n|,
     ! --- independent of the sign of F0.
-    sj_here = sj_on .and. ( abs(bdotn) .ge. sin(c_angle) )
+    sj_here = sj_on .and. ( abs(bdotn) .ge. sin(sj_angle) )
     sj_jsat = 0.d0 ; sj_psin = 0.d0 ; sj_w = 0.d0
     if ( sj_here ) sj_jsat = sj_csat * r0_corr * normal_sign * cs0 / Btot     ! corr_neg rho: j_sat keeps its sign
     if ( sj_surf ) then
@@ -641,6 +644,15 @@ do ms=1, n_gauss
       wb_cur(8) = abs( wj_csat * r0_corr * cs0 / Btot * wb_dtpsi ) * dl
       call wallb_diag_add(bnd_type1, ws, wb_cur)
       if ( bnd_type2 .ne. bnd_type1 ) call wallb_diag_add(bnd_type2, ws, wb_cur)
+
+      ! --- [wall prof] (floating_u_prof_every > 0): the state at this Gauss point, JOREK units; tangential
+      ! --- derivatives per unit length; j/jsat and x where the current row is carried
+      if ( floating_u_prof_every .gt. 0 ) then
+        wb_dux = 0.d0
+        if ( sj_here ) wb_dux = eq_g(mp,var_zj,ms) / sj_jsat
+        call floating_prof_add(bnd_type1, BigR, y_g(ms), r0, Ti0, Te0, eq_g(mp,var_u,ms), mw_Bn*Vpar0, mw_vEn, &
+                               cs0*abs(bdotn), mw_vn, bdotn, Te0_s/dl, eq_s(mp,var_u,ms)/dl, wb_dux, sc_x, sj_here)
+      endif
     endif
 
     if ( floating_u_diag .and. mw_on ) then
