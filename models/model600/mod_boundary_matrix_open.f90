@@ -605,20 +605,23 @@ do ms=1, n_gauss
       ! --- have in the row's right-hand side F (rhs = tstep*F), s = n rotated +90 deg, d_s psi = R*(B_pol.n):
       ! ---   1 Ish   - zj*d_s(psi)*dl                    wall part of  v*[psi,zj]  (the sheath current, zj = characteristic)
       ! ---   2 gradB + 2*R*p*n_Z*dl                      grad-B remainder of the pressure flux after the cancellation
-      ! ---   3 pol   - rho*R^3*d_n(delta u)/tstep*dl     polarisation flux, LAGGED (last increment rescaled to this step)
+      ! ---   3 pol   + rho*R^3*d_n(delta u)/tstep*dl     polarisation flux, LAGGED (last increment rescaled to this step);
+      ! ---                the mass term is assembled as -(1+zeta)*rho*R^3*grad v.grad(delta u) (mod_elt_matrix_fft.f90:2486),
+      ! ---                so moved to the F side its wall content is +rho*R^3*d_n(delta u)/tstep
       ! ---   4 dia   - 2*tauIC*R^3*Pi_Z*d_n(u)*dl
       ! ---   5 mag   + R^2*d_s(p)*dl                     cancelled (up to gradB) when sheath_j_cancel_flux
       ! ---   6 vis   - visco*R*d_n(R^2 w)*dl             cancelled
       ! ---   7 kin   - (v_E^2/2)*d_s(R^2 rho)*dl         cancelled
       ! ---   8 Isat  |j_sat*d_s(psi)|*dl                 normalisation
-      ! --- Everything the u row of a released node sees at the wall except the interior parallel current and the
-      ! --- particle-source term, which the boundary cannot evaluate: rest = -(1+2+3+4) is their sum.
+      ! --- rest = -(1+2+3+4) is what the boundary cannot evaluate: the half-cell volume parts of every term, i.e.
+      ! --- essentially the interior parallel current delivered to the wall cell. (The kinetic recycling source is
+      ! --- not in the u row at all: aux_rho0 enters only the rho and Vpar rows, mod_elt_matrix_fft.f90:1692,1757.)
       wb_dtpsi  = - normal(2) * ps0_x + normal(1) * ps0_y
       wb_dux    = cf_dsx * delta_s(mp,var_u,ms) + cf_dtx * delta_t(mp,var_u,ms)
       wb_duy    = cf_dsy * delta_s(mp,var_u,ms) + cf_dty * delta_t(mp,var_u,ms)
       wb_cur(1) = - eq_g(mp,var_zj,ms) * wb_dtpsi * dl
       wb_cur(2) = + 2.d0 * BigR * r0 * T0 * normal(2) * dl
-      wb_cur(3) = - r0 * BigR**3 * ( wb_dux*normal(1) + wb_duy*normal(2) ) / tstep * dl
+      wb_cur(3) = + r0 * BigR**3 * ( wb_dux*normal(1) + wb_duy*normal(2) ) / tstep * dl
       wb_cur(4) = - 2.d0 * tauIC * BigR**3 * ( r0_y*Ti0 + r0*Ti0_y ) * ( wj_u0x*normal(1) + wj_u0y*normal(2) ) * dl
       wb_cur(5) = + BigR**2 * ( - normal(2) * ( r0_x*T0 + r0*(Ti0_x+Te0_x) ) + normal(1) * ( r0_y*T0 + r0*(Ti0_y+Te0_y) ) ) * dl
       if ( visco_old_setup ) then

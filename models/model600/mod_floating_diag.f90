@@ -233,8 +233,8 @@ subroutine floating_diag_report(my_id)
         ( grmx(iw,it), wl_g(:,iw,it), iw = 1, nwj )
     enddo
     ! --- signed wall balance of the u row, integrated per type, in units of the type's saturation current, in the
-    ! --- sign of the row's right-hand side: rest = -(Ish + gradB + pol + dia) is what the boundary cannot see
-    ! --- (interior parallel current, particle-source term); mag/vis/kin are the cancelled fluxes (sheath_j_cancel_flux)
+    ! --- sign of the row's right-hand side: rest = -(Ish + gradB + pol + dia) is what the boundary cannot see (the
+    ! --- half-cell volume parts, essentially the interior parallel current); mag/vis/kin are the cancelled fluxes
     write(*,'(A)') ' [wall B]   type     Ish/Isat   gradB/Isat  pol/Isat(lag) dia/Isat |    rest/Isat | cancelled:   mag/Isat    vis/Isat    kin/Isat'
     do it = 1, nt
       if ( gcap(it) .le. 0.d0 ) cycle

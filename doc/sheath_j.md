@@ -138,11 +138,13 @@ viscous part), every column matches FD, no row without a sheath node or with the
 type's saturation current and in the sign they have in the row's right-hand side (s = n rotated by +90 degrees,
 `d_s psi = R B_pol.n`): `Ish = -zj d_s psi` (the sheath current; compare with `Inet/Isat` of `[sheath_j]`, same
 number up to sign convention and an R weighting), `gradB = +2 R p n_Z` (what the cancellation leaves of the
-pressure flux), `pol = -rho R^3 d_n(delta u)/tstep` (the capacitor, LAGGED: last increment rescaled to this step),
-`dia`, then `rest = -(Ish + gradB + pol + dia)`, which is the sum of what the boundary cannot evaluate: the interior
-parallel current arriving at the wall and the particle-source term. The cancelled fluxes mag, vis, kin are printed
-signed as well. A type whose `rest` is large and of the sign of the electron current is being fed from the interior
-or from the source term, not from any wall flux.
+pressure flux), `pol = +rho R^3 d_n(delta u)/tstep` (the capacitor, LAGGED: last increment rescaled to this step; the mass term is
+assembled with a minus sign, so this is its content on the F side; the sign was inverted until 2026-09-26),
+`dia`, then `rest = -(Ish + gradB + pol + dia)`, which is what the boundary cannot evaluate: the half-cell volume
+parts of every term, essentially the interior parallel current delivered to the wall cell. (The kinetic recycling
+source is not in the u row at all, so it is not a candidate.) The cancelled fluxes mag, vis, kin are printed signed
+as well. A type whose `rest` is large and of the sign of the electron current is being fed from the interior, not
+from any wall flux.
 
 ## Reading the log
 
