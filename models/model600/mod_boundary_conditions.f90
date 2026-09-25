@@ -40,7 +40,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        bcs, loop_voltage, central_density, central_mass, sheath_V_wall 
 use mod_floating_u, only: floating_u_norm
 use mod_wall_smooth, only: wall_smooth_active, wall_smooth_te
-use phys_module, only: min_sheath_angle, sheath_j_float_u, sheath_j_min_angle
+use phys_module, only: min_sheath_angle, sheath_j_float_u, sheath_j_min_angle, sheath_j_release_der
 use constants, only: PI
 use tr_module
 use mpi_mod
@@ -408,6 +408,14 @@ do i=1, n_local_elms !=== do elements
                   sj_rel = sj_rel_der
                 endif
                 if ( (k == var_zj) .and. sj_rel ) cycle
+                ! --- sheath_j_release_der = .f.: only the VALUE DOF of u is released; the tangential-derivative
+                ! --- DOFs keep the floating row below (u_s = C_T*Te_s), so the wall potential's slope is the
+                ! --- floating slope and only its level follows the current. Measured 2026-09-27 ([wall prof]):
+                ! --- with the derivative DOFs released, dPhi/ds on the sheath segments is 20-50x Lambda*dTe/ds
+                ! --- and alternates in sign between neighbouring Gauss points from step 50 on, while Phi itself
+                ! --- stays within 0.3 Te of floating: a sawtooth of the released slope DOFs whose ExB (+-4e4 m/s
+                ! --- at the 4/9 corner) emptied the corner cell in every run. zj keeps its full release.
+                if ( (k == var_u) .and. (index_tmp .ne. 1) .and. (.not. sheath_j_release_der) ) sj_rel = .false.
                 if ( (k == var_u ) .and. sj_rel .and. (.not. sheath_j_float_u) ) cycle
 
                 call boundary_conditions_add_one_entry(                 &

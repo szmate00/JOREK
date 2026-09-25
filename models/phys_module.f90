@@ -73,6 +73,7 @@ module phys_module
   real*8  :: sheath_j_ion_slope     !< finite slope of the ion-saturation branch, f = 1 - exp(x) - s*x for x < 0 (sheath expansion; Langmuir-probe I-V); 0 = hard saturation, Phi -> infinity wherever j >= j_sat
   real*8  :: sheath_j_min_angle     !< incidence angle [deg] above which the sheath current row is carried and the u/zj DOFs released; < 0: min_sheath_angle (the flux floors keep min_sheath_angle either way)
   integer :: floating_u_prof_every  !< with floating_u_diag: every that many steps (and when the wall minimum of rho or Te halves or goes non-positive) print [wall prof], one line per wall Gauss point; 0 = never
+  logical :: sheath_j_release_der   !< .t.: at sheath nodes the tangential-derivative DOFs of u are released with the value DOF (their slope set by the vorticity equation); .f.: only the value DOF is released, the derivative DOFs keep the floating row u_s = C_T*Te_s (the wall potential's slope is the floating slope, its level follows the current)
   integer :: sheath_Te_smooth       !< number of 3-point [1/4 1/2 1/4] passes of tangential smoothing along the wall of the Te the wall rows see (floating target, characteristic's x and j_sat); 0 = off; one pass = one element of smoothing (mod_wall_smooth)
   logical :: sheath_j_cancel_vis    !< with sheath_j_cancel_flux: also cancel the viscous wall flux (.f.: only the magnetisation and, if on, the kinetic part)
   logical :: sheath_j_cancel_kin    !< with sheath_j_cancel_flux: also cancel the kinetic-energy wall flux

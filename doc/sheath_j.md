@@ -188,6 +188,23 @@ on a one-element loop with a Te step the filtered values are 0.005/0.007, and th
 with the raw Te set to the filtered value, with a zero Te column. In `[wall prof]`, r = dPhi/ds/(Lambda dTe/ds)
 drops below 1 where the filter acts.
 
+## Release of the value DOF only (`sheath_j_release_der = .f.`, 2026-09-27)
+
+The `[wall prof]` r column (dPhi/ds over Lambda dTe/ds) measured on the released type-4 segment from step 50 on:
+20-50 everywhere, and alternating in sign between neighbouring Gauss points toward the 4/9 corner, while delta =
+(Phi - Lambda Te)/Te stayed within -0.3..0 and Te itself was smooth (dTe/ds ~ 0.5-1 eV/mm, no step). On the pinned
+type-9 strip r = 1.3-1.9. So the corner ExB was never Lambda dTe/ds: it is a sawtooth of the released
+tangential-derivative DOFs of u, whose level is anchored by the characteristic but whose slope has no anchor
+(its rows are the vorticity equation tested with the slope basis functions). Its ExB alternates inflow/outflow at
+sub-element scale, +-4e4 m/s at the corner, and empties the corner cell. `sheath_Te_smooth` acted on the wrong
+quantity and is not the lever.
+
+`sheath_j_release_der = .f.`: at sheath nodes only the value DOF of u is released; the derivative DOFs keep the
+floating row u_s = C_T Te_s (the machinery already used for a derivative along a non-sheath edge). The wall
+potential's slope is then the floating slope and only its level follows the current; zj keeps its full release, so
+the characteristic is still met at every Gauss point. Default .t. (previous behaviour). Not covered by the serial
+harness (mod_boundary_conditions is not compiled there).
+
 ## Reading the log
 
 ```

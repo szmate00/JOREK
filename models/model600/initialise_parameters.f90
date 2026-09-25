@@ -71,7 +71,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 sheath_j_float_u, sheath_j_ramp_time,               &
                 sheath_j_current_row, sheath_j_ion_slope,           &
                 sheath_j_e_slope, sheath_j_cancel_flux, sheath_j_cancel_vis, sheath_j_cancel_kin, &
-                sheath_j_min_angle, floating_u_prof_every, sheath_Te_smooth, &
+                sheath_j_min_angle, floating_u_prof_every, sheath_Te_smooth, sheath_j_release_der, &
                 thermoelectric_ohm, thermoelectric_coef, &
                 Vpar_smoothing,                                     &
                 Vpar_smoothing_coef,                                &

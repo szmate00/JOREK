@@ -892,6 +892,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,REAL_FMT) 'sheath_j_min_angle    ', sheath_j_min_angle
     write(*,INTG_FMT) 'floating_u_prof_every ', floating_u_prof_every
     write(*,INTG_FMT) 'sheath_Te_smooth      ', sheath_Te_smooth
+    write(*,LOGI_FMT) 'sheath_j_release_der  ', sheath_j_release_der
   end if
   write(*,LOGI_FMT) 'thermoelectric_ohm    ', thermoelectric_ohm
   if ( thermoelectric_ohm ) then
