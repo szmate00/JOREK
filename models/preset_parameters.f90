@@ -103,7 +103,9 @@ subroutine preset_parameters
   sheath_j_current_row  = .false. ! .true.: zj row = characteristic, u row = vorticity equation (old weak-trace structure)
   sheath_j_ion_slope    = 0.d0    ! ion-branch slope of the characteristic (the 3900-step run of the old route had 0.03)
   sheath_j_e_slope      = 0.d0    ! slope beyond electron saturation; 0 = hard cap
-  sheath_j_cancel_flux  = .true.  ! cancel the viscous and magnetisation wall fluxes of the vorticity row on sheath edges (.f.: the implicit fluxes stay in the wall balance)
+  sheath_j_cancel_flux  = .true.  ! cancel the magnetisation (+ viscous, kinetic, see below) wall fluxes of the vorticity row on sheath edges (.f.: all implicit fluxes stay in the wall balance)
+  sheath_j_cancel_vis   = .true.  ! .f.: keep the viscous wall flux in the balance (the 2026-09-26 review's configuration)
+  sheath_j_cancel_kin   = .true.  ! .f.: keep the kinetic-energy wall flux in the balance
   Vpar_smoothing        = .false. ! smooth the transitions of Vpar positive/negavtive at B.n
   Vpar_smoothing_coef   = (/0.01d0, 0.d0, 0.d0 /) !(/ 0.01d0, 0.016d0, 0.00575446347d0/)
   min_sheath_angle      = 1.d0   ! 1 degree (not in radians)

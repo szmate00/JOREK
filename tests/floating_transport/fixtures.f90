@@ -35,7 +35,7 @@ module phys_module
   real*8  :: mach1_weak_drift_bound=0.d0
   logical :: mach1_weak_drift_cut=.false., mach1_weak_cut=.false., mach1_weak_inflow=.true., sheath_j_float_u=.false.
   real*8  :: sheath_j_ramp_time=-1.d0, t_now=0.d0, tstep_n(7)=0.d0
-  logical :: sheath_j_current_row=.false., sheath_j_cancel_flux=.false.
+  logical :: sheath_j_current_row=.false., sheath_j_cancel_flux=.false., sheath_j_cancel_vis=.true., sheath_j_cancel_kin=.true.
   real*8  :: visco=1.d-5, T_min=1.d-4, T_max_visco=1.d0, Te_0=0.01d0, T_0=0.02d0
   logical :: visco_old_setup=.false., visco_T_dependent=.false.
   real*8  :: tauIC=0.005d0

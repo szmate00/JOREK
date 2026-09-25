@@ -250,10 +250,24 @@ program test_sheath_j
     error stop 1
   endif
   visco_old_setup = .false.
+  sheath_j_cancel_vis = .false. ; sheath_j_cancel_kin = .false. ; nodes = base; call assemble(a, r)   ! magnetisation only
+  tot  = r(n_var*4*0 + var_u) + r(n_var*4*1 + var_u)
+  want = - (3.d0*rho0 + 7.d0*rho1)*pval
+  if ( abs(tot - want) > 1.d-9*abs(want) ) then
+    write(*,*) 'FAIL: cancel_vis/kin off: value rows sum', tot, want
+    error stop 1
+  endif
+  do isgn = 1, nd
+    if ( .not. isvar(isgn, var_u) ) cycle
+    do col = 1, nd
+      if ( (isvar(col, var_w) .or. isvar(col, var_u)) .and. a(isgn,col) /= 0.d0 ) error stop 'FAIL: cancel_vis/kin off but w or u column kept'
+    enddo
+  enddo
+  sheath_j_cancel_vis = .true. ; sheath_j_cancel_kin = .true.
   do i = 1, 4
     base(i)%values(1,:,var_u) = 0.d0 ; base(i)%values(1,1,var_u) = 0.8d0*ufl
   enddo
-  write(*,'(a)') ' PASS: cancelled wall fluxes: value rows integrate to the analytic viscous + magnetisation + kinetic sum'
+  write(*,'(a)') ' PASS: cancelled wall fluxes: value rows integrate to the analytic viscous + magnetisation + kinetic sum; vis/kin switches drop their parts and columns'
   ! --- (b) FD of every w/rho/Ti/Te column of the u rows at a generic state, viscosity temperature dependent
   visco_T_dependent = .true. ; visco = 1.d-3
   do i = 1, 4

@@ -566,6 +566,13 @@ do ms=1, n_gauss
       cf_vE2  = BigR**2 * ( cf_ux**2 + cf_uy**2 )
       cf_Mr   = - normal(2) * ( 2.d0 * BigR * r0 + BigR**2 * r0_x ) + normal(1) * BigR**2 * r0_y      ! d/ds(R^2 rho)
       cf_kin  = 0.5d0 * cf_vE2 * cf_Mr * dl
+      ! --- per-term switches: with the viscous or kinetic part off, its residual AND its columns vanish
+      if ( .not. sheath_j_cancel_vis ) then
+        cf_vis = 0.d0 ; cf_nu = 0.d0 ; cf_dnu = 0.d0
+      endif
+      if ( .not. sheath_j_cancel_kin ) then
+        cf_kin = 0.d0 ; cf_vE2 = 0.d0 ; cf_ux = 0.d0 ; cf_uy = 0.d0
+      endif
     endif
 
     ! --- [wall J] diagnostic (print only): the implicit boundary currents of the released vorticity row at this

@@ -57,7 +57,11 @@ mach1_weak            = .t.
 mach1_weak_drift      = .t.  ! the D configuration of floating-u-clean, unchanged at a restart
 mach1_weak_drift_cut  = .t.
 floating_u_diag       = .t.
-sheath_j_cancel_flux  = .t.  ! default: viscous and magnetisation wall fluxes out of the wall balance (see below)
+sheath_j_cancel_flux  = .t.  ! default: magnetisation, viscous and kinetic wall fluxes out of the wall balance (see below)
+sheath_j_cancel_vis   = .f.  ! 2026-09-26 review configuration: magnetisation only ...
+sheath_j_cancel_kin   = .f.
+sheath_j_ion_slope    = 1.d0 ! ... with the tangent-continued characteristic: f = 1 - e^x - x (x < 0),
+sheath_j_e_slope      = 20.085537d0 ! f = 1 - e^Lambda - e^Lambda (x - Lambda) (x > Lambda), Lambda = 3
 ```
 
 `dirichlet%u` and `dirichlet%zj` stay `.true.` on the sheath types. `sheath_Lambda` (3) and
@@ -123,7 +127,9 @@ sheath sets. `[wall J]` measured two of them at O(1-100) j_sat where the runs di
   `-(v_E^2/2)[v, R^2 rho]`: with the first two cancelled it led the collapse at the inner 4/9 junction (run of
   2026-09-26, step 372: 45 -> 93 -> 678 -> 9e3 j_sat locally, two prints ahead of everything else).
 
-`sheath_j_cancel_flux = .t.` (default) adds all three back with the opposite sign as surface terms of the u row,
+`sheath_j_cancel_flux = .t.` (default) adds all three back with the opposite sign as surface terms of the u row
+(`sheath_j_cancel_vis`, `sheath_j_cancel_kin`, default .t., switch the viscous and kinetic parts off separately;
+the 2026-09-26 review's configuration is magnetisation only),
 with exact columns on w (trace and normal-derivative DOFs), rho, Ti, Te (including the viscosity's temperature
 dependence) and u (through v_E^2), on every edge with a sheath node at either end, no angle gate, current-row form
 only. What is left in the wall balance is the polarisation flux (the capacitor), the grad-B pressure flux, the

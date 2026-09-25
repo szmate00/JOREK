@@ -70,7 +70,8 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 mach1_weak_cut, mach1_weak_inflow,                  &
                 sheath_j_float_u, sheath_j_ramp_time,               &
                 sheath_j_current_row, sheath_j_ion_slope,           &
-                sheath_j_e_slope, sheath_j_cancel_flux, thermoelectric_ohm, thermoelectric_coef, &
+                sheath_j_e_slope, sheath_j_cancel_flux, sheath_j_cancel_vis, sheath_j_cancel_kin, &
+                thermoelectric_ohm, thermoelectric_coef, &
                 Vpar_smoothing,                                     &
                 Vpar_smoothing_coef,                                &
                 zjz_0, zjz_1, zj_coef,                              &
