@@ -790,10 +790,10 @@ do ms=1, n_gauss
                   amat(var_zj,var_rho) = - v * sc_w * sj_csat * normal_sign * cs0 / Btot * sc_f * sc_drc * rho
                   amat(var_zj,var_u)   = - v * sc_w * sj_jsat * sc_dfdu * psi
                   if (with_TiTe) then
-                    amat(var_zj,var_Ti)  = - v * sc_w * sj_csat * r0 * normal_sign / Btot * sc_f * cs_Ti
-                    amat(var_zj,var_Te)  = - v * sc_w * ( sj_csat * r0 * normal_sign / Btot * sc_f * cs_Te + sj_jsat * sc_dfdTe * Te )
+                    amat(var_zj,var_Ti)  = - v * sc_w * sj_csat * r0_corr * normal_sign / Btot * sc_f * cs_Ti       ! r0_corr as in j_sat (was r0: wrong Jacobian in a depleted cell)
+                    amat(var_zj,var_Te)  = - v * sc_w * ( sj_csat * r0_corr * normal_sign / Btot * sc_f * cs_Te + sj_jsat * sc_dfdTe * Te )
                   else
-                    amat(var_zj,var_T)   = - v * sc_w * ( sj_csat * r0 * normal_sign / Btot * sc_f * cs_T + sj_jsat * sc_dfdTe * 0.5d0 * T )
+                    amat(var_zj,var_T)   = - v * sc_w * ( sj_csat * r0_corr * normal_sign / Btot * sc_f * cs_T + sj_jsat * sc_dfdTe * 0.5d0 * T )
                   endif
 
                   ! --- Sheath potential row: exact columns of u - C_V*V_wall - (2Te/a_n)*(Lambda - ln X)
