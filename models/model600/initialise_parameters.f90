@@ -7,6 +7,7 @@ use mod_plasma_functions, only: initialise_reference_parameters
 use vacuum
 use pellet_module
 use live_data
+use mod_floating_u, only: floating_u_selftest
 
 implicit none
 
@@ -64,7 +65,8 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 deuterium_adas, deuterium_adas_1e20,                &
                 old_deuterium_atomic,                               &
                 density_reflection,                                 &
-                mach_one_bnd_integral, Vpar_smoothing,              &
+                mach_one_bnd_integral, mach1_omit_drift,            &
+                Vpar_smoothing,                                     &
                 Vpar_smoothing_coef,                                &
                 zjz_0, zjz_1, zj_coef,                              &
                 rho_0, rho_1, rho_coef,                             &
@@ -208,6 +210,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 fluid_configs, init_particles_only,                 &
                 find_RZ_nearby_iter, find_RZ_nearby_tol,            &
                 min_sheath_angle, bcs, part_kill_ratio,             &
+                sheath_Lambda, sheath_V_wall,                       &
                 use_sc, add_sources_in_sc, visco_sc_num,            &
                 D_perp_sc_num, D_par_sc_num, ZK_perp_sc_num,        &
                 ZK_par_sc_num, ZK_i_perp_sc_num, ZK_i_par_sc_num,   &
@@ -250,6 +253,18 @@ if (my_id .eq. 0) then
   else
     read(5,in1)
   endif
+
+  ! --- Floating-potential BC
+  if ( any(bcs(:)%floating_u) ) then
+    if ( any(bcs(:)%floating_u .and. .not. bcs(:)%dirichlet%u) ) then
+      write(*,*) 'ERROR: bcs%floating_u replaces the Dirichlet u rows, so dirichlet%u must stay .true. on those types, EXITING!'
+      stop
+    end if
+    if ( .not. floating_u_selftest(my_id) ) then
+      write(*,*) 'ERROR: floating_u normalisation selftest failed, EXITING!'
+      stop
+    end if
+  end if
 
   if ( ( n_tor .eq. 1 ) .and. freeboundary .and. (.not. freeboundary_equil) ) then
     write(*,*) 'WARNING: The parameter freeboundary is automatically changed to .false. since n_tor==1 and freeboundary_equil is .false.'

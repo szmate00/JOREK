@@ -35,9 +35,10 @@ use vacuum, ONLY: is_freebound
 use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_cos_dR, dpsi_RMP_cos_dZ, &
        psi_RMP_sin, dpsi_RMP_sin_dR, dpsi_RMP_sin_dZ, t_now, RMP_growth_rate, RMP_ramp_up_time,            &
        RMP_start_time, tstep, RMP_har_cos, RMP_har_sin, T_min,                                             &
-       mach_one_bnd_integral, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,                            &
+       mach_one_bnd_integral, mach1_omit_drift, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,          &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
-       bcs, loop_voltage, central_density, central_mass 
+       bcs, loop_voltage, central_density, central_mass, sheath_V_wall 
+use mod_floating_u, only: floating_u_norm
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -104,6 +105,9 @@ real*8  ::  dMach1BC,  dMach1BC_v,  dMach1BC_T,  dMach1BC_Ti, dMach1BC_Te,  dMac
 real*8  :: d2Mach1BC, d2Mach1BC_v, d2Mach1BC_T, d2Mach1BC_Tb, d2Mach1BC_Tbb
 
 integer :: node_indices( (n_order+1)/2, (n_order+1)/2 ), index_tmp, kk, ll
+real*8  :: fu_a_n, fu_C_T, fu_C_V, fu_target   ! floating-potential row: u = C_T*Te + C_V*V_wall
+real*8  :: m1_drift                            ! 1: nodal Mach-1 row with its ExB drift term (develop), 0: without (mach1_omit_drift)
+integer :: fu_var_T                            ! temperature trace variable: Te, or T in a single-T build
 logical, parameter :: include_2nd_derivatives = .false.
 
 RMPspectrum: if (RMP_on .and. (n_tor .ge. 3)) then !*****
@@ -156,6 +160,13 @@ end if RMPspectrum
 
 zbig        = 1.d12
 zbig_backup = zbig
+
+! --- Floating-potential row constants (mod_floating_u); the temperature trace variable it reads
+call floating_u_norm(fu_a_n, fu_C_T, fu_C_V)
+m1_drift = 1.d0
+if ( mach1_omit_drift ) m1_drift = 0.d0
+fu_var_T = var_T
+if ( with_TiTe ) fu_var_T = var_Te
 
 ! --- calculate node_indices
 call calculate_node_indices(node_indices)
@@ -332,7 +343,6 @@ do i=1, n_local_elms !=== do elements
             if ( (k==var_zj   ) .and. (.not. apply_current_BC) )       cycle
             if ( (k==var_vpar ) .and.  apply_cs .and. (bnd_type/=3)  ) cycle  ! vpar=cs is a special case (this is done below)
                                                                               ! however bnd_type=3 needs both BCs for different directions
-
 !            if ((k.eq.7) .and. (node_list%node(inode)%boundary .eq. 3)) cycle  !=== better included for ITER extended wall
 
             ! --- Fix derivatives in one direction
@@ -345,6 +355,20 @@ do i=1, n_local_elms !=== do elements
                 call boundary_conditions_add_one_entry(                 &
                        index_node, k, in, index_node, k, in,            &
                        zbig, index_min, index_max, a_mat)
+
+                ! --- Floating potential: u = C_T*Te + C_V*V_wall on every u trace DOF. The Te
+                ! --- column and the RHS make the row exact; V_wall enters the n=0 value DOF only.
+                if ( (k == var_u) .and. bcs(bnd_type)%floating_u ) then
+                  fu_target = fu_C_T * node_list%node(inode)%values(in, index_tmp, fu_var_T)
+                  if ( (index_tmp .eq. 1) .and. (in .eq. 1) ) fu_target = fu_target + fu_C_V * sheath_V_wall
+                  call boundary_conditions_add_one_entry(                        &
+                         index_node, var_u, in, index_node, fu_var_T, in,        &
+                         - zbig * fu_C_T, index_min, index_max, a_mat)
+                  call boundary_conditions_add_RHS(                              &
+                         index_node, var_u, in, index_min, index_max, RHS_loc,   &
+                         - zbig * ( node_list%node(inode)%values(in, index_tmp, var_u) - fu_target ), &
+                         a_mat%i_tor_min, a_mat%i_tor_max)
+                endif
               enddo
             enddo
             
@@ -537,10 +561,10 @@ do i=1, n_local_elms !=== do elements
           cs0_TT   = - 0.25d0 * gamma**2 / cs0**3 
           cs0_TTT  = 3.d0/8.d0* gamma**3 / cs0**5 
 
-          Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0               + factor / Btot * BigR**2 * U0_b/ps0_b 
+          Mach1BC     = - Vpar0   + direction / Btot * factor  * cs0               + m1_drift * factor / Btot * BigR**2 * U0_b/ps0_b 
           Mach1BC_v   = - 1.0
           Mach1BC_T   =           + direction / Btot * factor  * cs0_T 
-          Mach1BC_u   =                                                            + factor / Btot * BigR**2 * element_size_0/ps0_b 
+          Mach1BC_u   =                                                            + m1_drift * factor / Btot * BigR**2 * element_size_0/ps0_b 
           dMach1BC    = - Vpar0_b + direction / Btot * factor  * cs0_T * (Ti0_b+Te0_b)  &
                                   + direction / Btot * Hfact_b * cs0         
           dMach1BC_v  = - element_size_0
@@ -554,8 +578,8 @@ do i=1, n_local_elms !=== do elements
 
 
           if (n_order .ge. 5) then
-            dMach1BC     = dMach1BC + factor / Btot * BigR**2 * U0_bb/ps0_b
-            dMach1BC_ubb = + factor / Btot * BigR**2 * element_size_3/ps0_b
+            dMach1BC     = dMach1BC + m1_drift * factor / Btot * BigR**2 * U0_bb/ps0_b
+            dMach1BC_ubb = + m1_drift * factor / Btot * BigR**2 * element_size_3/ps0_b
             d2Mach1BC    = - Vpar0_bb + direction / Btot * factor   * cs0_TT * (Ti0_b+Te0_b)**2   &
                                       + direction / Btot * factor   * cs0_T  * (Ti0_bb+Te0_bb)   !&
                                       !+ direction / Btot * Hfact_b  * cs0_T  * T0_b *2.0 !&
