@@ -18,11 +18,11 @@ row). j_sat = c_sat rho (+-v_fl/|b.n|)/|B|, v_fl = factor*cs*|b.n| the parallel 
 imposes (factor = the `vpar_smoothing` weight). c_sat carries the sign of F0 like zj, so the current into the wall,
 -zj (B_pol.n)/F0, is independent of the field sign. Normalisation: `sheath_j_norm` in `mod_floating_u.f90`.
 
-`sheath_j_ion_slope` (s_i) and `sheath_j_e_slope` (s_e), default 0 (hard saturation on both sides). With s_i = 1 and
-s_e = e^Lambda the characteristic is continued along its tangent beyond floating and beyond electron saturation:
-a node asked for more than j_sat, or more than the thermal electron current, then sits at a potential a few Te off
-floating (Phi ~ Te (Lambda - 1 + j/j_sat) on the ion side) instead of having no root. That is the form that ran
-through detachment on `sheath-j-clean` (2026-09-28).
+`sheath_j_ion_slope` (s_i) and `sheath_j_e_slope` (s_e), default 0 (hard saturation on both sides, the form that
+runs, see below). With s_i = 1 and s_e = e^Lambda the characteristic is continued along its tangent beyond floating
+and beyond electron saturation: a node asked for more than j_sat, or more than the thermal electron current, then
+sits at a potential a few Te off floating (Phi ~ Te (Lambda - 1 + j/j_sat) on the ion side) instead of having no
+root. Not needed for stability once only the value DOF of u is released.
 
 ## Which rows the wall nodes keep (`mod_boundary_conditions.f90`)
 
@@ -37,7 +37,7 @@ through detachment on `sheath-j-clean` (2026-09-28).
 - Below the angle a sheath-type node keeps the floating row on u and Dirichlet on zj (frozen at its initial value).
 - psi and w stay Dirichlet everywhere.
 
-## Namelist
+## Namelist (the working setup)
 
 ```fortran
 bcs(1)%sheath_j   = .t.     ! target plates
@@ -46,10 +46,14 @@ bcs(5)%sheath_j   = .t.
 bcs(3)%floating_u = .t.     ! the rest of the wall floating (current frozen at its initial value)
 bcs(9)%floating_u = .t.
 mach1_omit_drift  = .t.     ! nodal Mach-1 row without its ExB term: no u column in the Vpar rows
-sheath_Lambda     = 3.d0
-sheath_j_ion_slope = 1.d0
-sheath_j_e_slope   = 20.085537d0   ! exp(sheath_Lambda)
 ```
+
+Ran from t = 0 through the production timestep ramp and past step 1000 (2026-09-28), AUG-like divertor with
+D puff and kinetic recycling, both targets detaching, with sheath_Lambda = 3 and hard saturation (both slopes 0).
+The same minimal setup also ran with the weak Bohm row on `sheath-j-clean` (no zj_zero, no wall-flux
+cancellation, no slopes, value-only release). Every earlier setup, on either Mach row and with any of those
+additions, died between steps 14 and 680 at the inner-target corner; the one change that removed that failure is
+releasing only the value DOF of u.
 
 Setup checks (initialise_parameters): a type is not both sheath_j and floating_u; `dirichlet%u` and `dirichlet%zj`
 stay .true. on sheath types (the release is per DOF, done here); `mach1` on sheath types.
