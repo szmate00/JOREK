@@ -62,6 +62,8 @@ real*8     :: Bgrad_rhoimp, Bgrad_rhoimp_psi, Bgrad_rhoimp_rhoimp, Bgrad_rhoimp_
 real*8     :: ZK_par_T, dZK_par_dT, ZKi_par_T, dZKi_par_dT, ZKe_par_T, dZKe_par_dT
 real*8     :: D_prof, D_par_local, ZK_prof, ZKi_prof, ZKe_prof, psi_norm, theta, zeta, delta_u_x, delta_u_y, delta_ps_x, delta_ps_y
 real*8     :: thc              ! thermal-force coefficient in Ohm's law (thermoelectric_ohm), 0 when off
+real*8     :: thp              ! coefficient of the heat flux carried by the current (thermoelectric_heat), 0 when off
+real*8     :: thp_c            ! its prefactor at a Gauss point: (gamma-1)*2*tauIC*thp*F0**2/R
 real*8     :: D_prof_imp, D_par_local_imp
 real*8     :: V_prof_pinch, psi_grad2
 real*8, dimension(0:n_var)         :: rhs_ij, rhs_ij_k
@@ -291,6 +293,17 @@ zeta  = time_evol_zeta * 2.0d0 * tstep / (tstep + tstep_prev)
 ! --- the electron heat flux, is NOT included.
 thc = 0.d0
 if ( thermoelectric_ohm ) thc = thermoelectric_coef
+
+! --- Heat flux carried by the current (Onsager's partner of the thermal force): q_e,par = -thp*Te*j_par/e along b
+! --- (Braginskii; thp = thermoelectric_coef = 0.71 for Z = 1), in the electron pressure equation as
+! --- -(gamma-1)*div(q b), weak form +(gamma-1)*int q (b.grad v) dV, the same (gamma-1) as the Ohmic heating.
+! --- Normalisation as in the thermal force: 1/e -> 2*tauIC*F0 (from the tauIC electron-pressure term), and
+! --- j_par = j_phi*b_phi = -zj*F0/(R**2*B) (j_phi = -zj/R, from the Ohmic term of the psi equation). So
+! --- q (b.grad v) = 2*tauIC*thp*F0**2 * Te*zj * (B.grad v) / (R**2 * B**2), with B.grad v = Bgrad_T_star (+ the
+! --- toroidal part Bgrad_T_k_star in the _k blocks). No surface term: no heat is carried through the wall by this
+! --- flux (as for parallel conduction; the sheath heat flux is the wall closure). Two-temperature build only.
+thp = 0.d0
+if ( thermoelectric_heat ) thp = thermoelectric_coef
 
 ! --- Do we need to use the FFT or non-FFT version?
 if ( (i_tor_min == 1) .and. (i_tor_max == n_tor) ) then
@@ -1985,6 +1998,10 @@ do i=1,n_vertex_max
                          + zeta * v * alpha_e * Te0 * delta_g(mp,var_rhoimp,ms,mt) * BigR    * xjac         * factor(var_Te,10)
               endif ! (with_impurities)
   
+              ! --- heat flux carried by the current (thermoelectric_heat), poloidal part of b.grad v
+              thp_c = (GAMMA-1.d0) * 2.d0 * tauIC * thp * F0**2 / BigR
+              rhs_ij(var_Te) = rhs_ij(var_Te) + thp_c * Te0 * zj0 * Bgrad_T_star / BB2           * xjac * tstep
+
               rhs_ij_k(var_Te) = - (ZKe_par_T-ZKe_prof) * BigR / BB2 * Bgrad_T_k_star * Bgrad_Te * xjac * tstep * factor(var_Te,5) &
                                  - ZKe_prof * BigR * (                + v_p*Te0_p /BigR**2 )     * xjac * tstep * factor(var_Te,6) &
                            - tgnum_Te * 0.25d0 / BigR * vpar0**2                                                    &
@@ -1993,6 +2010,9 @@ do i=1,n_vertex_max
                            - tgnum_Te * 0.25d0 / BigR * vpar0**2                                                    &
                                    * (r0+alpha_e_bis*rimp0) * (Te0_x * ps0_y - Te0_y * ps0_x + F0 / BigR * Te0_p)                       &
                                    * (                                   + F0 / BigR * v_p) * xjac * tstep * tstep * factor(var_Te,8 )
+
+              ! --- heat flux carried by the current (thermoelectric_heat), toroidal part of b.grad v
+              rhs_ij_k(var_Te) = rhs_ij_k(var_Te) + thp_c * Te0 * zj0 * Bgrad_T_k_star / BB2     * xjac * tstep
 
               if (with_impurities) then
                 rhs_ij_k(var_Te) = rhs_ij_k(var_Te) + &
@@ -3876,6 +3896,16 @@ do i=1,n_vertex_max
   
                                 + tgnum_Te * 0.25d0 / BigR * vpar0**2 &
                                   * (r0 + alpha_e_bis * rimp0) * ( + F0 / BigR * Te_p) * ( + F0 / BigR * v_p)           * xjac * theta * tstep * tstep
+
+                    ! --- heat flux carried by the current (thermoelectric_heat): columns of thp_c*Te0*zj0*(B.grad v)/BB2 on
+                    ! --- Te, zj and psi (through B.grad v and BB2), poloidal and toroidal parts of b.grad v
+                    amat(var_Te,var_Te)    = amat(var_Te,var_Te)  - thp_c * Te  * zj0 * Bgrad_T_star   / BB2 * xjac * theta * tstep
+                    amat(var_Te,var_zj)    = amat(var_Te,var_zj)  - thp_c * Te0 * zj  * Bgrad_T_star   / BB2 * xjac * theta * tstep
+                    amat(var_Te,var_psi)   = amat(var_Te,var_psi) - thp_c * Te0 * zj0 * ( Bgrad_T_star_psi / BB2              &
+                                                                    - Bgrad_T_star * BB2_psi / BB2**2 )      * xjac * theta * tstep
+                    amat_k(var_Te,var_Te)  = amat_k(var_Te,var_Te)  - thp_c * Te  * zj0 * Bgrad_T_k_star / BB2 * xjac * theta * tstep
+                    amat_k(var_Te,var_zj)  =                        - thp_c * Te0 * zj  * Bgrad_T_k_star / BB2 * xjac * theta * tstep
+                    amat_k(var_Te,var_psi) = amat_k(var_Te,var_psi) + thp_c * Te0 * zj0 * Bgrad_T_k_star * BB2_psi / BB2**2 * xjac * theta * tstep
    
                     if ( with_vpar ) then
                       amat(var_Te,var_vpar) = + v * (r0 + rimp0 * alpha_e_bis) * F0 / BigR * Vpar * Te0_p * xjac * theta * tstep &

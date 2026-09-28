@@ -877,7 +877,8 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   write(*,LOGI_FMT) 'mach_one_bnd_integral ', mach_one_bnd_integral
   write(*,LOGI_FMT) 'mach1_omit_drift      ', mach1_omit_drift
   write(*,LOGI_FMT) 'thermoelectric_ohm    ', thermoelectric_ohm
-  if ( thermoelectric_ohm ) then
+  write(*,LOGI_FMT) 'thermoelectric_heat   ', thermoelectric_heat
+  if ( thermoelectric_ohm .or. thermoelectric_heat ) then
     write(*,REAL_FMT) 'thermoelectric_coef   ', thermoelectric_coef
   end if
   write(*,LOGI_FMT) 'deuterium_adas        ', deuterium_adas       

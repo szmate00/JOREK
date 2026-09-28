@@ -519,6 +519,7 @@ subroutine preset_parameters
   tauIC = 0.d0
   thermoelectric_ohm  = .false.   ! thermal force 0.71*grad_par(Te)/e in Ohm's law
   thermoelectric_coef = 0.71d0    ! Braginskii, Z = 1
+  thermoelectric_heat = .false.   ! heat flux -0.71*Te*j_par/e carried by the current (electron energy equation)
   Wdia  = .false.
 
   zjz_0 =  0.1173d0   

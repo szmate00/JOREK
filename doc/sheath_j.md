@@ -69,3 +69,17 @@ on the ion side, beyond electron saturation (hard cap: no u column), with vpar_s
 characteristic on both sides (worst 1.4e-7); the continued residual is continuous at floating and C1 at the cap; the
 saturation current flows into the wall for both signs of F0; with sheath_j off the assembled edge is bitwise
 identical to develop's. The DOF release (`mod_boundary_conditions.f90`) needs the full build.
+
+## Thermoelectric terms (physics options, independent of the BC)
+
+- `thermoelectric_ohm` (default .f.): the thermal force in Ohm's law, E_par gains -c*grad_par(Te)/e with
+  c = `thermoelectric_coef` (0.71, Braginskii Z = 1). Written as the tauIC electron-pressure term with Pe/rho ->
+  c*Te, so it shares that term's normalisation; needs tauIC /= 0.
+- `thermoelectric_heat` (default .f.): its Onsager partner, the heat flux carried by the current,
+  q_e,par = -c*Te*j_par/e along b, in the electron energy equation as -(gamma-1) div(q b) (weak form
+  +(gamma-1) int q (b.grad v) dV, the same (gamma-1) as the Ohmic heating). 1/e -> 2*tauIC*F0 as in the thermal
+  force, j_par = -zj*F0/(R**2 B). No surface term: this flux carries no heat through the wall (the sheath heat flux
+  is the wall closure, as for parallel conduction). Two-temperature model and tauIC /= 0 required. Exact columns
+  on Te, zj and psi, poloidal and toroidal parts of b.grad v. Not compiled by the serial harness (volume assembler).
+
+Both use the same coefficient, as the Onsager relation requires; they can be switched separately.

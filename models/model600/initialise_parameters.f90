@@ -67,6 +67,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 density_reflection,                                 &
                 mach_one_bnd_integral, mach1_omit_drift,            &
                 thermoelectric_ohm, thermoelectric_coef,            &
+                thermoelectric_heat,                                &
                 Vpar_smoothing,                                     &
                 Vpar_smoothing_coef,                                &
                 zjz_0, zjz_1, zj_coef,                              &
@@ -259,6 +260,10 @@ if (my_id .eq. 0) then
   ! --- Thermal force in Ohm's law: shares the normalisation of the tauIC electron-pressure term
   if ( thermoelectric_ohm .and. tauIC .eq. 0.d0 ) then
     write(*,*) 'ERROR: thermoelectric_ohm shares the normalisation of the tauIC electron-pressure term; set tauIC, EXITING!'
+    stop
+  end if
+  if ( thermoelectric_heat .and. ( tauIC .eq. 0.d0 .or. .not. with_TiTe ) ) then
+    write(*,*) 'ERROR: thermoelectric_heat needs tauIC /= 0 (normalisation of 1/e) and the two-temperature model, EXITING!'
     stop
   end if
 
