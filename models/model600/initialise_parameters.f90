@@ -211,6 +211,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 find_RZ_nearby_iter, find_RZ_nearby_tol,            &
                 min_sheath_angle, bcs, part_kill_ratio,             &
                 sheath_Lambda, sheath_V_wall,                       &
+                sheath_j_ion_slope, sheath_j_e_slope,               &
                 use_sc, add_sources_in_sc, visco_sc_num,            &
                 D_perp_sc_num, D_par_sc_num, ZK_perp_sc_num,        &
                 ZK_par_sc_num, ZK_i_perp_sc_num, ZK_i_par_sc_num,   &
@@ -253,6 +254,26 @@ if (my_id .eq. 0) then
   else
     read(5,in1)
   endif
+
+  ! --- Sheath current BC
+  if ( any(bcs(:)%sheath_j) ) then
+    if ( any(bcs(:)%sheath_j .and. bcs(:)%floating_u) ) then
+      write(*,*) 'ERROR: bcs%sheath_j and bcs%floating_u on the same boundary type, EXITING!'
+      stop
+    end if
+    if ( any(bcs(:)%sheath_j .and. .not. (bcs(:)%dirichlet%u .and. bcs(:)%dirichlet%zj)) ) then
+      write(*,*) 'ERROR: bcs%sheath_j releases the u and zj rows itself, so dirichlet%u and dirichlet%zj must stay .true., EXITING!'
+      stop
+    end if
+    if ( any(bcs(:)%sheath_j .and. .not. bcs(:)%mach1) ) then
+      write(*,*) 'ERROR: bcs%sheath_j needs the Mach-1 row on the same type (j_sat is the Bohm flux that row imposes), EXITING!'
+      stop
+    end if
+    if ( .not. floating_u_selftest(my_id) ) then
+      write(*,*) 'ERROR: floating_u normalisation selftest failed, EXITING!'
+      stop
+    end if
+  end if
 
   ! --- Floating-potential BC
   if ( any(bcs(:)%floating_u) ) then

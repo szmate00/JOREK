@@ -98,6 +98,8 @@ subroutine preset_parameters
   min_sheath_angle      = 1.d0   ! 1 degree (not in radians)
   sheath_Lambda         = 3.d0   ! floating sheath drop, e*Phi/Te
   sheath_V_wall         = 0.d0   ! wall potential [V]
+  sheath_j_ion_slope    = 0.d0   ! bcs%sheath_j characteristic: 1 = tangent continuation beyond floating (the form that ran through detachment)
+  sheath_j_e_slope      = 0.d0   ! bcs%sheath_j characteristic: exp(sheath_Lambda) = tangent continuation beyond electron saturation
 
   amix                 = 0.d0
   amix_freeb           = 0.85d0
@@ -444,6 +446,7 @@ subroutine preset_parameters
 
   ! --- Floating potential (model600)
   bcs(:)%floating_u = .false.
+  bcs(:)%sheath_j   = .false.
 
   bcs(  1)%mach1 = .true.
   bcs(3:5)%mach1 = .true.

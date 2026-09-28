@@ -65,6 +65,8 @@ module phys_module
   real*8  :: min_sheath_angle     !< For sheath boundary conditions: Minimum incident angle for heat and particle fluxes (in degrees)
   real*8  :: sheath_Lambda        !< Floating sheath potential drop in units of Te/e (model600 bcs%floating_u)
   real*8  :: sheath_V_wall        !< Wall potential in volts (model600 bcs%floating_u)
+  real*8  :: sheath_j_ion_slope   !< bcs%sheath_j: slope of the characteristic beyond floating on the ion side, f = 1 - e^x - s*x for x < 0 (0: hard ion saturation)
+  real*8  :: sheath_j_e_slope     !< bcs%sheath_j: slope beyond electron saturation, f = 1 - e^Lambda - s_e*(x - Lambda) for x > Lambda (0: hard cap)
   integer :: mode(n_tor)          !< Toroidal mode number corresponding to the JOREK modes, e.g., for n_period=8 and n_tor=3, mode(:)=0,8,8
   integer :: mode_coord(n_coord_tor)  !< Toroidal mode number corresponding to the JOREK RZ grid modes
   integer :: nout                 !< Output a restart file every nout timesteps
@@ -201,6 +203,7 @@ module phys_module
     type (type_natural_bc)   :: natural
     logical                  :: mach1 
     logical                  :: floating_u !< floating-potential BC on u: Phi - V_wall = Lambda*Te/e (model600)
+    logical                  :: sheath_j   !< sheath current BC: zj = j_sat*f(e*Phi/Te) as the wall zj row, the potential's value from the vorticity equation (model600)
   end type type_bcs
 
   type (type_bcs), dimension(max_bnd_types) :: bcs   

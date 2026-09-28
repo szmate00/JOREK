@@ -37,7 +37,7 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        RMP_start_time, tstep, RMP_har_cos, RMP_har_sin, T_min,                                             &
        mach_one_bnd_integral, mach1_omit_drift, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,          &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
-       bcs, loop_voltage, central_density, central_mass, sheath_V_wall 
+       bcs, loop_voltage, central_density, central_mass, sheath_V_wall, min_sheath_angle 
 use mod_floating_u, only: floating_u_norm
 use tr_module
 use mpi_mod
@@ -108,6 +108,8 @@ integer :: node_indices( (n_order+1)/2, (n_order+1)/2 ), index_tmp, kk, ll
 real*8  :: fu_a_n, fu_C_T, fu_C_V, fu_target   ! floating-potential row: u = C_T*Te + C_V*V_wall
 real*8  :: m1_drift                            ! 1: nodal Mach-1 row with its ExB drift term (develop), 0: without (mach1_omit_drift)
 integer :: fu_var_T                            ! temperature trace variable: Te, or T in a single-T build
+logical :: sj_edge(2), sj_rel_val, sj_rel_der, sj_rel, fu_dof   ! sheath edge per direction; zj value / this visit's zj derivative released
+integer :: sj_ivd(2), jdir, jv2, jnb
 logical, parameter :: include_2nd_derivatives = .false.
 
 RMPspectrum: if (RMP_on .and. (n_tor .ge. 3)) then !*****
@@ -234,6 +236,42 @@ do i=1, n_local_elms !=== do elements
 
       bnd_type = node_list%node(inode)%boundary
 
+      ! --- Sheath current BC (bcs%sheath_j). A wall edge in direction jdir carries the sheath row
+      ! --- (mod_boundary_matrix_open) if both its endpoints are sheath types and the incidence along it is
+      ! --- above sin(min_sheath_angle) (sj_edge). zj: the value DOF is released if any incident edge carries
+      ! --- the row, a derivative DOF only if an edge in ITS direction does (a flux-surface derivative at a
+      ! --- target corner left to a row that cannot determine it went to -19 kV in one step). u: ONLY the value
+      ! --- DOF is released (then set by the vorticity equation); its tangential-derivative DOFs keep the
+      ! --- floating row u_s = C_T*Te_s. Released slope DOFs have no anchor (the characteristic fixes the
+      ! --- level of u at the Gauss points, not its slope) and on the finely resolved ray-cast target segments
+      ! --- they formed a sub-element sawtooth of dPhi/ds whose alternating ExB emptied the wall cell next to a
+      ! --- floating segment (measured with the per-Gauss-point wall profile, sheath-j-clean 2026-09-27). The
+      ! --- wall potential's slope within an element is thus the floating slope; its level follows the current.
+      sj_edge = .false. ; sj_ivd = 0
+      if ( bcs(bnd_type)%sheath_j ) then
+        do jdir = 1, 2
+          if ( jdir .eq. 1 ) then
+            jv2 = mod(iv  ,4) + 1
+          else
+            jv2 = mod(iv+2,4) + 1
+          endif
+          jnb = element_list%element(ielm)%vertex(jv2)
+          if ( node_list%node(jnb)%boundary .eq. 0 ) cycle
+          if ( (iv*jv2 .eq. 2) .or. (iv*jv2 .eq. 12) ) then
+            sj_ivd(jdir) = 2
+          else
+            sj_ivd(jdir) = 3
+          endif
+          sj_edge(jdir) = bcs(node_list%node(jnb)%boundary)%sheath_j .and. &
+                          ( node_incidence(jdir) .ge. sin(min_sheath_angle*PI/180.d0) )
+        enddo
+      endif
+      sj_rel_val = any(sj_edge)
+      sj_rel_der = .false.
+      do jdir = 1, 2
+        if ( sj_edge(jdir) .and. (sj_ivd(jdir) .eq. iv_dir) ) sj_rel_der = .true.
+      enddo
+
       do in=a_mat%i_tor_min, a_mat%i_tor_max  ! === do n_tor
       
         if (keep_n0_const  .and.  in .eq. 1 ) then
@@ -352,13 +390,27 @@ do i=1, n_local_elms !=== do elements
                 if ( (iv_dir .eq. 2) .and. (ll .gt. 1) ) cycle ! do only s-derivatives and node value
                 index_tmp = node_indices(kk,ll)
                 index_node = node_list%node(inode)%index(index_tmp)
+
+                ! --- Sheath BC: released DOFs are owned by the characteristic (zj) and the vorticity equation (u)
+                sj_rel = .false.
+                if ( index_tmp .eq. 1 ) then
+                  sj_rel = sj_rel_val
+                else
+                  sj_rel = sj_rel_der
+                endif
+                if ( (k == var_zj) .and. sj_rel ) cycle
+                if ( (k == var_u ) .and. sj_rel .and. (index_tmp .eq. 1) ) cycle
+
                 call boundary_conditions_add_one_entry(                 &
                        index_node, k, in, index_node, k, in,            &
                        zbig, index_min, index_max, a_mat)
 
-                ! --- Floating potential: u = C_T*Te + C_V*V_wall on every u trace DOF. The Te
-                ! --- column and the RHS make the row exact; V_wall enters the n=0 value DOF only.
-                if ( (k == var_u) .and. bcs(bnd_type)%floating_u ) then
+                ! --- Floating potential: u = C_T*Te + C_V*V_wall on every u trace DOF of a floating type, and on
+                ! --- the u DOFs of a sheath type that are not released (every derivative DOF, and the value DOF
+                ! --- below the angle). The Te column and the RHS make the row exact; V_wall enters the n=0 value
+                ! --- DOF only.
+                fu_dof = bcs(bnd_type)%floating_u .or. ( bcs(bnd_type)%sheath_j .and. .not. (sj_rel .and. index_tmp .eq. 1) )
+                if ( (k == var_u) .and. fu_dof ) then
                   fu_target = fu_C_T * node_list%node(inode)%values(in, index_tmp, fu_var_T)
                   if ( (index_tmp .eq. 1) .and. (in .eq. 1) ) fu_target = fu_target + fu_C_V * sheath_V_wall
                   call boundary_conditions_add_one_entry(                        &
@@ -778,6 +830,51 @@ if (RMP_on) then
 endif
 
 return
+
+contains
+
+  !> |b.n| = |B_pol.n|/|B| at the current node along wall direction jdir (1: towards vertex iv+1,
+  !! 2: towards vertex iv-1, as in the direction loop). B_pol.n depends on the tangential psi
+  !! derivative only, so this is a static map (psi is Dirichlet on the wall).
+  real*8 function node_incidence(jdir)
+    integer, intent(in) :: jdir
+    real*8 :: Hb(2,n_degrees_1d), Hb_s(2,n_degrees_1d), Hb_ss(2,n_degrees_1d)
+    real*8 :: es_s, es_t, p_s, p_t, r_s_, r_t_, z_s_, z_t_, xj, p_x, p_y, g_b(2), nrm(2), bt, rr, nd(2)
+    integer :: jv2_, jv3_
+    logical :: s_const
+    if ( jdir .eq. 1 ) then
+      jv2_ = mod(iv  ,4) + 1 ; jv3_ = mod(iv+2,4) + 1
+    else
+      jv2_ = mod(iv+2,4) + 1 ; jv3_ = mod(iv  ,4) + 1
+    endif
+    s_const = ( (iv*jv2_ .eq. 6) .or. (iv*jv2_ .eq. 4) )
+    nd = (/ node_list%node(inode)%x(1,1,1) - node_list%node(element_list%element(ielm)%vertex(jv3_))%x(1,1,1), &
+            node_list%node(inode)%x(1,1,2) - node_list%node(element_list%element(ielm)%vertex(jv3_))%x(1,1,2) /)
+    nd = nd / norm2(nd)
+    call basisfunctions1(0.d0, Hb, Hb_s, Hb_ss)
+    es_s = element_list%element(ielm)%size(iv,2) * Hb_s(1,2)
+    es_t = element_list%element(ielm)%size(iv,3) * Hb_s(1,2)
+    if ((iv .eq. 2) .or. (iv .eq. 3)) es_s = - es_s
+    if ((iv .eq. 3) .or. (iv .eq. 4)) es_t = - es_t
+    p_s  = node_list%node(inode)%values(1,2,var_psi) * es_s
+    p_t  = node_list%node(inode)%values(1,3,var_psi) * es_t
+    rr   = node_list%node(inode)%x(1,1,1)
+    r_s_ = node_list%node(inode)%x(1,2,1) * es_s ; r_t_ = node_list%node(inode)%x(1,3,1) * es_t
+    z_s_ = node_list%node(inode)%x(1,2,2) * es_s ; z_t_ = node_list%node(inode)%x(1,3,2) * es_t
+    xj   = r_s_*z_t_ - r_t_*z_s_
+    p_x  = (   z_t_ * p_s - z_s_ * p_t ) / xj
+    p_y  = ( - r_t_ * p_s + r_s_ * p_t ) / xj
+    if ( s_const ) then
+      g_b = (/  z_t_, -r_t_ /) / xj
+    else
+      g_b = (/ -z_s_,  r_s_ /) / xj
+    endif
+    nrm  = dot_product(g_b, nd) * g_b
+    nrm  = nrm / norm2(nrm)
+    bt   = sqrt(F0**2 + p_x**2 + p_y**2) / rr
+    node_incidence = abs( p_y*nrm(1) - p_x*nrm(2) ) / (rr * bt)
+  end function node_incidence
+
 end subroutine boundary_conditions 
 
 end module mod_boundary_conditions

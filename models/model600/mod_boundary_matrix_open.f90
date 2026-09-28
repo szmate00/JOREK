@@ -17,6 +17,7 @@ use phys_module
 use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
+use mod_floating_u, only: floating_u_norm, sheath_j_norm
 
 implicit none
 
@@ -56,6 +57,9 @@ real*8     :: Ti0, Ti0_s, Ti0_t, Ti0_x, Ti0_y, Ti0_p
 real*8     :: Te0, Te0_s, Te0_t, Te0_x, Te0_y, Te0_p
 real*8     :: r0, r0_s, r0_t, r0_p, r0_x, r0_y, rho, rho_s, rho_t, rho_x, rho_y
 real*8     :: c_1, c_2, c_3, c_angle, neutral_source
+logical    :: sj_on, sj_here                                     ! sheath current row on this edge / at this Gauss point
+real*8     :: sj_an, sj_csat, sj_CT, sj_CV, sj_jsat, sj_vfl, sj_ut   ! normalisation, j_sat, the Bohm parallel flow, u - C_V*V_wall
+real*8     :: sc_x, sc_ex, sc_f, sc_dfdu, sc_dfdTe, sc_res, sc_w, sc_Tc, sc_dTc, sc_drc   ! the characteristic and its columns
 real*8     :: element_size_ij, element_size_kl, element_size_perp
 real*8     :: grad_t(2), B0_R, B0_Z, factor_cs_bnd_integral
 logical    :: xpoint2
@@ -138,6 +142,23 @@ do i_var=1, n_var
   if ( (i_var==var_rhon) .and. (bcs(bnd_type1)%natural%rhon .or. bcs(bnd_type2)%natural%rhon))  apply_natural_bc(i_var)=.true.
   if ( (i_var==var_vpar) .and. (bcs(bnd_type1)%natural%vpar .or. bcs(bnd_type2)%natural%vpar))  apply_natural_bc(i_var)=.true.
 enddo
+
+! --- Sheath current BC (bcs%sheath_j): on edges whose both endpoints are sheath types the zj rows carry the
+! --- characteristic zj = j_sat*f(x), x = Lambda - a_n*(u - C_V*V_wall)/(2Te) = Lambda - e(Phi - V_wall)/Te, at the
+! --- Gauss points where |b.n| >= sin(min_sheath_angle) (the nodes there have their Dirichlet zj rows and the
+! --- value DOF of u released, mod_boundary_conditions; u follows from the vorticity equation).
+! --- j_sat = c_sat*rho*(+-v_fl/|b.n|)/|B|, v_fl = factor*cs*|b.n|: the parallel Bohm flow the nodal Mach-1 row
+! --- imposes (factor = the vpar_smoothing weight). f = 1 - e^x between floating (x = 0) and electron saturation
+! --- (x = Lambda); beyond them the tangent continuation with slopes sheath_j_ion_slope (x < 0) and
+! --- sheath_j_e_slope (x > Lambda), so a node asked for more than j_sat, or more than the thermal electron
+! --- current, sits a few Te off floating instead of having no root.
+sj_on = bcs(bnd_type1)%sheath_j .and. bcs(bnd_type2)%sheath_j
+sj_an = 0.d0 ; sj_csat = 0.d0 ; sj_CT = 0.d0 ; sj_CV = 0.d0
+if ( sj_on ) then
+  apply_natural_bc(var_zj) = .true.
+  call sheath_j_norm(sj_an, sj_csat)
+  call floating_u_norm(sj_an, sj_CT, sj_CV)
+endif
 
 do i=1,2    ! sum over 2 verices
   
@@ -320,6 +341,40 @@ do ms=1, n_gauss
     factor_cs_bnd_integral = 0.d0
     if (mach_one_bnd_integral) factor_cs_bnd_integral = 1.d0
 
+    ! --- Sheath current row at this Gauss point: residual zj - j_sat*f(x), Zbig*dl weight, exact columns on zj, u,
+    ! --- rho and the temperatures (through cs and through x). corr_neg-corrected Te and rho as in every natural row:
+    ! --- a raw Te <= 0 would flip the sign of x and a raw rho <= 0 the sign of j_sat. Btot and sign(B.n) lagged.
+    sj_here = sj_on .and. ( abs(bdotn) .ge. sin(c_angle) )
+    sj_vfl  = max(factor, 0.d0) * cs0
+    sj_jsat = 0.d0
+    sc_w = 0.d0 ; sc_x = 0.d0 ; sc_ex = 1.d0 ; sc_f = 0.d0 ; sc_dfdu = 0.d0 ; sc_dfdTe = 0.d0 ; sc_res = 0.d0
+    sc_Tc = 1.d0 ; sc_dTc = 1.d0 ; sc_drc = 1.d0
+    if ( sj_here ) then
+      sj_jsat = sj_csat * r0_corr * normal_sign * sj_vfl / Btot
+      sc_Tc   = Te0_corr
+      sc_dTc  = dcorr_neg_temp_dT(Te0)
+      sc_drc  = dcorr_neg_dens_drho(r0)
+      sj_ut   = eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall
+      sc_x    = sheath_Lambda - sj_an * sj_ut / (2.d0*sc_Tc)
+      sc_ex   = exp( min(sc_x, sheath_Lambda) )
+      sc_f    = 1.d0 - sc_ex - sheath_j_ion_slope * min(sc_x, 0.d0)
+      if ( sc_x .lt. sheath_Lambda ) then                            ! d(-e^x)/dx = -e^x, zero at and beyond the cap
+        sc_dfdu  =   sc_ex * sj_an / (2.d0*sc_Tc)
+        sc_dfdTe = - sc_ex * sj_an * sj_ut / (2.d0*sc_Tc**2) * sc_dTc
+      endif
+      if ( sc_x .lt. 0.d0 ) then                                     ! ion side beyond floating: -s*x
+        sc_dfdu  = sc_dfdu  + sheath_j_ion_slope * sj_an / (2.d0*sc_Tc)
+        sc_dfdTe = sc_dfdTe - sheath_j_ion_slope * sj_an * sj_ut / (2.d0*sc_Tc**2) * sc_dTc
+      endif
+      if ( sc_x .gt. sheath_Lambda ) then                            ! beyond electron saturation: -s_e*(x - Lambda)
+        sc_f     = sc_f - sheath_j_e_slope * ( sc_x - sheath_Lambda )
+        sc_dfdu  = sc_dfdu  + sheath_j_e_slope * sj_an / (2.d0*sc_Tc)
+        sc_dfdTe = sc_dfdTe - sheath_j_e_slope * sj_an * sj_ut / (2.d0*sc_Tc**2) * sc_dTc
+      endif
+      sc_res  = eq_g(mp,var_zj,ms) - sj_jsat * sc_f
+      sc_w    = Zbig * dl
+    endif
+
     do i=1,2                ! loop over nodes
 
       do j=1,2              ! loop over basis functions
@@ -335,6 +390,9 @@ do ms=1, n_gauss
           if (with_neutrals) then
             rhs_ij(var_rhon) =  v * neutral_source * BigR * dl * tstep     
           endif
+
+          ! --- Sheath current row (bcs%sheath_j)
+          rhs_ij(var_zj) = - v * sc_w * sc_res
 
           ! --- Most B.C.s need vpar
           if (with_vpar) then
@@ -411,6 +469,19 @@ do ms=1, n_gauss
                 cs_T   = gamma * T  / (2.d0 * cs0)
                 cs_Ti  = gamma * Ti / (2.d0 * cs0)
                 cs_Te  = gamma * Te / (2.d0 * cs0)
+
+                ! --- Sheath current row: exact columns of zj - j_sat*f (amat is assigned per (k,l,in), never accumulated)
+                amat(var_zj,var_zj)  =   v * sc_w * psi
+                amat(var_zj,var_rho) = - v * sc_w * sj_csat * normal_sign * sj_vfl / Btot * sc_f * sc_drc * rho
+                amat(var_zj,var_u)   = - v * sc_w * sj_jsat * sc_dfdu * psi
+                if (with_TiTe) then
+                  amat(var_zj,var_Ti)  = - v * sc_w * sj_csat * r0_corr * normal_sign * max(factor, 0.d0) / Btot * sc_f * cs_Ti
+                  amat(var_zj,var_Te)  = - v * sc_w * ( sj_csat * r0_corr * normal_sign * max(factor, 0.d0) / Btot * sc_f * cs_Te &
+                                                        + sj_jsat * sc_dfdTe * Te )
+                else
+                  amat(var_zj,var_T)   = - v * sc_w * ( sj_csat * r0_corr * normal_sign * max(factor, 0.d0) / Btot * sc_f * cs_T &
+                                                        + sj_jsat * sc_dfdTe * 0.5d0 * T )
+                endif
 
                 ! --- Most of natural BCs need vpar
                 if (with_vpar) then
