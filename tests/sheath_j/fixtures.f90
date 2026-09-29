@@ -31,7 +31,8 @@ module phys_module
   real*8 :: T_min_neg=3.d-5,T_1=0.01d0,corr_neg_temp_coef(2)=[0.5d0,0.5d0]
   real*8 :: central_density=1.d0,central_mass=2.014d0,sheath_Lambda=3.d0,sheath_V_wall=0.d0
   logical :: vpar_smoothing=.false.,mach_one_bnd_integral=.false.,mach1_omit_drift=.false.
-  real*8  :: sheath_j_ion_slope=0.d0,sheath_j_e_slope=0.d0
+  real*8  :: sheath_j_ion_slope=0.d0,sheath_j_e_slope=0.d0,sheath_bias_V=0.d0
+  integer :: sheath_bias_type=1
   logical :: sheath_heat_total_flow=.false.,recycling_total_flow=.false.
   real*8  :: t_now=0.d0,T_min=2.d-6
   real*8 :: vpar_smoothing_coef(3)=[0.02d0,0.016d0,0.005754d0]

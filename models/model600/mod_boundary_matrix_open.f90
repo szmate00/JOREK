@@ -61,6 +61,7 @@ logical    :: sj_on, sj_here                                     ! sheath curren
 real*8     :: sj_an, sj_csat, sj_CT, sj_CV, sj_jsat, sj_vfl, sj_ut   ! normalisation, j_sat, the Bohm parallel flow, u - C_V*V_wall
 real*8     :: sc_x, sc_ex, sc_f, sc_dfdu, sc_dfdTe, sc_res, sc_w, sc_Tc, sc_dTc, sc_drc   ! the characteristic and its columns
 logical    :: tf_on                                              ! sheath heat sinks on the total outgoing flow on this edge (sheath_heat_total_flow)
+real*8     :: sb_node(2), sb_V                                   ! outer-plate bias at the two edge nodes and at the Gauss point [V]
 real*8     :: tf_orient, tf_vEn, tf_Bn, tf_vn, tf_out, dx_n, dx_v, dx_p, dx_u   ! total minus parallel flow measure and its columns
 real*8     :: element_size_ij, element_size_kl, element_size_perp
 real*8     :: grad_t(2), B0_R, B0_Z, factor_cs_bnd_integral
@@ -165,6 +166,16 @@ sj_on = bcs(bnd_type1)%sheath_j .and. bcs(bnd_type2)%sheath_j
 ! --- untouched: dx_* = total - parallel measure and its columns (trial Vpar, psi_s, u_s), zero when off.
 tf_on = sheath_heat_total_flow .and. with_vpar .and. bcs(bnd_type1)%mach1 .and. bcs(bnd_type2)%mach1
 sj_an = 0.d0 ; sj_csat = 0.d0 ; sj_CT = 0.d0 ; sj_CV = 0.d0
+
+! --- Outer-plate bias (sheath_bias_V): at wall nodes of type sheath_bias_type with R > R of the lower X-point the
+! --- wall potential is sheath_V_wall + sheath_bias_V. Interpolated to the Gauss points with the value basis, so it
+! --- ramps over the one edge between a biased and an unbiased node instead of stepping.
+sb_node = 0.d0
+if ( sheath_bias_V .ne. 0.d0 ) then
+  do i = 1, 2
+    if ( nodes(i)%boundary .eq. sheath_bias_type .and. nodes(i)%x(1,1,1) .gt. R_xpoint(1) ) sb_node(i) = sheath_bias_V
+  enddo
+endif
 if ( sj_on ) then
   apply_natural_bc(var_zj) = .true.
   call sheath_j_norm(sj_an, sj_csat)
@@ -382,7 +393,8 @@ do ms=1, n_gauss
       sc_Tc   = Te0_corr
       sc_dTc  = dcorr_neg_temp_dT(Te0)
       sc_drc  = dcorr_neg_dens_drho(r0)
-      sj_ut   = eq_g(mp,var_u,ms) - sj_CV*sheath_V_wall
+      sb_V    = H1(1,1,ms) * sb_node(1) + H1(2,1,ms) * sb_node(2)
+      sj_ut   = eq_g(mp,var_u,ms) - sj_CV*(sheath_V_wall + sb_V)
       sc_x    = sheath_Lambda - sj_an * sj_ut / (2.d0*sc_Tc)
       sc_ex   = exp( min(sc_x, sheath_Lambda) )
       sc_f    = 1.d0 - sc_ex - sheath_j_ion_slope * min(sc_x, 0.d0)

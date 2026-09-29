@@ -213,6 +213,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 find_RZ_nearby_iter, find_RZ_nearby_tol,            &
                 min_sheath_angle, bcs, part_kill_ratio,             &
                 sheath_Lambda, sheath_V_wall,                       &
+                sheath_bias_V, sheath_bias_type,                    &
                 sheath_j_ion_slope, sheath_j_e_slope,               &
                 sheath_heat_total_flow, recycling_total_flow,       &
                 use_sc, add_sources_in_sc, visco_sc_num,            &
@@ -266,6 +267,22 @@ if (my_id .eq. 0) then
   if ( thermoelectric_heat .and. ( tauIC .eq. 0.d0 .or. .not. with_TiTe ) ) then
     write(*,*) 'ERROR: thermoelectric_heat needs tauIC /= 0 (normalisation of 1/e) and the two-temperature model, EXITING!'
     stop
+  end if
+
+  ! --- Outer-plate bias: needs the lower X-point (it selects the outer plate) and a sheath type to act on
+  if ( sheath_bias_V .ne. 0.d0 ) then
+    if ( .not. xpoint .or. (xcase .ne. 1 .and. xcase .ne. 3) ) then
+      write(*,*) 'ERROR: sheath_bias_V selects the outer plate by R > R of the LOWER X-point: needs xpoint and xcase 1 or 3, EXITING!'
+      stop
+    end if
+    if ( sheath_bias_type .lt. 1 .or. sheath_bias_type .gt. max_bnd_types ) then
+      write(*,*) 'ERROR: sheath_bias_type is not a boundary type, EXITING!'
+      stop
+    end if
+    if ( .not. bcs(sheath_bias_type)%sheath_j ) then
+      write(*,*) 'ERROR: sheath_bias_V acts through the sheath current BC: bcs(sheath_bias_type)%sheath_j must be .true., EXITING!'
+      stop
+    end if
   end if
 
   ! --- Sheath current BC

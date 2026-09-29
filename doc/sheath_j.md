@@ -105,3 +105,19 @@ Both use the same coefficient, as the Onsager relation requires; they can be swi
   `calc_EBpsiU`; and the correct Te in `calc_NeTevpar` (develop's model600 path reads variable 6 = Ti in a
   two-temperature build and halves it, so the recycling cs was low by ~sqrt(2)). Both behind the flag so the
   sheath-j-clean particle side can be switched as one; with it off the particle code is develop's.
+
+## Outer-plate bias (`sheath_bias_V`, 2026-09-29)
+
+`sheath_bias_V` (volts, default 0) is added to the wall potential at wall nodes of type `sheath_bias_type` (default 1,
+the flux-aligned targets) with R > R of the lower X-point, i.e. the outer divertor plate, as in Rozhansky et al.
+(outer plate biased against the grounded vessel and inner plate). It enters the sheath characteristic,
+x = Lambda - e(Phi - V_wall - V_bias)/Te, interpolated to the Gauss points with the value basis (a one-edge ramp
+between a biased and an unbiased node), and the floating row of any non-released value DOF of those nodes. The
+electron sheath heat transmission stays the constant gamma_e (Rozhansky's energy condition contains
+e(phi - phi_plate); not included). Setup checks: lower X-point present (xcase 1 or 3), `bcs(sheath_bias_type)%sheath_j`.
+Harness: all nodes beyond R_xpoint give exactly the rows of a uniform wall potential of the same value; none beyond
+it or another type give the unbiased rows bitwise; one node gives rows in between.
+
+```fortran
+sheath_bias_V = 60.d0      ! Rozhansky scan: -100, -60, 0, +40, +60
+```

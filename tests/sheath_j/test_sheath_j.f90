@@ -9,6 +9,8 @@
 !!  (2b. j_sat carries no vpar_smoothing weight: the zj rows are identical with it on and off)
 !!  5. sheath_heat_total_flow: without ExB the Ti/Te rows equal develop's; with ExB every psi/rho/Ti/Te/Vpar/u
 !!     column of the Ti/Te rows matches FD at ExB outflow and at ExB inflow
+!!  6. outer-plate bias: all edge nodes beyond R_xpoint = a uniform wall potential of the same value; none beyond
+!!     it, or another boundary type = no effect; one node beyond it = in between (value-basis ramp)
 program test_sheath_j
   use mod_parameters
   use phys_module
@@ -25,6 +27,8 @@ program test_sheath_j
   real*8  :: rlo(nd), rhi(nd), ucap, us
   integer, parameter :: tf_vars(6) = [var_psi, var_rho, var_Ti, var_Te, var_vpar, var_u]
   integer :: ic2
+  real*8  :: rxp = 1.d0                   ! R of the lower X-point passed to the assembler
+  real*8  :: rb(nd), r0b(nd), vb
   integer :: i, row, col, icase
   call set_basis()
   base(1)%x(1,1,:) = [1.d0, 0.d0]; base(2)%x(1,1,:) = [2.d0, 0.d0]
@@ -171,6 +175,29 @@ program test_sheath_j
     base(i)%values(1,2,var_u) = 0.d0
   enddo
 
+  ! ---------------------------------------------------------------- 6. outer-plate bias
+  call set_u(1.2d0*ufl) ; vb = 40.d0
+  sheath_bias_V = 0.d0 ; sheath_V_wall = vb ; nodes = base; call assemble(a, rb)          ! uniform wall potential vb
+  sheath_V_wall = 0.d0 ; nodes = base; call assemble(a, r0b)                              ! no bias
+  sheath_bias_V = vb ; rxp = 0.5d0 ; nodes = base; call assemble(a, r)                    ! both nodes (R = 1, 2) beyond R_xpoint
+  worst = 0.d0
+  do row = 1, nd
+    if ( varof(row) == var_zj ) worst = max(worst, abs(r(row) - rb(row)) / max(1.d-30, maxval(abs(rb))))
+  enddo
+  if ( worst > 1.d-12 ) error stop 'FAIL 6: bias on all nodes differs from the uniform wall potential'
+  rxp = 3.d0 ; nodes = base; call assemble(a, r)                                          ! no node beyond R_xpoint
+  if ( any(r /= r0b) ) error stop 'FAIL 6: bias acts on nodes inside R_xpoint'
+  rxp = 0.5d0 ; sheath_bias_type = 2 ; nodes = base; call assemble(a, r)                  ! other boundary type
+  if ( any(r /= r0b) ) error stop 'FAIL 6: bias acts on another boundary type'
+  sheath_bias_type = 1 ; rxp = 1.5d0 ; nodes = base; call assemble(a, r)                   ! node 2 (R = 2) only
+  do row = 1, nd
+    if ( varof(row) /= var_zj ) cycle
+    if ( (r(row) - r0b(row)) * (rb(row) - r(row)) < -1.d-12*maxval(abs(rb)) ) error stop 'FAIL 6: one-node bias not between none and all'
+  enddo
+  if ( all(r == r0b) .or. all(r == rb) ) error stop 'FAIL 6: one-node bias equals none or all'
+  sheath_bias_V = 0.d0 ; rxp = 1.d0
+  write(*,'(a,es9.2)') ' PASS 6: outer-plate bias: all nodes = uniform V_wall, none/other type = no effect, one node between; rel ', worst
+
   ! ---------------------------------------------------------------- 4. sign of the saturation current
   ! u far above floating: f -> 1, residual of the zj row with zj = 0 is +Zbig*dl*j_sat per unit test function.
   ! On this edge B_pol.n > 0, and the current into the wall is -zj*(B_pol.n)/F0, so j_sat/F0 must be negative.
@@ -245,6 +272,6 @@ contains
     vertices = [1,2]; directions = [1,2]
     mat = 0.d0; rhs = 0.d0
     call boundary_matrix_open(vertices, directions, e, nodes, .true., 1, 1.d0, 0.d0, 0.d0, 1.d0, &
-                              [1.d0,1.d0], [0.d0,0.d0], mat, rhs, 1, 1)
+                              [rxp,rxp], [0.d0,0.d0], mat, rhs, 1, 1)
   end subroutine
 end program test_sheath_j

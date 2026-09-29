@@ -37,7 +37,8 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        RMP_start_time, tstep, RMP_har_cos, RMP_har_sin, T_min,                                             &
        mach_one_bnd_integral, mach1_omit_drift, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,          &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
-       bcs, loop_voltage, central_density, central_mass, sheath_V_wall, min_sheath_angle 
+       bcs, loop_voltage, central_density, central_mass, sheath_V_wall, min_sheath_angle, &
+       sheath_bias_V, sheath_bias_type 
 use mod_floating_u, only: floating_u_norm
 use tr_module
 use mpi_mod
@@ -413,6 +414,9 @@ do i=1, n_local_elms !=== do elements
                 if ( (k == var_u) .and. fu_dof ) then
                   fu_target = fu_C_T * node_list%node(inode)%values(in, index_tmp, fu_var_T)
                   if ( (index_tmp .eq. 1) .and. (in .eq. 1) ) fu_target = fu_target + fu_C_V * sheath_V_wall
+                  ! --- outer-plate bias (sheath_bias_V) on a biased node's non-released value DOF
+                  if ( (index_tmp .eq. 1) .and. (in .eq. 1) .and. (sheath_bias_V .ne. 0.d0) .and. (bnd_type .eq. sheath_bias_type) &
+                       .and. (node_list%node(inode)%x(1,1,1) .gt. R_xpoint(1)) ) fu_target = fu_target + fu_C_V * sheath_bias_V
                   call boundary_conditions_add_one_entry(                        &
                          index_node, var_u, in, index_node, fu_var_T, in,        &
                          - zbig * fu_C_T, index_min, index_max, a_mat)
