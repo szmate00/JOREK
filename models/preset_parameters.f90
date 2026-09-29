@@ -98,6 +98,7 @@ subroutine preset_parameters
   min_sheath_angle      = 1.d0   ! 1 degree (not in radians)
   sheath_Lambda         = 3.d0   ! floating sheath drop, e*Phi/Te
   sheath_V_wall         = 0.d0   ! wall potential [V]
+  sheath_heat_total_flow = .false. ! sheath heat sinks on the total outgoing flow incl. ExB (sheath-j-clean's form)
   sheath_j_ion_slope    = 0.d0   ! bcs%sheath_j characteristic: 1 = tangent continuation beyond floating (the form that ran through detachment)
   sheath_j_e_slope      = 0.d0   ! bcs%sheath_j characteristic: exp(sheath_Lambda) = tangent continuation beyond electron saturation
 

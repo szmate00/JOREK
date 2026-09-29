@@ -68,6 +68,7 @@ module phys_module
   real*8  :: min_sheath_angle     !< For sheath boundary conditions: Minimum incident angle for heat and particle fluxes (in degrees)
   real*8  :: sheath_Lambda        !< Floating sheath potential drop in units of Te/e (model600 bcs%floating_u)
   real*8  :: sheath_V_wall        !< Wall potential in volts (model600 bcs%floating_u)
+  logical :: sheath_heat_total_flow !< Ti/Te sheath heat sinks on the total outgoing normal flow max(Vpar*B.n + vE.n, 0) instead of the parallel flow (model600, edges with the Mach-1 row)
   real*8  :: sheath_j_ion_slope   !< bcs%sheath_j: slope of the characteristic beyond floating on the ion side, f = 1 - e^x - s*x for x < 0 (0: hard ion saturation)
   real*8  :: sheath_j_e_slope     !< bcs%sheath_j: slope beyond electron saturation, f = 1 - e^Lambda - s_e*(x - Lambda) for x > Lambda (0: hard cap)
   integer :: mode(n_tor)          !< Toroidal mode number corresponding to the JOREK modes, e.g., for n_period=8 and n_tor=3, mode(:)=0,8,8

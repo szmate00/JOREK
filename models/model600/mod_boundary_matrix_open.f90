@@ -60,6 +60,8 @@ real*8     :: c_1, c_2, c_3, c_angle, neutral_source
 logical    :: sj_on, sj_here                                     ! sheath current row on this edge / at this Gauss point
 real*8     :: sj_an, sj_csat, sj_CT, sj_CV, sj_jsat, sj_vfl, sj_ut   ! normalisation, j_sat, the Bohm parallel flow, u - C_V*V_wall
 real*8     :: sc_x, sc_ex, sc_f, sc_dfdu, sc_dfdTe, sc_res, sc_w, sc_Tc, sc_dTc, sc_drc   ! the characteristic and its columns
+logical    :: tf_on                                              ! sheath heat sinks on the total outgoing flow on this edge (sheath_heat_total_flow)
+real*8     :: tf_orient, tf_vEn, tf_Bn, tf_vn, tf_out, dx_n, dx_v, dx_p, dx_u   ! total minus parallel flow measure and its columns
 real*8     :: element_size_ij, element_size_kl, element_size_perp
 real*8     :: grad_t(2), B0_R, B0_Z, factor_cs_bnd_integral
 logical    :: xpoint2
@@ -155,6 +157,13 @@ enddo
 ! --- sheath_j_e_slope (x > Lambda), so a node asked for more than j_sat, or more than the thermal electron
 ! --- current, sits a few Te off floating instead of having no root.
 sj_on = bcs(bnd_type1)%sheath_j .and. bcs(bnd_type2)%sheath_j
+
+! --- Sheath heat sinks on the total outgoing normal flow (sheath_heat_total_flow), on edges whose both endpoints
+! --- carry the Mach-1 row: the Ti/Te sheath rows use max(Vpar*B_pol.n + vE.n, 0)*R*dl instead of develop's parallel
+! --- measure Vpar*psi_s*sign, so an ExB-inflow face loses no sheath energy and an ExB-outflow face loses it at the
+! --- total rate (as on sheath-j-clean under mach1_weak). Added as the difference to develop's terms, which stay
+! --- untouched: dx_* = total - parallel measure and its columns (trial Vpar, psi_s, u_s), zero when off.
+tf_on = sheath_heat_total_flow .and. with_vpar .and. bcs(bnd_type1)%mach1 .and. bcs(bnd_type2)%mach1
 sj_an = 0.d0 ; sj_csat = 0.d0 ; sj_CT = 0.d0 ; sj_CV = 0.d0
 if ( sj_on ) then
   apply_natural_bc(var_zj) = .true.
@@ -343,6 +352,23 @@ do ms=1, n_gauss
     factor_cs_bnd_integral = 0.d0
     if (mach_one_bnd_integral) factor_cs_bnd_integral = 1.d0
 
+    ! --- Total minus parallel flow measure of the sheath heat sinks (sheath_heat_total_flow). vE.n = -orient*R*u_s/dl
+    ! --- is the outward ExB normal speed for v_E = (-R*u_Z, +R*u_R) and the edge tangent (x_s, y_s)/dl;
+    ! --- B_pol.n*R*dl = psi_s*normal_sign3 (the tangential psi derivative), so without ExB the two measures agree.
+    dx_n = 0.d0 ; dx_v = 0.d0 ; dx_p = 0.d0 ; dx_u = 0.d0
+    if ( tf_on ) then
+      tf_orient = sign(1.d0, y_s(ms)*normal(1) - x_s(ms)*normal(2))
+      tf_vEn    = - tf_orient * BigR * eq_s(mp,var_u,ms) / dl
+      tf_Bn     = bdotn * Btot
+      tf_vn     = tf_Bn * Vpar0 + tf_vEn
+      tf_out    = 0.d0
+      if ( tf_vn .gt. 0.d0 ) tf_out = 1.d0
+      dx_n = max(tf_vn, 0.d0) * BigR * dl   - vpar0 * ps0_s * normal_sign3
+      dx_v = tf_out * tf_Bn * BigR * dl     -         ps0_s * normal_sign3
+      dx_p = tf_out * vpar0 * normal_sign3  - vpar0         * normal_sign3
+      dx_u = - tf_out * tf_orient * BigR**2
+    endif
+
     ! --- Sheath current row at this Gauss point: residual zj - j_sat*f(x), Zbig*dl weight, exact columns on zj, u,
     ! --- rho and the temperatures (through cs and through x). corr_neg-corrected Te and rho as in every natural row:
     ! --- a raw Te <= 0 would flip the sign of x and a raw rho <= 0 the sign of j_sat. Btot and sign(B.n) lagged.
@@ -415,6 +441,16 @@ do ms=1, n_gauss
               rhs_ij(var_T)   = - v * (gamma_sheath  -1.d0) * r0 * T0  * vpar0 * ps0_s * normal_sign3 * tstep &
                                 - v * (gamma_sheath  -1.d0) * r0 * T0  * cs0    * BigR * dl * c_angle * tstep & 
                                 - v * (GAMMA - 1.d0) * vpar0 * visco_par_heating * gradvpar0dotn * BigR * dl  * tstep  
+            endif
+
+            ! --- Sheath heat sinks on the total outgoing flow (sheath_heat_total_flow): total minus parallel measure
+            if ( tf_on ) then
+              if (with_TiTe) then
+                rhs_ij(var_Ti) = rhs_ij(var_Ti) - v * (gamma_sheath_i-1.d0) * r0 * Ti0 * dx_n * tstep
+                rhs_ij(var_Te) = rhs_ij(var_Te) - v * (gamma_sheath_e-1.d0) * r0 * Te0 * dx_n * tstep
+              else
+                rhs_ij(var_T)  = rhs_ij(var_T)  - v * (gamma_sheath  -1.d0) * r0 * T0  * dx_n * tstep
+              endif
             endif
 
             ! --- Mach=1 through boundary integral penalization method
@@ -534,6 +570,28 @@ do ms=1, n_gauss
                                             + v * (GAMMA - 1.d0) * vpar * visco_par_heating * gradvpar0dotn * BigR * dl    * theta * tstep &
                                             + v * (GAMMA - 1.d0) * vpar0 * visco_par_heating * gradvpardotn * BigR * dl    * theta * tstep
                   endif ! with_TiTe
+
+                  ! --- Sheath heat sinks on the total outgoing flow (sheath_heat_total_flow): columns of the difference
+                  ! --- (the u columns are new: develop's measure has no u dependence; amat(var_T*,var_u) is assigned
+                  ! --- nowhere else in this routine)
+                  if ( tf_on .and. with_TiTe ) then
+                    amat(var_Ti,var_psi)  = amat(var_Ti,var_psi)  + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * psi_s * dx_p * theta * tstep
+                    amat(var_Ti,var_rho)  = amat(var_Ti,var_rho)  + v * (gamma_sheath_i-1.d0) * rho * Ti0 * dx_n * theta * tstep
+                    amat(var_Ti,var_Ti)   = amat(var_Ti,var_Ti)   + v * (gamma_sheath_i-1.d0) * r0  * Ti  * dx_n * theta * tstep
+                    amat(var_Ti,var_vpar) = amat(var_Ti,var_vpar) + v * (gamma_sheath_i-1.d0) * r0  * Ti0 * vpar * dx_v * theta * tstep
+                    amat(var_Ti,var_u)    =                         v * (gamma_sheath_i-1.d0) * r0  * Ti0 * dx_u * psi_s * theta * tstep
+                    amat(var_Te,var_psi)  = amat(var_Te,var_psi)  + v * (gamma_sheath_e-1.d0) * r0  * Te0 * psi_s * dx_p * theta * tstep
+                    amat(var_Te,var_rho)  = amat(var_Te,var_rho)  + v * (gamma_sheath_e-1.d0) * rho * Te0 * dx_n * theta * tstep
+                    amat(var_Te,var_Te)   = amat(var_Te,var_Te)   + v * (gamma_sheath_e-1.d0) * r0  * Te  * dx_n * theta * tstep
+                    amat(var_Te,var_vpar) = amat(var_Te,var_vpar) + v * (gamma_sheath_e-1.d0) * r0  * Te0 * vpar * dx_v * theta * tstep
+                    amat(var_Te,var_u)    =                         v * (gamma_sheath_e-1.d0) * r0  * Te0 * dx_u * psi_s * theta * tstep
+                  else if ( tf_on ) then
+                    amat(var_T,var_psi)   = amat(var_T,var_psi)   + v * (gamma_sheath  -1.d0) * r0  * T0  * psi_s * dx_p * theta * tstep
+                    amat(var_T,var_rho)   = amat(var_T,var_rho)   + v * (gamma_sheath  -1.d0) * rho * T0  * dx_n * theta * tstep
+                    amat(var_T,var_T)     = amat(var_T,var_T)     + v * (gamma_sheath  -1.d0) * r0  * T   * dx_n * theta * tstep
+                    amat(var_T,var_vpar)  = amat(var_T,var_vpar)  + v * (gamma_sheath  -1.d0) * r0  * T0  * vpar * dx_v * theta * tstep
+                    amat(var_T,var_u)     =                         v * (gamma_sheath  -1.d0) * r0  * T0  * dx_u * psi_s * theta * tstep
+                  endif
 
                   ! --- Mach 1 condition through penalization boundary integral method
                   amat(var_vpar,var_vpar) =   v * (vpar * Btot * normal_sign) * dl * Zbig * factor_cs_bnd_integral

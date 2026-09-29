@@ -85,3 +85,12 @@ identical to develop's. The DOF release (`mod_boundary_conditions.f90`) needs th
   on Te, zj and psi, poloidal and toroidal parts of b.grad v. Not compiled by the serial harness (volume assembler).
 
 Both use the same coefficient, as the Onsager relation requires; they can be switched separately.
+
+## Wall fluxes on the total outgoing flow (options; sheath-j-clean's form)
+
+- `sheath_heat_total_flow` (default .f.): the Ti/Te sheath heat sinks use the total outgoing normal flow
+  max(Vpar B_pol.n + vE.n, 0) R dl instead of develop's parallel measure Vpar psi_s sign, on edges whose both
+  endpoints carry the Mach-1 row: an ExB-inflow face loses no sheath energy, an ExB-outflow face loses it at the
+  total rate. Written as the difference to develop's terms (bitwise develop with the flag off), exact columns on
+  psi, rho, Ti/Te, Vpar and u. The density row is unchanged (its wall sink is the strong-form volume advection plus
+  the n cs sin(min_sheath_angle) floor, identical on both branches).

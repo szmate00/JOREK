@@ -214,6 +214,7 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 min_sheath_angle, bcs, part_kill_ratio,             &
                 sheath_Lambda, sheath_V_wall,                       &
                 sheath_j_ion_slope, sheath_j_e_slope,               &
+                sheath_heat_total_flow,                             &
                 use_sc, add_sources_in_sc, visco_sc_num,            &
                 D_perp_sc_num, D_par_sc_num, ZK_perp_sc_num,        &
                 ZK_par_sc_num, ZK_i_perp_sc_num, ZK_i_par_sc_num,   &

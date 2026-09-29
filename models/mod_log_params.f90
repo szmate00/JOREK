@@ -876,6 +876,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   write(*,LOGI_FMT) 'bench_without_plot    ', bench_without_plot
   write(*,LOGI_FMT) 'mach_one_bnd_integral ', mach_one_bnd_integral
   write(*,LOGI_FMT) 'mach1_omit_drift      ', mach1_omit_drift
+  write(*,LOGI_FMT) 'sheath_heat_total_flow', sheath_heat_total_flow
   write(*,LOGI_FMT) 'thermoelectric_ohm    ', thermoelectric_ohm
   write(*,LOGI_FMT) 'thermoelectric_heat   ', thermoelectric_heat
   if ( thermoelectric_ohm .or. thermoelectric_heat ) then

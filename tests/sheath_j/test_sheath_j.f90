@@ -7,6 +7,8 @@
 !!     and continuously differentiable at the electron cap (x = Lambda, with s_e = e^Lambda)
 !!  4. the ion saturation current flows INTO the wall for both signs of F0
 !!  (2b. j_sat carries no vpar_smoothing weight: the zj rows are identical with it on and off)
+!!  5. sheath_heat_total_flow: without ExB the Ti/Te rows equal develop's; with ExB every psi/rho/Ti/Te/Vpar/u
+!!     column of the Ti/Te rows matches FD at ExB outflow and at ExB inflow
 program test_sheath_j
   use mod_parameters
   use phys_module
@@ -20,7 +22,9 @@ program test_sheath_j
   type(type_element) :: e
   type(type_node)    :: nodes(4), base(4)
   real*8  :: a(nd,nd), r(nd), ap(nd,nd), rp(nd), am(nd,nd), rm(nd), eps, worst, scale, a_n, C_T, C_V, ufl, rs
-  real*8  :: rlo(nd), rhi(nd), ucap
+  real*8  :: rlo(nd), rhi(nd), ucap, us
+  integer, parameter :: tf_vars(6) = [var_psi, var_rho, var_Ti, var_Te, var_vpar, var_u]
+  integer :: ic2
   integer :: i, row, col, icase
   call set_basis()
   base(1)%x(1,1,:) = [1.d0, 0.d0]; base(2)%x(1,1,:) = [2.d0, 0.d0]
@@ -115,6 +119,57 @@ program test_sheath_j
   enddo
   sheath_j_ion_slope = 0.d0 ; sheath_j_e_slope = 0.d0
   write(*,'(a)') ' PASS 3: continued characteristic: residual continuous at floating and at the cap, slope continuous at the cap'
+
+  ! ---------------------------------------------------------------- 5. sheath heat sinks on the total outgoing flow
+  bcs(1)%sheath_j = .false.
+  call set_u(ufl)
+  ! (a) no ExB (u constant along the wall): the total and the parallel measure agree
+  sheath_heat_total_flow = .false.; nodes = base; call assemble(a, r)
+  sheath_heat_total_flow = .true. ; nodes = base; call assemble(ap, rp)
+  worst = 0.d0
+  do row = 1, nd
+    if ( varof(row) /= var_Ti .and. varof(row) /= var_Te ) cycle
+    worst = max(worst, abs(rp(row) - r(row)) / max(1.d-30, maxval(abs(r))))
+  enddo
+  if ( worst > 1.d-12 ) error stop 'FAIL 5a: total-flow sink differs from the parallel one without ExB'
+  write(*,'(a,es9.2)') ' PASS 5a: without ExB the total-flow sheath heat sink equals the parallel one, rel diff ', worst
+  ! (b) FD of every column the flag adds, at ExB outflow (us > 0 here) and at ExB inflow (us < 0): the difference
+  !     flag on minus flag off of the Jacobian against the FD of the difference of the residual (develop's own
+  !     columns are not complete: e.g. the c_angle floor's cs has no cross-temperature column, not tested here)
+  do ic2 = 1, 2
+    us = merge(0.01d0, -0.01d0, ic2 == 1)
+    do i = 1, 4
+      base(i)%values(1,1,var_u) = ufl + us*base(i)%x(1,1,1) ; base(i)%values(1,2,var_u) = us
+    enddo
+    sheath_heat_total_flow = .true. ; nodes = base; call assemble(a, r)
+    sheath_heat_total_flow = .false.; nodes = base; call assemble(ap, rp)
+    a = a - ap ; r = r - rp
+    worst = 0.d0
+    do col = 1, nd
+      if ( .not. any(varof(col) == tf_vars) ) cycle
+      eps = 1.d-8
+      sheath_heat_total_flow = .true. ; nodes = base; call bump(col, +eps); call assemble(ap, rp)
+      sheath_heat_total_flow = .false.; nodes = base; call bump(col, +eps); call assemble(am, rm)
+      rlo = rp - rm
+      sheath_heat_total_flow = .true. ; nodes = base; call bump(col, -eps); call assemble(ap, rp)
+      sheath_heat_total_flow = .false.; nodes = base; call bump(col, -eps); call assemble(am, rm)
+      rhi = rp - rm                                          ! rlo: difference at +eps, rhi: at -eps
+      scale = max(1.d-30, maxval(abs(a(:,col))), maxval(abs(rlo-rhi))/(2*eps), 1.d-9*maxval(abs(rp))/eps)
+      do row = 1, nd
+        if ( varof(row) /= var_Ti .and. varof(row) /= var_Te ) cycle
+        worst = max(worst, abs(a(row,col) + (rlo(row)-rhi(row))/(2*eps)) / scale)
+        if ( abs(a(row,col) + (rlo(row)-rhi(row))/(2*eps)) / scale > 1.d-6 ) then
+          write(*,'(a,4i5,2es14.5)') ' FAIL 5b: case,row,col,var, damat, -dfd', ic2, row, col, varof(col), a(row,col), -(rlo(row)-rhi(row))/(2*eps)
+          error stop 1
+        endif
+      enddo
+    enddo
+    write(*,'(a,a,a,es9.2)') ' PASS 5b ', merge('outflow','inflow ', ic2 == 1), ': added Ti/Te-row columns vs FD of the added residual, worst ', worst
+  enddo
+  sheath_heat_total_flow = .false. ; bcs(1)%sheath_j = .true. ; call set_u(ufl)
+  do i = 1, 4
+    base(i)%values(1,2,var_u) = 0.d0
+  enddo
 
   ! ---------------------------------------------------------------- 4. sign of the saturation current
   ! u far above floating: f -> 1, residual of the zj row with zj = 0 is +Zbig*dl*j_sat per unit test function.
