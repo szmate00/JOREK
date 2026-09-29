@@ -17,7 +17,7 @@ use phys_module
 use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
-use mod_floating_u, only: floating_u_norm, sheath_j_norm
+use mod_floating_u, only: floating_u_norm, sheath_j_norm, sheath_bias_node
 
 implicit none
 
@@ -167,15 +167,12 @@ sj_on = bcs(bnd_type1)%sheath_j .and. bcs(bnd_type2)%sheath_j
 tf_on = sheath_heat_total_flow .and. with_vpar .and. bcs(bnd_type1)%mach1 .and. bcs(bnd_type2)%mach1
 sj_an = 0.d0 ; sj_csat = 0.d0 ; sj_CT = 0.d0 ; sj_CV = 0.d0
 
-! --- Outer-plate bias (sheath_bias_V): at wall nodes of type sheath_bias_type with R > R of the lower X-point the
-! --- wall potential is sheath_V_wall + sheath_bias_V. Interpolated to the Gauss points with the value basis, so it
-! --- ramps over the one edge between a biased and an unbiased node instead of stepping.
-sb_node = 0.d0
-if ( sheath_bias_V .ne. 0.d0 ) then
-  do i = 1, 2
-    if ( nodes(i)%boundary .eq. sheath_bias_type .and. nodes(i)%x(1,1,1) .gt. R_xpoint(1) ) sb_node(i) = sheath_bias_V
-  enddo
-endif
+! --- Outer-plate bias (sheath_bias_V): the wall potential is sheath_V_wall + the node's bias (sheath_bias_node,
+! --- mod_floating_u: sheath types above R_xpoint and below sheath_bias_Z_max). Interpolated to the Gauss points with
+! --- the value basis, so it ramps over the one edge between a biased and an unbiased node instead of stepping.
+do i = 1, 2
+  sb_node(i) = sheath_bias_node(nodes(i)%boundary, nodes(i)%x(1,1,1), nodes(i)%x(1,1,2), R_xpoint(1))
+enddo
 if ( sj_on ) then
   apply_natural_bc(var_zj) = .true.
   call sheath_j_norm(sj_an, sj_csat)

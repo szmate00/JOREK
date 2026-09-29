@@ -16,7 +16,7 @@ program test_sheath_j
   use phys_module
   use data_structure
   use mod_boundary_matrix_open
-  use mod_floating_u, only: floating_u_norm
+  use mod_floating_u, only: floating_u_norm, sheath_bias_node
   use basis_at_gaussian, only: set_basis
   implicit none
   integer, parameter :: nd = 4*4*n_var
@@ -195,8 +195,22 @@ program test_sheath_j
     if ( (r(row) - r0b(row)) * (rb(row) - r(row)) < -1.d-12*maxval(abs(rb)) ) error stop 'FAIL 6: one-node bias not between none and all'
   enddo
   if ( all(r == r0b) .or. all(r == rb) ) error stop 'FAIL 6: one-node bias equals none or all'
+  ! sheath_bias_type = 0 (every sheath type) = type 1 here; a Z limit below the nodes (Z = 0) removes the bias
+  rxp = 0.5d0 ; sheath_bias_type = 1 ; nodes = base; call assemble(ap, rp)
+  sheath_bias_type = 0 ; nodes = base; call assemble(a, r)
+  if ( any(r /= rp) .or. any(a /= ap) ) error stop 'FAIL 6: sheath_bias_type = 0 differs from the explicit sheath type'
+  sheath_bias_Z_max = -0.5d0 ; nodes = base; call assemble(a, r)
+  if ( any(r /= r0b) ) error stop 'FAIL 6: bias acts above sheath_bias_Z_max'
+  sheath_bias_Z_max = 1.d30
+  ! the rule itself: never a floating type, never a non-sheath type, only above R_xpoint and below Z_max
+  bcs(3)%floating_u = .true. ; bcs(3)%sheath_j = .false.
+  if ( sheath_bias_node(3, 2.d0, 0.d0, 0.5d0) /= 0.d0 ) error stop 'FAIL 6: a floating_u type is biased'
+  if ( sheath_bias_node(2, 2.d0, 0.d0, 0.5d0) /= 0.d0 ) error stop 'FAIL 6: a non-sheath type is biased'
+  if ( sheath_bias_node(1, 2.d0, 0.d0, 0.5d0) /= vb )   error stop 'FAIL 6: a sheath type in the region is not biased'
+  if ( sheath_bias_node(1, 0.4d0, 0.d0, 0.5d0) /= 0.d0 ) error stop 'FAIL 6: a node inside R_xpoint is biased'
+  bcs(3)%floating_u = .false. ; sheath_bias_type = 1
   sheath_bias_V = 0.d0 ; rxp = 1.d0
-  write(*,'(a,es9.2)') ' PASS 6: outer-plate bias: all nodes = uniform V_wall, none/other type = no effect, one node between; rel ', worst
+  write(*,'(a,es9.2)') ' PASS 6: outer-plate bias: all nodes = uniform V_wall, none/other type/above Z_max = no effect, type 0 = type 1, one node between, floating never; rel ', worst
 
   ! ---------------------------------------------------------------- 4. sign of the saturation current
   ! u far above floating: f -> 1, residual of the zj row with zj = 0 is +Zbig*dl*j_sat per unit test function.

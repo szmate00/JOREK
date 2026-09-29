@@ -108,16 +108,30 @@ Both use the same coefficient, as the Onsager relation requires; they can be swi
 
 ## Outer-plate bias (`sheath_bias_V`, 2026-09-29)
 
-`sheath_bias_V` (volts, default 0) is added to the wall potential at wall nodes of type `sheath_bias_type` (default 1,
-the flux-aligned targets) with R > R of the lower X-point, i.e. the outer divertor plate, as in Rozhansky et al.
-(outer plate biased against the grounded vessel and inner plate). It enters the sheath characteristic,
-x = Lambda - e(Phi - V_wall - V_bias)/Te, interpolated to the Gauss points with the value basis (a one-edge ramp
-between a biased and an unbiased node), and the floating row of any non-released value DOF of those nodes. The
-electron sheath heat transmission stays the constant gamma_e (Rozhansky's energy condition contains
-e(phi - phi_plate); not included). Setup checks: lower X-point present (xcase 1 or 3), `bcs(sheath_bias_type)%sheath_j`.
-Harness: all nodes beyond R_xpoint give exactly the rows of a uniform wall potential of the same value; none beyond
-it or another type give the unbiased rows bitwise; one node gives rows in between.
+`sheath_bias_V` (volts, default 0) is added to the wall potential at wall nodes that (i) belong to a `sheath_j` type,
+`sheath_bias_type` (default 1) or any sheath type with `sheath_bias_type = 0`, (ii) lie at R above the lower
+X-point's R and (iii) below Z = `sheath_bias_Z_max` (default: no limit) - the outer plate biased against the grounded
+vessel and inner plate, as in Rozhansky et al. (Contrib. Plasma Phys. 2024). One rule for all rows
+(`sheath_bias_node`, mod_floating_u.f90). It enters the sheath characteristic, x = Lambda - e(Phi - V_wall - V_bias)/Te,
+interpolated to the Gauss points with the value basis (a one-edge ramp at the plate's ends), and the floating row of
+the non-released DOFs of those sheath nodes (e.g. below the angle gate). A `floating_u` node is never biased: its row
+is the zero-current condition, which a biased, current-carrying plate cannot satisfy. At the first assembly rank 0
+prints `[sheath_bias]` lines: the biased nodes per type with their Z range, and every floating_u node inside the
+biased region (grounded; harmless at the plate's end such as the target corner, a hole if it lies between biased nodes).
+The electron sheath heat transmission stays the constant gamma_e (Rozhansky's energy condition contains
+e(phi - phi_plate); not included).
+
+The paper's plate (whole vertical outer target and baffle up to Z ~ -0.83) on the AUG #38773 grid: types 1, 4, 9, 5
+from the target corner (1.580, -1.198) up to Z = -0.83 (type 3 corner floating, the PFR floor is type 2 without a
+sheath or floating row), with type 9 as a sheath type:
 
 ```fortran
-sheath_bias_V = 60.d0      ! Rozhansky scan: -100, -60, 0, +40, +60
+bcs(9)%sheath_j   = .t.        ! instead of bcs(9)%floating_u: the plate is sheath end to end
+sheath_bias_type  = 0          ! every sheath type
+sheath_bias_Z_max = -0.83d0
+sheath_bias_V     = -60.d0     ! Rozhansky scan: -100, -60, 0, +40, +60
 ```
+
+Harness: all nodes beyond R_xpoint give exactly the rows of a uniform wall potential; none beyond it, another type,
+or above Z_max give the unbiased rows bitwise; type 0 = the explicit type; one node gives rows in between; the rule
+never biases a floating or non-sheath type.

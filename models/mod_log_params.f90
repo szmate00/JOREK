@@ -843,6 +843,7 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,REAL_FMT) 'sheath_j_e_slope      ', sheath_j_e_slope
     write(*,REAL_FMT) 'sheath_bias_V         ', sheath_bias_V
     write(*,INTG_FMT) 'sheath_bias_type      ', sheath_bias_type
+    write(*,REAL_FMT) 'sheath_bias_Z_max     ', sheath_bias_Z_max
     write(*,'(1X,A,30I3)') 'sheath_j on boundary types:', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%sheath_j )
   end if
 

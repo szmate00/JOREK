@@ -22,7 +22,7 @@ module mod_floating_u
   implicit none
   private
 
-  public :: floating_u_norm, floating_u_volts, floating_u_selftest, sheath_j_norm
+  public :: floating_u_norm, floating_u_volts, floating_u_selftest, sheath_j_norm, sheath_bias_node
 
 contains
 
@@ -124,6 +124,29 @@ pure subroutine sheath_j_norm(a_n, c_sat)
   c_sat = - EL_CHG * F0 * n_0 * sqrt(MU_ZERO / rho0)
 
 end subroutine sheath_j_norm
+
+
+!> Outer-plate bias at a wall node [V]: sheath_bias_V on a node of a sheath_j type (sheath_bias_type, or any
+!! sheath_j type with sheath_bias_type = 0) with R above the lower X-point's R and Z below sheath_bias_Z_max; 0
+!! elsewhere. A floating_u node is never biased: its row is the zero-current condition, which a biased (current-
+!! carrying) plate cannot satisfy; a floating strip inside the plate stays grounded and is named in the start-up log.
+pure real*8 function sheath_bias_node(btype, R, Z, R_xpoint_low)
+
+  use phys_module, only: bcs, sheath_bias_V, sheath_bias_type, sheath_bias_Z_max, max_bnd_types
+
+  implicit none
+  integer, intent(in) :: btype
+  real*8,  intent(in) :: R, Z, R_xpoint_low
+
+  sheath_bias_node = 0.d0
+  if ( sheath_bias_V .eq. 0.d0 ) return
+  if ( btype .lt. 1 .or. btype .gt. max_bnd_types ) return
+  if ( .not. bcs(btype)%sheath_j ) return
+  if ( sheath_bias_type .gt. 0 .and. btype .ne. sheath_bias_type ) return
+  if ( R .le. R_xpoint_low .or. Z .ge. sheath_bias_Z_max ) return
+  sheath_bias_node = sheath_bias_V
+
+end function sheath_bias_node
 
 
 end module mod_floating_u

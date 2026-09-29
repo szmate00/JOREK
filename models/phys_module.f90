@@ -69,7 +69,8 @@ module phys_module
   real*8  :: sheath_Lambda        !< Floating sheath potential drop in units of Te/e (model600 bcs%floating_u)
   real*8  :: sheath_V_wall        !< Wall potential in volts (model600 bcs%floating_u)
   real*8  :: sheath_bias_V        !< Bias of the outer divertor plate in volts: added to the wall potential at wall nodes of type sheath_bias_type with R > R of the lower X-point (model600)
-  integer :: sheath_bias_type     !< Boundary type that carries the outer-plate bias (default 1, the flux-aligned targets)
+  integer :: sheath_bias_type     !< Boundary type that carries the outer-plate bias (default 1, the flux-aligned targets); 0 = every sheath_j type
+  real*8  :: sheath_bias_Z_max    !< Upper end of the biased plate [m]: only wall nodes with Z below it are biased (default: no limit)
   logical :: recycling_total_flow  !< kinetic recycling on the total outgoing normal flow (parallel + ExB) and with the correct Te in the wall routine (model600)
   logical :: sheath_heat_total_flow !< Ti/Te sheath heat sinks on the total outgoing normal flow max(Vpar*B.n + vE.n, 0) instead of the parallel flow (model600, edges with the Mach-1 row)
   real*8  :: sheath_j_ion_slope   !< bcs%sheath_j: slope of the characteristic beyond floating on the ion side, f = 1 - e^x - s*x for x < 0 (0: hard ion saturation)

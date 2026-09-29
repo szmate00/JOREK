@@ -99,7 +99,8 @@ subroutine preset_parameters
   sheath_Lambda         = 3.d0   ! floating sheath drop, e*Phi/Te
   sheath_V_wall         = 0.d0   ! wall potential [V]
   sheath_bias_V         = 0.d0   ! outer-plate bias [V] (type sheath_bias_type, R > R of the lower X-point)
-  sheath_bias_type      = 1      ! boundary type of the biased plate
+  sheath_bias_type      = 1      ! boundary type of the biased plate (0: every sheath_j type)
+  sheath_bias_Z_max     = 1.d30  ! upper end of the biased plate [m] (no limit)
   recycling_total_flow  = .false. ! kinetic recycling on the total outgoing flow incl. ExB, Te fix in calc_NeTevpar (sheath-j-clean's form)
   sheath_heat_total_flow = .false. ! sheath heat sinks on the total outgoing flow incl. ExB (sheath-j-clean's form)
   sheath_j_ion_slope    = 0.d0   ! bcs%sheath_j characteristic: 1 = tangent continuation beyond floating (the form that ran through detachment)

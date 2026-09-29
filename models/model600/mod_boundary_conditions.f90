@@ -38,8 +38,8 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        mach_one_bnd_integral, mach1_omit_drift, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,          &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
        bcs, loop_voltage, central_density, central_mass, sheath_V_wall, min_sheath_angle, &
-       sheath_bias_V, sheath_bias_type 
-use mod_floating_u, only: floating_u_norm
+       sheath_bias_V, sheath_bias_type, sheath_bias_Z_max, max_bnd_types 
+use mod_floating_u, only: floating_u_norm, sheath_bias_node
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -111,6 +111,9 @@ real*8  :: m1_drift                            ! 1: nodal Mach-1 row with its Ex
 integer :: fu_var_T                            ! temperature trace variable: Te, or T in a single-T build
 logical :: sj_edge(2), sj_rel_val, sj_rel_der, sj_rel, fu_dof   ! sheath edge per direction; zj value / this visit's zj derivative released
 integer :: sj_ivd(2), jdir, jv2, jnb
+logical, save :: sb_logged = .false.           ! outer-plate bias map written to the log once
+integer :: sb_n(max_bnd_types), sb_i, sb_t
+real*8  :: sb_zlo(max_bnd_types), sb_zhi(max_bnd_types)
 logical, parameter :: include_2nd_derivatives = .false.
 
 RMPspectrum: if (RMP_on .and. (n_tor .ge. 3)) then !*****
@@ -163,6 +166,31 @@ end if RMPspectrum
 
 zbig        = 1.d12
 zbig_backup = zbig
+
+! --- Outer-plate bias map, once, rank 0: biased nodes per type with their Z range, and every floating_u node inside
+! --- the biased region (R > R_xpoint, Z < sheath_bias_Z_max), which stays grounded: a hole in the plate if it lies
+! --- between biased nodes, harmless at the plate's end (e.g. the corner)
+if ( (.not. sb_logged) .and. (sheath_bias_V .ne. 0.d0) .and. (my_id .eq. 0) ) then
+  sb_n = 0 ; sb_zlo = huge(1.d0) ; sb_zhi = -huge(1.d0)
+  do sb_i = 1, node_list%n_nodes
+    sb_t = node_list%node(sb_i)%boundary
+    if ( sb_t .lt. 1 .or. sb_t .gt. max_bnd_types ) cycle
+    if ( sheath_bias_node(sb_t, node_list%node(sb_i)%x(1,1,1), node_list%node(sb_i)%x(1,1,2), R_xpoint(1)) .ne. 0.d0 ) then
+      sb_n(sb_t) = sb_n(sb_t) + 1
+      sb_zlo(sb_t) = min(sb_zlo(sb_t), node_list%node(sb_i)%x(1,1,2)) ; sb_zhi(sb_t) = max(sb_zhi(sb_t), node_list%node(sb_i)%x(1,1,2))
+    else if ( bcs(sb_t)%floating_u .and. node_list%node(sb_i)%x(1,1,1) .gt. R_xpoint(1) &
+              .and. node_list%node(sb_i)%x(1,1,2) .lt. sheath_bias_Z_max ) then
+      write(*,'(A,I3,A,2F9.4,A)') ' [sheath_bias] floating_u node of type', sb_t, ' at (R,Z) =', node_list%node(sb_i)%x(1,1,1:2), &
+                                  ' inside the biased region: NOT biased (grounded, zero current)'
+    endif
+  enddo
+  do sb_t = 1, max_bnd_types
+    if ( sb_n(sb_t) .gt. 0 ) write(*,'(A,F8.2,A,I3,A,I5,A,2F9.4)') ' [sheath_bias] ', sheath_bias_V, ' V on type', sb_t, ':', &
+                                  sb_n(sb_t), ' nodes, Z from/to', sb_zlo(sb_t), sb_zhi(sb_t)
+  enddo
+  if ( all(sb_n .eq. 0) ) write(*,'(A)') ' [sheath_bias] WARNING: sheath_bias_V set but no wall node is biased on this rank'
+endif
+sb_logged = .true.
 
 ! --- Floating-potential row constants (mod_floating_u); the temperature trace variable it reads
 call floating_u_norm(fu_a_n, fu_C_T, fu_C_V)
@@ -415,8 +443,8 @@ do i=1, n_local_elms !=== do elements
                   fu_target = fu_C_T * node_list%node(inode)%values(in, index_tmp, fu_var_T)
                   if ( (index_tmp .eq. 1) .and. (in .eq. 1) ) fu_target = fu_target + fu_C_V * sheath_V_wall
                   ! --- outer-plate bias (sheath_bias_V) on a biased node's non-released value DOF
-                  if ( (index_tmp .eq. 1) .and. (in .eq. 1) .and. (sheath_bias_V .ne. 0.d0) .and. (bnd_type .eq. sheath_bias_type) &
-                       .and. (node_list%node(inode)%x(1,1,1) .gt. R_xpoint(1)) ) fu_target = fu_target + fu_C_V * sheath_bias_V
+                  if ( (index_tmp .eq. 1) .and. (in .eq. 1) ) fu_target = fu_target + fu_C_V *                         &
+                       sheath_bias_node(bnd_type, node_list%node(inode)%x(1,1,1), node_list%node(inode)%x(1,1,2), R_xpoint(1))
                   call boundary_conditions_add_one_entry(                        &
                          index_node, var_u, in, index_node, fu_var_T, in,        &
                          - zbig * fu_C_T, index_min, index_max, a_mat)
