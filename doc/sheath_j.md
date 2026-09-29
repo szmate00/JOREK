@@ -94,3 +94,9 @@ Both use the same coefficient, as the Onsager relation requires; they can be swi
   total rate. Written as the difference to develop's terms (bitwise develop with the flag off), exact columns on
   psi, rho, Ti/Te, Vpar and u. The density row is unchanged (its wall sink is the strong-form volume advection plus
   the n cs sin(min_sheath_angle) floor, identical on both branches).
+- `recycling_total_flow` (default .f.): the kinetic recycling flux on the total outgoing normal flow,
+  n max(-(Vpar B.n_in + v_ExB.n_in), 0) + n cs sin(min_sheath_angle) with the inward wall normal of
+  `wall_normal_vector` (particles/mod_particle_wall_interaction.f90), v_ExB the fluid's (-R u_Z, R u_R) from
+  `calc_EBpsiU`; and the correct Te in `calc_NeTevpar` (develop's model600 path reads variable 6 = Ti in a
+  two-temperature build and halves it, so the recycling cs was low by ~sqrt(2)). Both behind the flag so the
+  sheath-j-clean particle side can be switched as one; with it off the particle code is develop's.
