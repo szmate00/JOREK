@@ -6,6 +6,7 @@
 !!  3. the continued characteristic is continuous at floating (x = 0, where 1 - e^x - x has a kink by construction)
 !!     and continuously differentiable at the electron cap (x = Lambda, with s_e = e^Lambda)
 !!  4. the ion saturation current flows INTO the wall for both signs of F0
+!!  (2b. j_sat carries no vpar_smoothing weight: the zj rows are identical with it on and off)
 program test_sheath_j
   use mod_parameters
   use phys_module
@@ -84,6 +85,18 @@ program test_sheath_j
     enddo
     write(*,'(a,i2,a,es9.2)') ' PASS 2 case', icase, ': zj/u/rho/Ti/Te columns of the zj rows vs FD, worst ', worst
   enddo
+
+  ! ---------------------------------------------------------------- 2b. j_sat does not carry the vpar_smoothing weight
+  ! the nodal row applies the weight only across a tangency, so on a target the zj rows must be the same with it on or off
+  call set_u( 1.5d0*ufl ); sheath_j_ion_slope = 0.d0 ; sheath_j_e_slope = 0.d0
+  vpar_smoothing = .false. ; nodes = base; call assemble(a, r)
+  vpar_smoothing = .true. ; vpar_smoothing_coef = [0.05d0, 0.02d0, 0.d0] ; nodes = base; call assemble(ap, rp)
+  do row = 1, nd
+    if ( varof(row) /= var_zj ) cycle
+    if ( rp(row) /= r(row) .or. any(ap(row,:) /= a(row,:)) ) error stop 'FAIL 2b: zj rows depend on vpar_smoothing'
+  enddo
+  vpar_smoothing = .false.
+  write(*,'(a)') ' PASS 2b: zj rows (j_sat) independent of the vpar_smoothing weight'
 
   ! ---------------------------------------------------------------- 3. continuity of the continued characteristic
   ! the residual is continuous in u across x = 0 and x = Lambda with the slopes on (a kink in df/dx at x = 0, which

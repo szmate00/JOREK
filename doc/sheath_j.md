@@ -14,8 +14,10 @@ the **zj row** carries the sheath current-voltage characteristic (`mod_boundary_
     f  = 1 - e^Lambda - s_e * (x - Lambda)    x > Lambda  (Phi below the wall, beyond electron saturation)
 
 with a Zbig*dl weight and exact columns on zj, u, rho, Ti, Te (corr_neg-corrected Te and rho, as in every natural
-row). j_sat = c_sat rho (+-v_fl/|b.n|)/|B|, v_fl = factor*cs*|b.n| the parallel Bohm flow the nodal Mach-1 row
-imposes (factor = the `vpar_smoothing` weight). c_sat carries the sign of F0 like zj, so the current into the wall,
+row). j_sat = c_sat rho (+-cs)/|B|, the parallel Bohm flux the nodal Mach-1 row imposes on a target (its
+`vpar_smoothing` weight acts only across a tangency, where b.n changes sign between an edge's nodes; until
+2026-09-29 j_sat carried that weight everywhere, i.e. 0.28-0.92 of the imposed flux along the inner target,
+the only difference inside the sheath row from sheath-j-clean). c_sat carries the sign of F0 like zj, so the current into the wall,
 -zj (B_pol.n)/F0, is independent of the field sign. Normalisation: `sheath_j_norm` in `mod_floating_u.f90`.
 
 `sheath_j_ion_slope` (s_i) and `sheath_j_e_slope` (s_e), default 0 (hard saturation on both sides, the form that

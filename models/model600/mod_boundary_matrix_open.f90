@@ -147,8 +147,10 @@ enddo
 ! --- characteristic zj = j_sat*f(x), x = Lambda - a_n*(u - C_V*V_wall)/(2Te) = Lambda - e(Phi - V_wall)/Te, at the
 ! --- Gauss points where |b.n| >= sin(min_sheath_angle) (the nodes there have their Dirichlet zj rows and the
 ! --- value DOF of u released, mod_boundary_conditions; u follows from the vorticity equation).
-! --- j_sat = c_sat*rho*(+-v_fl/|b.n|)/|B|, v_fl = factor*cs*|b.n|: the parallel Bohm flow the nodal Mach-1 row
-! --- imposes (factor = the vpar_smoothing weight). f = 1 - e^x between floating (x = 0) and electron saturation
+! --- j_sat = c_sat*rho*(+-cs)/|B|: the parallel Bohm flux the nodal Mach-1 row imposes on a target, Vpar = +-cs/|B|.
+! --- (The row's vpar_smoothing weight acts only on edges where b.n changes sign between the two nodes, i.e. across
+! --- a tangency, mod_boundary_conditions; on a target it is 1, so j_sat carries no smoothing factor either.)
+! --- f = 1 - e^x between floating (x = 0) and electron saturation
 ! --- (x = Lambda); beyond them the tangent continuation with slopes sheath_j_ion_slope (x < 0) and
 ! --- sheath_j_e_slope (x > Lambda), so a node asked for more than j_sat, or more than the thermal electron
 ! --- current, sits a few Te off floating instead of having no root.
@@ -345,7 +347,7 @@ do ms=1, n_gauss
     ! --- rho and the temperatures (through cs and through x). corr_neg-corrected Te and rho as in every natural row:
     ! --- a raw Te <= 0 would flip the sign of x and a raw rho <= 0 the sign of j_sat. Btot and sign(B.n) lagged.
     sj_here = sj_on .and. ( abs(bdotn) .ge. sin(c_angle) )
-    sj_vfl  = max(factor, 0.d0) * cs0
+    sj_vfl  = cs0
     sj_jsat = 0.d0
     sc_w = 0.d0 ; sc_x = 0.d0 ; sc_ex = 1.d0 ; sc_f = 0.d0 ; sc_dfdu = 0.d0 ; sc_dfdTe = 0.d0 ; sc_res = 0.d0
     sc_Tc = 1.d0 ; sc_dTc = 1.d0 ; sc_drc = 1.d0
@@ -475,11 +477,11 @@ do ms=1, n_gauss
                 amat(var_zj,var_rho) = - v * sc_w * sj_csat * normal_sign * sj_vfl / Btot * sc_f * sc_drc * rho
                 amat(var_zj,var_u)   = - v * sc_w * sj_jsat * sc_dfdu * psi
                 if (with_TiTe) then
-                  amat(var_zj,var_Ti)  = - v * sc_w * sj_csat * r0_corr * normal_sign * max(factor, 0.d0) / Btot * sc_f * cs_Ti
-                  amat(var_zj,var_Te)  = - v * sc_w * ( sj_csat * r0_corr * normal_sign * max(factor, 0.d0) / Btot * sc_f * cs_Te &
+                  amat(var_zj,var_Ti)  = - v * sc_w * sj_csat * r0_corr * normal_sign * 1.d0 / Btot * sc_f * cs_Ti
+                  amat(var_zj,var_Te)  = - v * sc_w * ( sj_csat * r0_corr * normal_sign * 1.d0 / Btot * sc_f * cs_Te &
                                                         + sj_jsat * sc_dfdTe * Te )
                 else
-                  amat(var_zj,var_T)   = - v * sc_w * ( sj_csat * r0_corr * normal_sign * max(factor, 0.d0) / Btot * sc_f * cs_T &
+                  amat(var_zj,var_T)   = - v * sc_w * ( sj_csat * r0_corr * normal_sign * 1.d0 / Btot * sc_f * cs_T &
                                                         + sj_jsat * sc_dfdTe * 0.5d0 * T )
                 endif
 
