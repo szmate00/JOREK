@@ -50,8 +50,13 @@ bcs(9)%floating_u = .t.
 mach1_omit_drift  = .t.     ! nodal Mach-1 row without its ExB term: no u column in the Vpar rows
 ```
 
-Ran from t = 0 through the production timestep ramp and past step 1000 (2026-09-28), AUG-like divertor with
-D puff and kinetic recycling, both targets detaching, with sheath_Lambda = 3 and hard saturation (both slopes 0).
+Runs from t = 0 through the production timestep ramp, AUG-like divertor with D puff and kinetic recycling, both
+targets detaching, sheath_Lambda = 3, hard saturation (both slopes 0): past step 1900 and still running
+(2026-09-29). Before the j_sat correction (f615bd438: no vpar_smoothing weight in j_sat, which had made it 0.28-0.92
+of the imposed flux along the inner target) the same setup crashed at steps 1400-1600 with negative density at the
+inner target, with and without the thermoelectric terms. With `sheath_heat_total_flow` and `recycling_total_flow`
+both on, it crashed at step 1300 with the same structure: on the nodal row these total-flow options are not needed
+and make it worse (which of the two was not isolated).
 The same minimal setup also ran with the weak Bohm row on `sheath-j-clean` (no zj_zero, no wall-flux
 cancellation, no slopes, value-only release). Every earlier setup, on either Mach row and with any of those
 additions, died between steps 14 and 680 at the inner-target corner; the one change that removed that failure is
