@@ -1,0 +1,169 @@
+&in1
+ ! Simplified AUG-sized lower-single-null case for the MARFE / pressure-hole study (model600, two temperatures).
+ ! Analytic fixed-boundary X-point setup as in inxflow, scaled to R = 1.65 m, B = 2.5 T, with a wide SOL.
+ !
+ ! Build:  ./util/config.sh model=600 n_tor=1 n_coord_tor=1 l_pol_domm=0 n_plane=1 n_period=1 n_coord_period=1
+ !           with_vpar=.true. with_TiTe=.true. with_neutrals=.false. with_impurities=.false. with_refluid=.false.
+ !
+ ! Normalisation (central_density = 1, deuterium): t0 = 6.483e-7 s (1 ms = 1543), T = 2.0133e-5 per eV per species,
+ !   D [m2/s] = D_perp / t0, chi [m2/s] = 1.5 * ZK_perp / t0, eta [Ohm m] = 1.938 * eta.
+ !
+ ! Expected equilibrium (independent finite-difference GS estimate, not a JOREK result):
+ !   axis (1.73, 0.11), X-point (1.67, -0.81), a = 0.47 m, kappa = 1.7, psi_x - psi_axis = 0.169,
+ !   Ip = 0.75 MA, q0 = 1.6, q95 = 4.2, W_th = 0.23 MJ, beta_p = 0.65.
+ !   Main-chamber wall at psi_N >= 1.30; the grid edge psi_N = (1 + dPSI_open)**2 = 1.254 gives a midplane SOL
+ !   of 12 cm (HFS) and 6.5 cm (LFS). Private-region wall at psi_N >= 0.74.
+
+ restart = .f.
+ regrid  = .f.
+
+ ! --- nstep_n = 0 gives equilibrium + flux-aligned grid only. The ramp below covers 0.2 ms.
+ tstep_n = 1.d-3, 1.d-2, 1.d-1, 1.d0, 5.d0
+ nstep_n = 10,    10,    10,    10,   60
+ nout    = 10
+
+ central_density = 1.d0
+
+ ! --- Domain boundary (ellipse with a squared-off bottom) and psi on the boundary (makes the X-point)
+ fbnd(1)   = 2.
+ fbnd(2:4) = 0.
+ mf        = 0
+
+ ellip  = 1.7
+ tria_u = 0.
+ tria_l = 0.
+ quad_u = -0.
+ quad_l = -0.4
+
+ xampl  = +0.132
+ xsig   = 0.6
+ xwidth = 1.5
+ xtheta = 4.7
+ xleft  = 0.005
+ xshift = 0.018
+ xpoint = .t.
+
+ freeboundary = .f.
+
+ R_geo = 1.65
+ Z_geo = 0.
+ amin  = 0.62
+
+ F0    = 4.125
+
+ ! --- Initial polar grid (Grad-Shafranov) and flux-aligned grid
+ n_R      = 0
+ n_Z      = 0
+ n_radial = 71
+ n_pol    = 128
+
+ n_flux    = 70
+ n_tht     = 160
+ n_open    = 25
+ n_leg     = 17
+ n_private = 9
+
+ dPSI_open    = 0.12
+ dPSI_private = 0.06
+
+ ! --- Resistivity: Spitzer at Te_0 (the code's eta_Spitzer for 1 keV, 1e20, lnLambda 14.9), T**-1.5
+ eta               = 1.27d-8
+ eta_T_dependent   = .t.
+ keep_current_prof = .t.
+
+ ! --- Floors, all well below the ~1 eV MARFE temperature. They act on the coefficients (eta, lnLambda, ZK_par,
+ !     visco, BC sound speed), not on the evolved Te/Ti.
+ !     T_min_neg (scale of Te+Ti): corrected Te follows Te above 0.1 eV and saturates at 0.05 eV.
+ !     T_min (per species): hard floor at 0.05 eV; Te_min_ZKpar / Ti_min_ZKpar default to it.
+ !     Not lower: with eta_coul_log_dep the Coulomb logarithm reaches zero near 0.02 eV at 1e21 m-3 (eta < 0).
+ !     Unset, the code falls back to T_1 (unfloored lnLambda) and warns, suggesting 20 eV.
+ T_min_neg   = 4.03d-6
+ T_min       = 1.0d-6
+ rho_min_neg = 1.d-3
+ ! --- Background-impurity radiation is switched off below Te_eV_min (default 5 eV); only matters with nimp_bg
+ Te_eV_min   = 0.1d0
+
+ ! --- Viscosity: 1 m2/s, constant
+ visco             = 6.5d-7
+ visco_T_dependent = .f.
+ visco_par         = 1.d-4
+
+ ! --- Particle diffusion: 0.3 m2/s
+ D_par     = 0.d0
+ D_perp(1) = 1.95d-7
+
+ ! --- Heat conduction: perpendicular 0.6 m2/s; parallel Spitzer-Haerm at Te_0 / Ti_0 (the code's
+ !     ZK_[ei]_par_SpitzerHaerm), T**2.5, capped at the electron value for 317 eV (colder keeps Spitzer)
+ ZK_e_perp(1) = 2.6d-7
+ ZK_i_perp(1) = 2.6d-7
+ ZK_e_par     = 1771.d0
+ ZK_i_par     = 50.7d0
+ ZK_par_max   = 100.d0
+
+ ! --- Current profile: FF' ~ (1 - psi_N)**1.5, zero outside the separatrix
+ FF_0 = 2.55
+ FF_1 = 0.
+ FF_coef(1)  = -1.5d0
+ FF_coef(2)  = 0.375d0
+ FF_coef(3)  = 0.125d0
+ FF_coef(4)  = 0.03d0
+ FF_coef(5)  = 1.0d0
+ FF_coef(6)  = 0.d0
+ FF_coef(7)  = 10.d0
+ FF_coef(8)  = 1.d0
+
+ ! --- Temperatures: 1 keV on axis, 60 eV at the separatrix, 10 eV in the far SOL
+ Te_0 = 2.0133d-2
+ Te_1 = 2.0133d-4
+ Te_coef(1) = -0.9d0
+ Te_coef(2) = 0.d0
+ Te_coef(3) = 0.d0
+ Te_coef(4) = 0.04d0
+ Te_coef(5) = 1.0d0
+
+ Ti_0 = 2.0133d-2
+ Ti_1 = 2.0133d-4
+ Ti_coef(1) = -0.9d0
+ Ti_coef(2) = 0.d0
+ Ti_coef(3) = 0.d0
+ Ti_coef(4) = 0.04d0
+ Ti_coef(5) = 1.0d0
+
+ ! --- Density: 1e20 on axis, 2.9e19 at the separatrix, 5e18 in the far SOL
+ rho_0 = 1.
+ rho_1 = 0.05
+ rho_coef(1) = 0.d0
+ rho_coef(2) = -0.5d0
+ rho_coef(3) = 0.d0
+ rho_coef(4) = 0.05d0
+ rho_coef(5) = 1.0d0
+
+ ! --- Core sources inside psi_N = 0.6: 1.04 MW per species, 3.5e21 particles/s
+ heatsource_e        = 1.0d-7
+ heatsource_e_psin   = 0.6d0
+ heatsource_e_sig    = 0.15d0
+ heatsource_i        = 1.0d-7
+ heatsource_i_psin   = 0.6d0
+ heatsource_i_sig    = 0.15d0
+ particlesource      = 4.0d-6
+ particlesource_psin = 0.6d0
+ particlesource_sig  = 0.15d0
+
+ ! --- Prescribed local sink (branch marfe-sink). Gaussian in (R,Z) with 1/e half-widths dR, dZ; all rates are in
+ !     JOREK units (1/time; 6.5d-3 = 1e4 /s) and the sink is off while they are zero.
+ !       nu_E: Te relaxes to marfe_sink_Te_eV (no heating below it)
+ !       nu_n: particle loss; the particles leave with their momentum and heat, so v_par and T are untouched
+ !       nu_v: parallel momentum loss (CX-like friction), no frictional heating
+ !     Centre below = HFS midplane separatrix of the design estimate; take R and Z from the JOREK equilibrium.
+ marfe_sink_R       = 1.219d0
+ marfe_sink_Z       = 0.11d0
+ marfe_sink_dR      = 0.02d0
+ marfe_sink_dZ      = 0.10d0
+ marfe_sink_Te_eV   = 1.d0
+ marfe_sink_nu_E    = 0.d0
+ marfe_sink_nu_n    = 0.d0
+ marfe_sink_nu_v    = 0.d0
+ marfe_sink_t_start = 0.d0
+ marfe_sink_t_ramp  = 1500.d0
+
+/
