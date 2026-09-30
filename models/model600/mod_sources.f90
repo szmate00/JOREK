@@ -113,6 +113,39 @@ end subroutine sources_T
 
 
 
+!> Shape of the prescribed local sink (MARFE studies) at a given position and time: a Gaussian in (R,Z) around
+!> (marfe_sink_R, marfe_sink_Z) times a smooth ramp in time, between 0 and 1. The rates marfe_sink_nu_* multiply it.
+pure real*8 function marfe_sink_shape(R, Z, time)
+
+use constants,   only: PI
+use phys_module, only: marfe_sink_R, marfe_sink_Z, marfe_sink_dR, marfe_sink_dZ, marfe_sink_t_start, marfe_sink_t_ramp
+
+implicit none
+
+! --- Routine parameters.
+real*8, intent(in) :: R
+real*8, intent(in) :: Z
+real*8, intent(in) :: time
+
+! --- Local variables
+real*8 :: ramp
+
+marfe_sink_shape = 0.d0
+
+if ( (marfe_sink_dR .le. 0.d0) .or. (marfe_sink_dZ .le. 0.d0) .or. (time .lt. marfe_sink_t_start) ) return
+
+if ( time .lt. marfe_sink_t_start + marfe_sink_t_ramp ) then
+  ramp = 0.5d0 - 0.5d0*cos(PI * (time - marfe_sink_t_start) / marfe_sink_t_ramp)
+else
+  ramp = 1.d0
+endif
+
+marfe_sink_shape = ramp * exp( - ((R - marfe_sink_R)/marfe_sink_dR)**2 - ((Z - marfe_sink_Z)/marfe_sink_dZ)**2 )
+
+end function marfe_sink_shape
+
+
+
 !> parallel velocity profile which is kept by the // velocity source implemented in element_matrix_fft.f90
 subroutine velocity(xpoint2,xcase2,Z,Z_xpoint,psi,psi_axis,psi_bnd,velocity_profile,dV_dpsi,dV_dz, &
                    dV_dpsi2,dV_dz2,dV_dpsi_dz,dV_dpsi3,dV_dpsi_dz2, dV_dpsi2_dz)

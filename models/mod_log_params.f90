@@ -1021,6 +1021,16 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
    end if
 #endif
   write(*,REAL_FMT) 'loop_voltage          ',loop_voltage
+  write(*,REAL_FMT) 'marfe_sink_R          ',marfe_sink_R
+  write(*,REAL_FMT) 'marfe_sink_Z          ',marfe_sink_Z
+  write(*,REAL_FMT) 'marfe_sink_dR         ',marfe_sink_dR
+  write(*,REAL_FMT) 'marfe_sink_dZ         ',marfe_sink_dZ
+  write(*,REAL_FMT) 'marfe_sink_nu_E       ',marfe_sink_nu_E
+  write(*,REAL_FMT) 'marfe_sink_Te_eV      ',marfe_sink_Te_eV
+  write(*,REAL_FMT) 'marfe_sink_nu_n       ',marfe_sink_nu_n
+  write(*,REAL_FMT) 'marfe_sink_nu_v       ',marfe_sink_nu_v
+  write(*,REAL_FMT) 'marfe_sink_t_start    ',marfe_sink_t_start
+  write(*,REAL_FMT) 'marfe_sink_t_ramp     ',marfe_sink_t_ramp
   write(*,INTG_FMT) 'n_aux_var             ',n_aux_var
   write(*,LOGI_FMT) 'restart_particles     ',restart_particles
   write(*,INTG_FMT) 'nstep_particles       ',nstep_particles

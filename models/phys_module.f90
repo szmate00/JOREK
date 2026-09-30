@@ -54,6 +54,16 @@ module phys_module
   real*8  :: neutral_reflection   !< reflection coefficient of ions into neutrals (model500)
   real*8  :: imp_reflection       !< impurity reflection coefficient on open fieldlines
   real*8  :: loop_voltage         !< Apply a loop voltage at the boundary of the computational domain (in V; works only for fixed boundary)
+  real*8  :: marfe_sink_R         !< Prescribed local sink (MARFE studies): R of the centre (in m)
+  real*8  :: marfe_sink_Z         !< Prescribed local sink: Z of the centre (in m)
+  real*8  :: marfe_sink_dR        !< Prescribed local sink: 1/e half-width in R (in m); the sink is off if <= 0
+  real*8  :: marfe_sink_dZ        !< Prescribed local sink: 1/e half-width in Z (in m); the sink is off if <= 0
+  real*8  :: marfe_sink_nu_E      !< Prescribed local sink: relaxation rate of Te towards marfe_sink_Te_eV (JOREK units, 1/time)
+  real*8  :: marfe_sink_Te_eV     !< Prescribed local sink: Te the energy sink relaxes to (in eV); no heating below it
+  real*8  :: marfe_sink_nu_n      !< Prescribed local sink: particle loss rate (JOREK units, 1/time); particles leave with their momentum and heat
+  real*8  :: marfe_sink_nu_v      !< Prescribed local sink: parallel momentum loss rate (JOREK units, 1/time)
+  real*8  :: marfe_sink_t_start   !< Prescribed local sink: time at which the sink switches on (JOREK units)
+  real*8  :: marfe_sink_t_ramp    !< Prescribed local sink: duration of the smooth ramp-up after marfe_sink_t_start (JOREK units)
   logical :: old_deuterium_atomic !< use old fit to calculate atomic coefficients for D (ionization, recombination, radiation), otherwise a better fit is used
   logical :: deuterium_adas       !< use OPEN ADAS to calculate ionization, recombination and radiation coefficients for deuterium in
                                   !< the fluid model, only recombination coefficients in the kinetic model

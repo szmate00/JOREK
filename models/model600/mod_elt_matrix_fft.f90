@@ -207,6 +207,11 @@ real*8     :: fact_conservative_u = 1.d0
 ! --- Factor to use old viscosity model
 real*8     :: visco_fact_old, visco_fact_new
 
+! --- Prescribed local sink (MARFE studies): shape, loss rates of particles, parallel momentum and electron energy at
+! --- the Gauss point, the electron temperature the energy sink relaxes to, and d/dT of the energy sink
+real*8     :: sink_w, sink_n, sink_v, sink_E, sink_Te, sink_dE
+logical    :: sink_on
+
 ! --- Fluid-kinetic coupling variables
 real*8     :: aux_rho0, aux_E0, aux_mom_par0
 real*8     :: aux_E0_Ti, aux_E0_Te
@@ -1483,6 +1488,24 @@ do i=1,n_vertex_max
           tau_sc = 0.d0
           if (use_sc) call calculate_sc_quantities()
 
+          ! --- Prescribed local sink (MARFE studies)
+          sink_n  = 0.d0;  sink_v = 0.d0;  sink_E = 0.d0;  sink_dE = 0.d0;  sink_Te = 0.d0
+          sink_on = (marfe_sink_nu_n /= 0.d0) .or. (marfe_sink_nu_v /= 0.d0) .or. (marfe_sink_nu_E /= 0.d0)
+          if (sink_on) then
+            sink_w  = marfe_sink_shape(x_g(ms,mt), y_g(ms,mt), t_now)
+            sink_n  = marfe_sink_nu_n * sink_w
+            sink_E  = marfe_sink_nu_E * sink_w
+            ! The conservative form of the momentum equation takes the particles out at rest, i.e. leaves their
+            ! momentum in the plasma. They leave with their momentum here, which adds sink_n to the momentum loss rate.
+            sink_v  = marfe_sink_nu_v * sink_w + fact_conservative_u * sink_n
+            sink_Te = marfe_sink_Te_eV * EL_CHG * MU_ZERO * central_density * 1.d20
+            if (with_TiTe) then
+              if (Te0 .gt. sink_Te)         sink_dE = sink_E
+            else
+              if (0.5d0*T0 .gt. sink_Te)    sink_dE = 0.5d0 * sink_E
+            endif
+          endif
+
 !--------------------------------------------------------
 
           do im=n_tor_start, n_tor_end
@@ -2209,6 +2232,34 @@ do i=1,n_vertex_max
 
 
             end if ! with_impurities
+
+            !###################################################################################################
+            !#  Prescribed local sink (MARFE studies)                                                          #
+            !###################################################################################################
+
+            if (sink_on) then
+
+              ! --- Particles, leaving with their perpendicular momentum (the u term undoes the conservative form)
+              rhs_ij(var_rho) = rhs_ij(var_rho) - v * BigR * sink_n * r0                                     * xjac * tstep * factor(var_rho,15)
+              rhs_ij(var_u)   = rhs_ij(var_u)   + fact_conservative_u * BigR**3 * sink_n * r0 * (v_x * u0_x + v_y * u0_y) &
+                                                                                                             * xjac * tstep * factor(var_u,14)
+
+              ! --- Parallel momentum
+              if ( with_vpar ) then
+                rhs_ij(var_vpar) = rhs_ij(var_vpar) - v * sink_v * r0 * vpar0 * BB2 * BigR                   * xjac * tstep * factor(var_vpar,14)
+              endif
+
+              ! --- Pressure carried by the lost particles, and relaxation of the electron temperature to sink_Te
+              if ( with_TiTe ) then
+                rhs_ij(var_Ti) = rhs_ij(var_Ti) - v * BigR * sink_n * r0 * Ti0                               * xjac * tstep * factor(var_Ti,19)
+                rhs_ij(var_Te) = rhs_ij(var_Te) - v * BigR * sink_n * r0 * Te0                               * xjac * tstep * factor(var_Te,21) &
+                                                - v * BigR * sink_E * r0 * max(Te0 - sink_Te, 0.d0)          * xjac * tstep * factor(var_Te,21)
+              else
+                rhs_ij(var_T)  = rhs_ij(var_T)  - v * BigR * sink_n * r0 * T0                                * xjac * tstep * factor(var_T,21)  &
+                                                - v * BigR * sink_E * r0 * max(0.5d0*T0 - sink_Te, 0.d0)     * xjac * tstep * factor(var_T,21)
+              endif
+
+            endif ! sink_on
             
             !###################################################################################################
             !#  RHS equations end                                                                              #
@@ -4656,6 +4707,37 @@ do i=1,n_vertex_max
                           * ( + F0 / BigR * v_p) * xjac * theta * tstep * tstep
 
                   endif
+
+                  !###################################################################################################
+                  !#  Prescribed local sink (MARFE studies)                                                          #
+                  !###################################################################################################
+
+                  if (sink_on) then
+
+                    amat(var_rho,var_rho) = amat(var_rho,var_rho) + v * BigR * sink_n * rho                        * xjac * theta * tstep
+
+                    amat(var_u,var_u)     = amat(var_u,var_u)     - fact_conservative_u * BigR**3 * sink_n * r0  * (v_x * u_x  + v_y * u_y ) * xjac * theta * tstep
+                    amat(var_u,var_rho)   = amat(var_u,var_rho)   - fact_conservative_u * BigR**3 * sink_n * rho * (v_x * u0_x + v_y * u0_y) * xjac * theta * tstep
+
+                    if ( with_vpar ) then
+                      amat(var_vpar,var_vpar) = amat(var_vpar,var_vpar) + v * sink_v * r0  * vpar  * BB2     * BigR * xjac * theta * tstep
+                      amat(var_vpar,var_rho)  = amat(var_vpar,var_rho)  + v * sink_v * rho * vpar0 * BB2     * BigR * xjac * theta * tstep
+                      amat(var_vpar,var_psi)  = amat(var_vpar,var_psi)  + v * sink_v * r0  * vpar0 * BB2_psi * BigR * xjac * theta * tstep
+                    endif
+
+                    if ( with_TiTe ) then
+                      amat(var_Ti,var_Ti)  = amat(var_Ti,var_Ti)  + v * BigR * sink_n * r0  * Ti                   * xjac * theta * tstep
+                      amat(var_Ti,var_rho) = amat(var_Ti,var_rho) + v * BigR * sink_n * rho * Ti0                  * xjac * theta * tstep
+                      amat(var_Te,var_Te)  = amat(var_Te,var_Te)  + v * BigR * (sink_n + sink_dE) * r0 * Te        * xjac * theta * tstep
+                      amat(var_Te,var_rho) = amat(var_Te,var_rho) + v * BigR * sink_n * rho * Te0                  * xjac * theta * tstep &
+                                                                  + v * BigR * sink_E * rho * max(Te0 - sink_Te, 0.d0)       * xjac * theta * tstep
+                    else
+                      amat(var_T,var_T)    = amat(var_T,var_T)    + v * BigR * (sink_n + sink_dE) * r0 * T         * xjac * theta * tstep
+                      amat(var_T,var_rho)  = amat(var_T,var_rho)  + v * BigR * sink_n * rho * T0                   * xjac * theta * tstep &
+                                                                  + v * BigR * sink_E * rho * max(0.5d0*T0 - sink_Te, 0.d0)  * xjac * theta * tstep
+                    endif
+
+                  endif ! sink_on
                   
                   !###################################################################################################
                   !# end equations                                                                                   #

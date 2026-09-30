@@ -225,6 +225,10 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 use_manual_random_seed, manual_seed,                &
                 use_fixed_rng_value, fixed_rng_value,               &
                 loop_voltage, export_aux_node_list,                 &
+                marfe_sink_R, marfe_sink_Z, marfe_sink_dR,          &
+                marfe_sink_dZ, marfe_sink_nu_E, marfe_sink_Te_eV,   &
+                marfe_sink_nu_n, marfe_sink_nu_v,                   &
+                marfe_sink_t_start, marfe_sink_t_ramp,              &
                 use_zkperp_times_density, zkperp_density_floor
 
 

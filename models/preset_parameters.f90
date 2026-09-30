@@ -370,6 +370,16 @@ subroutine preset_parameters
   ! --- Default boundary conditions ----------
   ! ------------------------------------------
   loop_voltage = 0.d0
+  marfe_sink_R       = 0.d0   ! prescribed local sink (off by default: all rates zero)
+  marfe_sink_Z       = 0.d0
+  marfe_sink_dR      = 0.d0
+  marfe_sink_dZ      = 0.d0
+  marfe_sink_nu_E    = 0.d0
+  marfe_sink_Te_eV   = 1.d0
+  marfe_sink_nu_n    = 0.d0
+  marfe_sink_nu_v    = 0.d0
+  marfe_sink_t_start = 0.d0
+  marfe_sink_t_ramp  = 0.d0
   ! --- Dirichlet
   bcs(:)%dirichlet%psi     = .true.
   bcs(:)%dirichlet%u       = .true.
