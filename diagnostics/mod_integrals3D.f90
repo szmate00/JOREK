@@ -34,6 +34,7 @@ module mod_integrals3D
   use equil_info, only : get_psi_n, ES
   use mod_atomic_coeff_deuterium, only: rec_rate_to_kinetic, atomic_coeff_deuterium
   use mod_sources
+  use mod_marfe_sink
   use mod_edge_elements, only : elm_coords
 
   implicit none
@@ -135,6 +136,7 @@ real*8  :: vpar_disp_tot, vpar_disp, viscopar_dissip_tot, source_tot, heating_to
 real*8  :: vprp_disp_tot, vprp_disp, visco_dissip_tot, visco_T, visco_fact_old, visco_fact_new
 real*8  :: fric_disp_tot, fric_disp, friction_dissip_tot
 real*8  :: H_int, H_ext, S_int, S_ext, heating_in, heating_out, source_in, source_out
+real*8  :: mrf_E_loc, mrf_n_loc, mrf_E, mrf_n, mrf_w, mrf_Tt   ! prescribed local sink: energy and particle removal
 real*8  :: psi_xpoint(2),R_xpoint(2),Z_xpoint(2),s_xpoint(2),t_xpoint(2)
 real*8  :: dTdx, dTdy, drhodx, drhody, dPdx, dPdy, dpsidx, dpsidy, dpsidp, dudx, dudy, dudp, drhondx, drhondy, drhoimpdx, drhoimpdy
 real*8  :: dpsidx_3d, dpsidy_3d
@@ -308,6 +310,8 @@ C_intern = 0.d0
 C_intern_3d = 0.d0
 H_int    = 0.d0
 H_impl_int = 0.d0
+mrf_E_loc = 0.d0
+mrf_n_loc = 0.d0
 S_int    = 0.d0
 VP_int   = 0.d0
 local_mom_par_int = 0.d0 
@@ -449,6 +453,7 @@ Tie_min_neg = 0.5*T_min_neg
 !$omp          Vol_in, Vol_ext, surface_area, C_intern, C_ext, VP_ext, VP_int, VK_ext, VK_int, VK_tot,        &
 !$omp          VM_ext, VM_int, VM_tot, VB_ext, VB_int, VB_tot, J2_tot, J2_ext, J2_int,                        &
 !$omp          H_int, H_ext, S_int, S_ext,psi_xpoint,  F0, VP_tot,eta, T_0, Te_0, T_min,                      &
+!$omp          mrf_E_loc, mrf_n_loc, t_now, marfe_sink_nu_E, marfe_sink_nu_n, marfe_sink_Te_eV,               &
 !$omp          ne_SI_min, Te_eV_min, rn0_min, P_e_tot, P_i_tot, P_e_int, P_i_int, P_e_ext, P_i_ext,           &
 !$omp          C_intern_3d,C_ext_3d,pellet_amplitude,pellet_R,pellet_Z,pellet_psi,pellet_phi,                 &
 !$omp          T_min_neg, Tie_min_neg, H_impl_int,H_impl_ext,implicit_heat_source,GAMMA,                      &
@@ -538,6 +543,7 @@ Tie_min_neg = 0.5*T_min_neg
 !$omp           Arad_bg, Brad_bg, Crad_bg,                                                                    &
 !$omp           coef_prad_si,                                                                                 &
 #endif
+!$omp           mrf_w, mrf_Tt,                                                                                &
 !$omp           omp_nthreads,omp_tid)                                                                         &
 !$omp   firstprivate(nodes, aux_nodes) !< so that these nodes are unallocated at the start of the omp region and can be explicitly allocated/deallocated 
 
@@ -558,6 +564,7 @@ omp_tid      = 0
 !$omp                local_source_volume, local_source_volume_drift, local_radiation_bg,      &
 #endif
 !$omp                D_int, D_ext, P_int, H_int, S_int, H_ext, S_ext, P_ext, C_intern, C_ext, &
+!$omp                mrf_E_loc, mrf_n_loc,                                                    &
 !$omp                P_e_int, P_i_int, P_e_ext, P_i_ext, P_e_tot, P_i_tot,                    &
 !$omp                mag_pres_tot, mag_pres_int, mag_pres_ext,                                &
 !$omp                VP_int, VP_ext, VP_tot, VK_tot, VK_int, VK_ext, VM_ext,                  &
@@ -1488,6 +1495,15 @@ aux_q0    = 0.d0; aux_jx0   = 0.d0; aux_jy0   = 0.d0; aux_jz0   = 0.d0; aux_jz0_
         local_n_particles     = local_n_particles + central_density * 1.d20 * rimp0 * m_i_over_m_imp * bigR * xjac * wst * delta_phi
 #endif
 
+        ! --- Prescribed local sink: electron energy removed (pressure units, as heat_source) and particles removed
+        if ( (marfe_sink_nu_E /= 0.d0) .or. (marfe_sink_nu_n /= 0.d0) ) then
+          mrf_w  = marfe_sink_shape(x_g(mp,ms,mt), y_g(mp,ms,mt), t_now)
+          mrf_Tt = marfe_sink_Te_eV * EL_CHG * MU_ZERO * central_density * 1.d20
+          mrf_E_loc = mrf_E_loc + mrf_w * r0 * ( marfe_sink_nu_E * max(Te0 - mrf_Tt, 0.d0) + marfe_sink_nu_n * (Te0 + Ti0) ) &
+                                * xjac * BigR * wst * delta_phi
+          mrf_n_loc = mrf_n_loc + mrf_w * r0 * marfe_sink_nu_n * xjac * BigR * wst * delta_phi
+        endif
+
 #if STELLARATOR_MODEL
         if (s_norm(ms,mt) <= 1.d0) then       ! Inside LCFS
 #else
@@ -2155,6 +2171,8 @@ call MPI_AllReduce(P_e_tot,pressure_e,1,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WO
 call MPI_AllReduce(P_i_tot,pressure_i,1,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
 call MPI_AllReduce(H_ext,heating_out,1,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
 call MPI_AllReduce(H_int,heating_in,1,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
+call MPI_AllReduce(mrf_E_loc,mrf_E,1,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
+call MPI_AllReduce(mrf_n_loc,mrf_n,1,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
 call MPI_AllReduce(H_impl_ext,heating_impl_out,1,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
 call MPI_AllReduce(H_impl_int,heating_impl_in,1,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
 call MPI_AllReduce(S_ext,source_out,1,MPI_DOUBLE_PRECISION,MPI_SUM,MPI_COMM_WORLD,ierr)
@@ -2245,6 +2263,8 @@ heating_out          = H_ext
 heating_in           = H_int
 heating_impl_out     = H_impl_ext
 heating_impl_in      = H_impl_int
+mrf_E                = mrf_E_loc
+mrf_n                = mrf_n_loc
 source_out           = S_ext
 source_in            = S_int
 kin_par_in           = VP_int
@@ -2405,6 +2425,8 @@ heating_out          = n_period * heating_out * fact_flux / (GAMMA-1.d0)
 heating_in           = n_period * heating_in  * fact_flux / (GAMMA-1.d0)
 heating_impl_out     = n_period * heating_impl_out * fact_flux / (GAMMA-1.d0)
 heating_impl_in      = n_period * heating_impl_in  * fact_flux / (GAMMA-1.d0)
+mrf_E                = n_period * mrf_E * fact_flux / (GAMMA-1.d0)
+mrf_n                = n_period * mrf_n * fact_part / t_norm2
 source_out           = n_period * source_out  * fact_part / t_norm2
 source_in            = n_period * source_in   * fact_part / t_norm2
 density_tot          = n_period * density_tot * fact_part 
@@ -2919,6 +2941,7 @@ if (my_id .eq. 0) then
   write(*,'(A,3es14.6,A)') ' current  (in/out)               : ',xt,current_in/1.d6, current_out/1.d6, ' [MA]'
   write(*,'(A,3es14.6,A)') ' int J*R  (in/out)               : ',xt,current_R_in, current_R_out, ' [Am]'
   write(*,'(A,3es14.6,A)') ' heating  (in/out)               : ',xt,heating_in/1d6, heating_out/1.d6 ,' [MW]'
+  write(*,'(A,3es14.6,A)') ' MARFE sink (energy/particles)   : ',xt,mrf_E/1.d6, mrf_n ,' [MW, 1/s]'
   write(*,'(A,4es14.6,A)') ' Implicit heating  (total/in/out): ',xt,heating_impl_tot/1.d6,heating_impl_in/1.d6, heating_impl_out/1.d6 ,' [MW]'
   write(*,'(A,3es14.6,A)') ' source   (in/out)               : ',xt,source_in, source_out,' [10^20/m^3/s]'
   write(*,'(A,4es14.6,A)') ' Ohmic    (in/out)               : ',xt,Ohm_tot/1.d6, Ohm_in/1.d6, Ohm_out/1.d6,' [MW]'
