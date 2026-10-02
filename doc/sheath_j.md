@@ -135,3 +135,31 @@ sheath_bias_V     = -60.d0     ! Rozhansky scan: -100, -60, 0, +40, +60
 Harness: all nodes beyond R_xpoint give exactly the rows of a uniform wall potential; none beyond it, another type,
 or above Z_max give the unbiased rows bitwise; type 0 = the explicit type; one node gives rows in between; the rule
 never biases a floating or non-sheath type.
+
+## Wall diagnostics (`jorek2_postproc`, `boundary_quantities`)
+
+Boundary expressions for the wall current (diagnostics/new_diag/mod_expression.f90), all with the outward normal,
+positive = current leaving the plasma into the wall, A/m^2 and V with `si-units`:
+
+- `Jn_par`: normal current carried by the parallel current, -zj (B_pol.n)/F0, the quantity the sheath row sets.
+  (`Jnorm`, already there, adds the diamagnetic current R grad p x e_phi / F0.)
+- `Jn_sat`: ion saturation current into the wall, e n cs |b.n| with the row's cs = sqrt(gamma (Ti+Te)).
+- `Jn_sheath`: the characteristic evaluated on the local state, Jn_sat f(x), x = Lambda - e(Phi - V_wall)/Te, with
+  the slopes of the namelist (without `sheath_bias_V`). On a sheath edge Jn_par = Jn_sheath up to the row's
+  Gauss-point residual; in a run without the sheath BC it is the current the plate would draw.
+- `dPhi_float`: Phi - V_wall - Lambda Te/e, zero on a floating node, positive where the plate collects ion current.
+- `bnd_dl`: poloidal length of the boundary point, for plate integrals I = sum Jn 2 pi R bnd_dl (per toroidal angle).
+
+```
+namelist inxflow_elm_thermoelectric
+si-units
+set nsub_bnd 4
+for step 0 to 2000 by 10 do
+  expressions R Z Psi_N bnd_dl Bnorm Jn_par Jn_sat Jn_sheath Jnorm dPhi_float Phi T_e T_i ne heatF_total
+  boundary_quantities 0.d0 1.0472 16
+done
+```
+
+(one toroidal period of n_period = 6; without arguments phi = 0 only, enough for the n = 0 run). The boundary
+type is not an expression: on the flux-aligned X-point grid the targets are the points at the bottom of the grid,
+inner/outer split at R of the X-point; on the flux-surface wall (type 2) the sheath expressions have no meaning.

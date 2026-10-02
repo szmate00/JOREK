@@ -235,6 +235,11 @@ module mod_expression
     call add(exprs_all, 'npartF_total', 'Total neutral particle flux (normal to the boundary)  ', 'boundary    ')
     call add(exprs_all, 'ExB_norm    ', 'EM energy flux, Poynting vector (normal to boundary)  ', 'boundary    ')
     call add(exprs_all, 'gradP_norm  ', 'Total pressure gradient normal to the boundary        ', 'boundary    ')
+    call add(exprs_all, 'bnd_dl      ', 'Poloidal length represented by this boundary point    ', 'boundary    ')
+    call add(exprs_all, 'Jn_par      ', 'Normal current density carried by the parallel current', 'boundary    ')
+    call add(exprs_all, 'Jn_sat      ', 'Normal ion saturation current density (Bohm, e n cs)  ', 'boundary    ')
+    call add(exprs_all, 'Jn_sheath   ', 'Normal current density of the sheath characteristic   ', 'boundary    ')
+    call add(exprs_all, 'dPhi_float  ', 'Potential above floating (Phi - V_wall - Lambda Te/e) ', 'boundary    ')
 #if JOREK_MODEL >= 303
     call add(exprs_all, 'J_bootstrap ', 'Bootstrap Current                                     ')
 #endif
@@ -634,6 +639,8 @@ module mod_expression
     real*8  :: rn0, rn0_s, rn0_t, rn0_ss, rn0_tt, rn0_st, rn0_p, rn0_pp, rn0_R, rn0_Z
     real*8  :: rimp0, rimp0_s, rimp0_t, rimp0_ss, rimp0_tt, rimp0_st, rimp0_p, rimp0_pp, rimp0_R, rimp0_Z
     real*8  :: flux_av_fact
+    ! --- Sheath (bcs%sheath_j / bcs%floating_u) boundary expressions
+    real*8  :: sh_rho0, sh_an, sh_ut, sh_x, sh_f, sh_cs, sh_jn_sat
 
 #if (defined WITH_Neutrals) || (defined WITH_Impurities)
     real*8  :: Te_corr_eV, Te_eV
@@ -1701,6 +1708,25 @@ module mod_expression
           ! --- factor to calculate ion saturation current in JOREK units
           fact_jsat = EL_CHG * 1.d20 * central_density * sqrt(MU_ZERO/rho_norm) 
 
+          ! --- Sheath quantities as in the sheath current row (models/model600/mod_boundary_matrix_open.f90):
+          ! --- e*Phi/Te = sh_an*u/(2*Te), ion saturation current into the wall e*n*cs*|b.n|, and the
+          ! --- characteristic f(x), x = Lambda - e*(Phi - V_wall)/Te (sheath_bias_V is not included)
+          sh_rho0   = central_density * 1.d20 * central_mass * ATOMIC_MASS_UNIT
+          sh_an     = 2.d0 * EL_CHG * F0 * sqrt(MU_ZERO*sh_rho0) / (central_mass * ATOMIC_MASS_UNIT)
+          sh_ut     = u0 - sqrt(MU_ZERO*sh_rho0) / F0 * sheath_V_wall
+          if ( with_TiTe ) then
+            sh_cs   = sqrt(gamma*max(Ti0_corr+Te0_corr, 0.d0))
+          else
+            sh_cs   = sqrt(gamma*max(T0_corr, 0.d0))
+          end if
+          sh_jn_sat = EL_CHG * 1.d20 * central_density * sqrt(MU_ZERO/sh_rho0) * corr_neg_dens(r0) * sh_cs * abs(Bnorm) / Btot
+          sh_f      = 0.d0
+          if ( Te0_corr > 0.d0 ) then
+            sh_x    = sheath_Lambda - sh_an * sh_ut / (2.d0*Te0_corr)
+            sh_f    = 1.d0 - exp(min(sh_x, sheath_Lambda)) - sheath_j_ion_slope * min(sh_x, 0.d0)             &
+                      - sheath_j_e_slope * max(sh_x - sheath_Lambda, 0.d0)
+          end if
+
           ! --- Now that everything is prepared, evaluate the requested expressions.
           loop_expr: do iexpr = 1, expr_list%n_expr
             
@@ -2035,6 +2061,21 @@ module mod_expression
               case ( 'gradP_norm' )
                 res = (P0_R *nmlR +  P0_Z*nmlZ) / fact_mu_zero
  
+              case ( 'bnd_dl'       )
+                res = pol_pos%dl
+
+              case ( 'Jn_par'       )
+                res = - zj0 * Bnorm / F0 / fact_mu_zero
+
+              case ( 'Jn_sat'       )
+                res = sh_jn_sat / fact_mu_zero
+
+              case ( 'Jn_sheath'    )
+                res = sh_jn_sat * sh_f / fact_mu_zero
+
+              case ( 'dPhi_float'   )
+                res = ( sh_ut - 2.d0 * sheath_Lambda * Te0_corr / sh_an ) * F0 / fact_time
+
               case ( 'Jpar'         )
                 res = Jpar/fact_mu_zero
 
