@@ -24,7 +24,9 @@ RUN_MODE=slurm                        # slurm | local | toy
 PROBE_FILE=probes.dat                 # relative to $BASE; empty = upstream-only fit (targets reported)
 TEMPERATURES=2                        # 1: T with ZK_perp_file; 2: T_e, T_i with ZK_e_perp_file, ZK_i_perp_file
 REF_STEP=0                            # upstream reference = jorek<REF_STEP>.h5 (the initial profiles)
-NSTEP_SEG=200                         # steps per segment (doubled when the state is not steady)
+TSTEP=""                              # time step (JOREK units) for every segment; empty = keep tstep_n(1) of the namelist.
+                                      # Set it to the production value: segments restart from an evolved state, no ramp
+NSTEP_SEG=200                         # steps per segment (doubled when the state is not steady); aim at 1-3 ms
 NSTEP_MAX=800
 MAX_ITER=12
 TOL=0.05                              # converged: all channels within TOL (rel. rms) for two iterations
@@ -70,6 +72,7 @@ write_cfg() {
     echo "PROBE_FILE=$PROBE_FILE"
     echo "REF_STEP=$REF_STEP"
     echo "NSTEP_SEG=$NSTEP_SEG"
+    echo "TSTEP=$TSTEP"
     echo "NSTEP_MAX=$NSTEP_MAX"
     echo "MAX_ITER=$MAX_ITER"
     echo "TOL=$TOL"
@@ -197,7 +200,7 @@ while true; do
   [ -n "$first" ] || { log "no jorek??????.h5 step file to restart from"; exit 1; }
   cp "jorek$(printf %06d "$first").h5" jorek_restart.h5
   python3 "$PY" set-namelist --cfg "$CFG" --set "restart=.t." --set "nstep_n=$NSTEP" \
-    --set "restart_particles=$RESTART_PARTICLES" || exit 1
+    --set "restart_particles=$RESTART_PARTICLES" ${TSTEP:+--set "tstep_n=$TSTEP"} || exit 1
   log "iteration $((ITER + 1)): segment of $NSTEP steps from step $first (clamp $CLAMP, crashes $CRASHES)"
   if ! run_segment; then
     crash "$first" "the run exited with an error"

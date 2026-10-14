@@ -55,6 +55,7 @@ CFG_DEFAULTS = {
     "PLATE_ZMAX": "", "PROBE_NE_UNIT": "1e19", "PROBE_ERR_REL": "0.15",
     "PROBE_NE_ERR_FLOOR": "0.1", "PROBE_TE_ERR_FLOOR": "2.0", "SMOOTH": "1",
     "FIT_HEAT_FROM_ITER": "3", "EDGE_HOLD": "0.08", "SENS_MIN_STEP": "0.15", "SMALL_FRAC": "0.03",
+    "TSTEP": "",
 }
 
 
@@ -707,7 +708,20 @@ def cmd_check(cfg, args):
     for key in ("nstep_n", "tstep_n"):
         v = nml.get(key)
         if isinstance(v, dict) and len([i for i in v if i > 1 and v[i]]) > 0:
-            warnings.append(f"{key} has entries beyond slot 1; the loop sets {key}(1) only")
+            msg = (f"{key} has entries beyond slot 1 (a time-step ramp?): every segment runs with tstep_n(1) = "
+                   f"{nml_get(nml, 'tstep_n', '?')} for nstep_n(1) steps and ignores the other slots")
+            if key == "tstep_n" and not cfg.s("TSTEP"):
+                problems.append(msg + "; set TSTEP in the driver to the production time step, or make tstep_n a single value")
+            else:
+                warnings.append(msg)
+    tstep_eff = float(cfg.s("TSTEP")) if cfg.s("TSTEP") else float(nml_get(nml, "tstep_n", nml_get(nml, "tstep", 0.0)) or 0.0)
+    if tstep_eff > 0:
+        t_ms = cfg.i("NSTEP_SEG") * tstep_eff * nf["sqrt_mu0rho0"] * 1e3
+        say(f"  segment: {cfg.i('NSTEP_SEG')} steps x tstep {tstep_eff:g} = {t_ms:.2f} ms of plasma time "
+            f"(edge transport and SOL transit need of order 1-3 ms per segment)")
+        if t_ms < 0.5:
+            warnings.append(f"a segment covers only {t_ms:.2f} ms; the edge will not re-equilibrate and the steadiness "
+                            f"gate will keep doubling it. Raise NSTEP_SEG or TSTEP")
     if "nstep_n" not in nml and "nstep" not in nml:
         warnings.append("neither nstep_n nor nstep in the namelist; 'nstep_n' will be inserted")
 
