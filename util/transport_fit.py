@@ -55,7 +55,8 @@ CFG_DEFAULTS = {
     "PLATE_ZMAX": "", "PROBE_NE_UNIT": "1e19", "PROBE_ERR_REL": "0.15",
     "PROBE_NE_ERR_FLOOR": "0.1", "PROBE_TE_ERR_FLOOR": "2.0", "SMOOTH": "1",
     "FIT_HEAT_FROM_ITER": "3", "EDGE_HOLD": "0.08", "SENS_MIN_STEP": "0.15", "SMALL_FRAC": "0.03",
-    "TSTEP": "",
+    "TSTEP": "", "FUEL_CONTROL": "0", "PUFF_KEY": "part_group_configs(1)%puff_ctrl(1)%rates",
+    "FUEL_PSI": "1.0", "FUEL_GAIN": "0.5", "FUEL_CLAMP": "1.5", "W_TLEVEL": "0.5",
 }
 
 
@@ -239,6 +240,46 @@ def set_namelist(path, assignments):
             lines.insert(j + 1, f"  {key} = {val}\n")
     with open(path, "w") as f:
         f.writelines(lines)
+
+
+def _key_line_pattern(key):
+    return re.compile(r"^(\s*" + re.escape(key) + r"\s*(\([^)]*\))?\s*=\s*)([^!\n]*)", re.I)
+
+
+def read_namelist_key_values(path, key):
+    """All numeric values on the lines 'key[(idx)] = v1, v2, ...' (e.g. a puff rate schedule)."""
+    pat = _key_line_pattern(key)
+    vals = []
+    with open(path, errors="replace") as f:
+        for line in f:
+            m = pat.match(line)
+            if m:
+                for tok in _split_values(m.group(3)):
+                    v = _parse_value(tok)
+                    if isinstance(v, float):
+                        vals.append(v)
+    return vals
+
+
+def scale_namelist_key_values(path, key, factor):
+    """Multiply every numeric value on every line 'key[(idx)] = ...' by factor; returns the number of lines."""
+    pat = _key_line_pattern(key)
+    with open(path, errors="replace") as f:
+        lines = f.readlines()
+    n = 0
+    for i, line in enumerate(lines):
+        m = pat.match(line)
+        if not m:
+            continue
+        new = []
+        for tok in _split_values(m.group(3)):
+            v = _parse_value(tok)
+            new.append(f"{v * factor:.6e}" if isinstance(v, float) else tok)
+        lines[i] = m.group(1) + ", ".join(new) + line[m.end():]
+        n += 1
+    with open(path, "w") as f:
+        f.writelines(lines)
+    return n
 
 
 def fortran_logical(b):
@@ -609,11 +650,13 @@ def target_widths(plate, bnd, probes, proj, field_bnd, field_probe, cfg):
         return None
     _, bs = _weighted_slope(xp, np.log(sim_at_probes), wp)          # same estimator and weights as the probes
     level = float(np.sqrt(np.mean(((sim_at_probes - yp) / yp)**2)))
+    level_ln = float(np.sum(wp * np.log(sim_at_probes / yp)) / np.sum(wp))
     s_sorted = np.argsort(ps[m])
     dpsi_ds = np.polyfit(plate["s"][m][s_sorted], ps[m][s_sorted], 1)[0] if np.count_nonzero(m) > 3 else np.nan
     return {"lam_probe": (-1.0 / bp) if bp < 0 else np.nan, "lam_sim": (-1.0 / bs) if bs < 0 else np.nan,
             "n_probes": int(len(xp)), "psi_lo": float(lo), "psi_hi": float(hi), "level_rms": level,
-            "dpsi_ds": float(dpsi_ds), "peak_sim": float(us[m].max()), "peak_probe": float(yp.max())}
+            "dpsi_ds": float(dpsi_ds), "peak_sim": float(us[m].max()), "peak_probe": float(yp.max()),
+            "level_ln": level_ln}
 
 
 # ----------------------------------------------------------------------------- channels
@@ -737,6 +780,14 @@ def cmd_check(cfg, args):
     if not os.path.exists(os.path.join(run, "part_restart.h5")):
         warnings.append("part_restart.h5 not found: the first segment initialises the kinetic particles "
                         "(restart_particles=.f.); later segments continue them")
+    if cfg.b("FUEL_CONTROL"):
+        rates = read_namelist_key_values(nmlp, cfg.s("PUFF_KEY"))
+        if not rates:
+            problems.append(f"FUEL_CONTROL is on but no line '{cfg.s('PUFF_KEY')} = ...' with numeric values in the namelist "
+                            f"(set PUFF_KEY to the valve whose rates the loop may scale)")
+        else:
+            say(f"  fuelling feedback on {cfg.s('PUFF_KEY')}: {len(rates)} rate value(s), {min(rates):.3g}..{max(rates):.3g}; "
+                f"the loop holds the midplane density at psi_N {cfg.f('FUEL_PSI'):.2f} on its reference value")
     pf = cfg.path("PROBE_FILE")
     if pf:
         if not os.path.isfile(pf):
@@ -1018,6 +1069,24 @@ def cmd_update(cfg, args):
         say(f"  not steady ({', '.join(not_steady)}) at NSTEP_MAX: updating with half the relaxation")
         relax *= 0.5
 
+    # --- density level at FUEL_PSI: the inventory. Owned by the puff (feedback on) or reported (off).
+    psi_f = cfg.f("FUEL_PSI")
+    h_f = 0.02
+    v_ref_f, _, _ = local_linear(ref["Psi_N"], ref[dens], psi_f, h_f)
+    v_cur_f, _, _ = local_linear(last["Psi_N"], last[dens], psi_f, h_f)
+    level_sep = float(v_cur_f / v_ref_f) if (np.isfinite(v_ref_f) and v_ref_f > 0 and np.isfinite(v_cur_f)) else np.nan
+    row["level_sep"] = level_sep
+    say(f"  density level at psi_N {psi_f:.2f}: simulation / reference = {level_sep:.3f}"
+        + ("" if cfg.b("FUEL_CONTROL") else "  (fuelling fixed: a systematic drift here is inventory, not transport)"))
+    if cfg.b("FUEL_CONTROL") and np.isfinite(level_sep) and level_sep > 0:
+        fac = float(np.clip(level_sep ** (-cfg.f("FUEL_GAIN")), 1.0 / cfg.f("FUEL_CLAMP"), cfg.f("FUEL_CLAMP")))
+        n_lines = scale_namelist_key_values(os.path.join(run, cfg.s("NAMELIST")), cfg.s("PUFF_KEY"), fac)
+        if n_lines == 0:
+            fail(f"FUEL_CONTROL: no '{cfg.s('PUFF_KEY')}' line in the namelist")
+        st["puff_factor"] = float(st.get("puff_factor", 1.0) * fac)
+        row["puff_factor_step"], row["puff_factor"] = fac, st["puff_factor"]
+        say(f"  fuelling: puff rates x {fac:.3f} this iteration, x {st['puff_factor']:.3f} relative to the start")
+
     # --- gradient ratios and steps
     maxstep, nflag_total = 0.0, 0
     for name, c in st["channels"].items():
@@ -1065,12 +1134,18 @@ def cmd_update(cfg, args):
             if k_fit.size and band.any() and adjacent:
                 kl = k_fit[-1]
                 u_edge = float(ref[c["expr"]][-1])                     # Dirichlet value at the grid edge
-                if v_ref[kl] > 0 and v_cur[kl] > 0:
+                v_ref_s = float(np.interp(1.0, ref["Psi_N"], ref[c["expr"]]))
+                v_cur_s = float(np.interp(1.0, last["Psi_N"], last[c["expr"]]))
+                if v_ref[kl] > 0 and v_cur[kl] > 0 and v_ref_s > 0 and v_cur_s > 0:
+                    # level of the last fitted knot RELATIVE to the separatrix level, so that the inventory
+                    # (owned by the puff) does not get fitted into the edge band.
                     # d ln u_k / d ln D_band = -(u_k - u_edge)/u_k for an outward flux (falling profile);
                     # the sign flips when the band is fed from the edge (rising reference profile)
                     sign = -1.0 if np.nanmean(s_ref[band]) > 0 else 1.0
                     gain = min(5.0, v_ref[kl] / max(abs(v_ref[kl] - u_edge), 0.2 * v_ref[kl]))
                     lng_level = sign * gain * math.log(v_cur[kl] / v_ref[kl])
+                    if cfg.b("FUEL_CONTROL"):
+                        lng_level -= sign * gain * math.log(v_cur_s / v_ref_s)
                     for k in range(len(knots)):
                         if band[k]:
                             lng[k] = lng_level
@@ -1088,6 +1163,18 @@ def cmd_update(cfg, args):
                         num += r["n_probes"] * math.log(r["lam_probe"] / r["lam_sim"])
                         den += r["n_probes"]
                         hi = max(hi, r["psi_hi"])
+                if den > 0 and tw > 0 and c["kind"] == "D" and cfg.b("FUEL_CONTROL"):
+                    # throughput constraint: the target density level says how much flux reaches the plates.
+                    # Too little at the target -> more SOL transport (the puff keeps the separatrix level).
+                    lv_num = sum(r["n_probes"] * r["level_ln"] for (pn, fp), r in tgt_info.items() if fp == chdef["probe"])
+                    lv_den = sum(r["n_probes"] for (pn, fp), r in tgt_info.items() if fp == chdef["probe"])
+                    lng_lv = -cfg.f("W_TLEVEL") * lv_num / lv_den if lv_den > 0 else 0.0
+                    for k in range(len(knots)):
+                        if 1.0 <= knots[k] <= hi + 0.02 and np.isfinite(lng[k]):
+                            lng[k] += lng_lv
+                    row[f"lng_tlevel_{name}"] = lng_lv
+                    say(f"  target density level: simulation / probes = {math.exp(lv_num / lv_den):.3f} -> SOL D knots "
+                        f"{'up' if lng_lv > 0 else 'down'} by ln {abs(lng_lv):.3f}")
                 if den > 0 and tw > 0:
                     lng_t = num / den
                     for k in range(len(knots)):
@@ -1260,6 +1347,11 @@ def cmd_report(cfg, args):
             tag = k[len("lam_sim_"):]
             say(f"  target {tag}: width sim {v:.3f} vs probes {last.get('lam_probe_' + tag, float('nan')):.3f} (psi_N), "
                 f"level rms {last.get('level_' + tag, float('nan')) * 100:.0f}%")
+    if "puff_factor" in st:
+        say(f"fuelling: puff rates now x {st['puff_factor']:.3f} relative to the start "
+            f"(density level at psi_N {cfg.f('FUEL_PSI'):.2f}: {last.get('level_sep', float('nan')):.3f} of the reference)")
+    elif "level_sep" in last:
+        say(f"density level at psi_N {cfg.f('FUEL_PSI'):.2f}: {last['level_sep']:.3f} of the reference (fuelling was fixed)")
     say(f"state: iteration {st['iter']}, done {st['done']}, crashes {st['crashes']}, clamp {st['clamp']:.2f}")
     say(f"profile files: " + ", ".join(c["file"] for c in st["channels"].values()) + "  (originals kept as .user)")
 

@@ -56,8 +56,12 @@ def chi_true(psi, which):
     return f * (2.0 - 1.6 * np.exp(-((psi - 0.93) / 0.06)**2) + 1.0 * np.clip((psi - 1.0) / 0.3, 0.0, 1.0))
 
 
-def sources(psi, flat_core):
-    S = 2.0 * np.exp(-((psi - 0.3) / 0.25)**2) + 6.0 * np.exp(-((psi - 1.03) / 0.03)**2)
+PUFF_KEY = "part_group_configs(1)%puff_ctrl(1)%rates"
+PUFF_TRUE = 1.0
+
+
+def sources(psi, flat_core, puff=PUFF_TRUE):
+    S = 2.0 * np.exp(-((psi - 0.3) / 0.25)**2) + puff * 6.0 * np.exp(-((psi - 1.03) / 0.03)**2)
     if flat_core:
         S = np.where(psi < 0.45, 0.0, S)                               # no source inside -> flat core density
     tau = np.where(psi > 1.0, 0.02, np.inf)
@@ -97,8 +101,8 @@ def solve_steady(psi, h, coef, src, tau, n=None, v=None, u_edge=0.0):
     return np.linalg.solve(A, b)
 
 
-def steady_profiles(psi, h, D, chi_e, chi_i, params):
-    S, tau, Q, tau_T = sources(psi, params["flat_core"])
+def steady_profiles(psi, h, D, chi_e, chi_i, params, puff=PUFF_TRUE):
+    S, tau, Q, tau_T = sources(psi, params["flat_core"], puff)
     v = -params["pinch_frac"] * D * 20.0 * np.exp(-((psi - 0.97) / 0.06)**2)   # inward pinch near the separatrix
     n = solve_steady(psi, h, D, S, tau, v=v, u_edge=0.02)
     Te = solve_steady(psi, h, chi_e, Q["e"], tau_T, n=n, u_edge=0.0005)      # edge below the loss-dominated SOL
@@ -127,12 +131,16 @@ def plate_psi(s):
     return np.where(s > 0, 1.0 + s / 0.5, 1.0 + np.abs(s) / 0.35)
 
 
-def target_profiles(prof, psi_s):
+def target_profiles(prof, psi_s, flux=None, flux0=None):
+    """Target profiles from the midplane ones; the density also scales with the radial flux that feeds the
+    plate (flux/flux0), so that throughput is observable at the target as it is in the experiment."""
     psi, _ = psi_grid()
     out = {}
     for k, u in prof.items():
         out[k] = np.interp(psi_s, psi, u)
     out["ne_t"] = 0.6 * out["ne"]
+    if flux is not None and flux0:
+        out["ne_t"] = out["ne_t"] * np.interp(psi_s, psi, flux) / flux0
     out["Te_t"] = 0.35 * out["T_e" if "T_e" in out else "T"]
     return out
 
@@ -145,7 +153,15 @@ def write_export(path, names, cols, step, boundary=False):
             f.write("".join(f"{v:23.15e}" for v in row) + "\n")
 
 
-def export_step(run, cfg, step, prof):
+def radial_flux(prof, D):
+    psi, h = psi_grid()
+    n = prof["ne"]
+    g = np.gradient(n, h)
+    f = -D * g
+    return np.maximum(f, 1e-6 * np.max(np.abs(f)))
+
+
+def export_step(run, cfg, step, prof, flux=None, flux0=None):
     psi, _ = psi_grid()
     pp = os.path.join(run, "postproc")
     os.makedirs(pp, exist_ok=True)
@@ -159,7 +175,7 @@ def export_step(run, cfg, step, prof):
     Rl, Zl, psil, bnl, nel, tel = [Rc], [Zc], [1.0 + 0.3 * np.ones_like(Rc)], [bnc], [np.zeros_like(Rc)], [np.zeros_like(Rc)]
     for name, p in plates.items():
         ps = plate_psi(p["s"])
-        t = target_profiles(prof, ps)
+        t = target_profiles(prof, ps, flux, flux0)
         Rl.append(p["R"])
         Zl.append(p["Z"])
         psil.append(ps)
@@ -174,13 +190,15 @@ def export_step(run, cfg, step, prof):
 
 
 # ----------------------------------------------------------------------------- run dir
-def write_namelist(path, two):
+def write_namelist(path, two, puff0=0.6):
     zk = ("  ZK_e_perp_file = 'ZK_e_toy.dat'\n  ZK_i_perp_file = 'ZK_i_toy.dat'\n" if two
           else "  ZK_perp_file = 'ZK_toy.dat'\n")
     with open(path, "w") as f:
         f.write(" toy namelist for transport_fit_toy.py\n &in1\n  restart = .f.\n  nstep_n = 0\n  tstep_n = 1.\n"
                 "  nout = 1\n  central_density = 1.0\n  central_mass = 2.0141017781\n"
-                "  use_zkperp_times_density = .true.\n  D_perp_file = 'D_toy.dat'\n" + zk + " /\n")
+                "  use_zkperp_times_density = .true.\n  D_perp_file = 'D_toy.dat'\n" + zk
+                + f"  {PUFF_KEY} = {puff0}, {puff0}   ! toy puff schedule (true value {PUFF_TRUE})\n"
+                "  part_group_configs(1)%puff_ctrl(1)%times = 0., 1.\n /\n")
 
 
 def coeff_files(run, cfg, two):
@@ -205,7 +223,7 @@ def cmd_init(cfg, args):
     params["pinch_frac"] = args.pinch if args.pinch is not None else params["pinch_frac"]
     params["tau_eq"] = args.tau_eq if args.tau_eq is not None else params["tau_eq"]
     two = params["temperatures"] == 2
-    write_namelist(os.path.join(run, cfg.s("NAMELIST")), two)
+    write_namelist(os.path.join(run, cfg.s("NAMELIST")), two, puff0=args.puff0)
     nml = tf.parse_namelist(os.path.join(run, cfg.s("NAMELIST")))
     nf = tf.norm_factors(nml)
     psi, h = psi_grid()
@@ -216,22 +234,25 @@ def cmd_init(cfg, args):
     for name in (("ZK_e_toy.dat", "ZK_i_toy.dat") if two else ("ZK_toy.dat",)):
         tf.write_prof(os.path.join(run, name), x, np.full(200, args.chi0 / nf["ZK_to_SI"]))
     rng = np.random.default_rng(1)
+    flux_true = radial_flux(truth, D_true(psi))
+    flux0 = float(np.interp(1.02, psi, flux_true))
     # probes on both plates from the true target profiles, with noise
     _, plates = fake_wall()
     with open(os.path.join(run, "probes.dat"), "w") as f:
         f.write("# R Z ne[1e19] Te[eV]  (toy probes from the hidden truth, 8% noise)\n")
         for name, p in plates.items():
             sel = np.arange(4, len(p["s"]), 5)
-            t = target_profiles(truth, plate_psi(p["s"][sel]))
+            t = target_profiles(truth, plate_psi(p["s"][sel]), flux_true, flux0)
             for j, k in enumerate(sel):
                 ne = t["ne_t"][j] * (1 + 0.08 * rng.standard_normal()) * 10.0      # "1e19" units of a 1e20 value
                 te = t["Te_t"][j] * (1 + 0.08 * rng.standard_normal()) * 100.0
                 f.write(f"{p['R'][k]:.5f} {p['Z'][k]:.5f} {ne:.4f} {te:.3f}\n")
+    params["flux0"] = flux0
     state = {"step": 0, "params": params, "prof": {k: v.tolist() for k, v in truth.items()},
-             "truth": {k: v.tolist() for k, v in truth.items()}}
+             "truth": {k: v.tolist() for k, v in truth.items()}, "flux": {"0": flux_true.tolist()}}
     with open(os.path.join(run, TOY_STATE), "w") as f:
         json.dump(state, f)
-    export_step(run, cfg, 0, truth)
+    export_step(run, cfg, 0, truth, flux_true, flux0)
     open(os.path.join(run, "jorek000000.h5"), "w").close()
     open(os.path.join(run, "jorek_restart.h5"), "w").close()
     print(f"toy init: run dir {run}, {'two' if two else 'one'} temperature(s), pinch {params['pinch_frac']}, "
@@ -254,29 +275,36 @@ def cmd_run(cfg, args):
     D, chi_e, chi_i = coeff_files(run, cfg, two)
     if np.any(D <= 0) or np.any(chi_e <= 0):
         raise SystemExit("toy run: non-positive coefficient -> 'crash'")
+    rates = tf.read_namelist_key_values(os.path.join(run, cfg.s("NAMELIST")), PUFF_KEY)
+    puff = rates[0] if rates else PUFF_TRUE
     psi, h = psi_grid()
-    target = steady_profiles(psi, h, D, chi_e, chi_i if two else chi_e, params)
+    target = steady_profiles(psi, h, D, chi_e, chi_i if two else chi_e, params, puff=puff)
     nout = max(1, int(tf.nml_get(nml, "nout", 1)))
     first = st["step"]
     saved = st.setdefault("saved", {})
+    fluxes = st.setdefault("flux", {})
     for k_step in range(nout, nstep + 1, nout):                         # exponential approach, stored every nout
         alpha = 1.0 - np.exp(-k_step / params["tau_eq"])
         saved[str(first + k_step)] = {k: (np.array(u0) + alpha * (target[k] - np.array(u0))).tolist()
                                       for k, u0 in st["prof"].items()}
+        fluxes[str(first + k_step)] = radial_flux({"ne": np.array(saved[str(first + k_step)]["ne"])}, D).tolist()
     st["prof"] = saved[str(first + nstep)]
     st["step"] = first + nstep
     for key in [k for k in saved if int(k) < st["step"] - 2 * nstep]:  # keep the recent segments only
         del saved[key]
+        fluxes.pop(key, None)
     with open(os.path.join(run, TOY_STATE), "w") as f:
         json.dump(st, f)
     open(os.path.join(run, f"jorek{st['step']:06d}.h5"), "w").close()
-    print(f"toy run: {nstep} steps -> step {st['step']} (relaxation {alpha:.2f} of the way to steady state)")
+    print(f"toy run: {nstep} steps -> step {st['step']} (relaxation {alpha:.2f} of the way to steady state, puff {puff:.3f})")
 
 
 def cmd_export(cfg, args):
     run = cfg.s("RUN")
     with open(os.path.join(run, TOY_STATE)) as f:
         st = json.load(f)
+    flux = np.array(st.get("flux", {}).get(str(args.step))) if str(args.step) in st.get("flux", {}) else None
+    flux0 = st["params"].get("flux0")
     if args.step == 0:
         prof = {k: np.array(v) for k, v in st["truth"].items()}
     else:
@@ -288,7 +316,7 @@ def cmd_export(cfg, args):
         psi, _ = psi_grid()
         prof = {k: v * (1.0 + st["params"]["noise"] * rng.standard_normal(len(v)) * np.exp(-((psi - 1.0) / 0.4)**2))
                 for k, v in prof.items()}
-    export_step(run, cfg, args.step, prof)
+    export_step(run, cfg, args.step, prof, flux, flux0)
 
 
 # ----------------------------------------------------------------------------- self test
@@ -300,12 +328,14 @@ def cmd_selftest(cfg_unused, args):
     two = args.temperatures
     with open(cfgp, "w") as f:
         f.write(f"RUN={run}\nNAMELIST=input\nTEMPERATURES={two}\nPROBE_FILE=probes.dat\nREF_STEP=0\n"
+                f"FUEL_CONTROL={0 if args.no_fuel else 1}\n"
                 f"NSTEP_SEG={args.nstep or 200}\nNSTEP_MAX=1600\nMAX_ITER={args.max_iter}\nTOL=0.03\nRELAX={args.relax}\n"
                 f"CLAMP=2.0\nPSI_MIN=0.7\nW_TARGET={args.w_target}\nLINEPOINTS=0\nSMOOTH=1\n")
     cfg = tf.Cfg(cfgp)
     py = [sys.executable, os.path.join(here, "transport_fit.py")]
     toy = [sys.executable, os.path.abspath(__file__)]
-    a = argparse.Namespace(d0=args.d0, chi0=args.chi0, pinch=args.pinch, tau_eq=args.tau_eq)
+    a = argparse.Namespace(d0=args.d0, chi0=args.chi0, pinch=args.pinch, tau_eq=args.tau_eq,
+                           puff0=(PUFF_TRUE if args.no_fuel else 0.6))
     cmd_init(cfg, a)
 
     def sh(cmd, ok=(0,)):
@@ -358,6 +388,11 @@ def cmd_selftest(cfg_unused, args):
     mism = max(v for k, v in last_row.items() if k.startswith("mism_"))
     print(f"  final profile mismatch {mism * 100:.1f}% after {st['iter']} iterations; run dir {run}")
     ok = mism < 0.05 and worst < np.log(1.3)
+    rates = tf.read_namelist_key_values(os.path.join(run, "input"), PUFF_KEY)
+    print(f"  puff: {rates[0]:.3f} vs true {PUFF_TRUE} (started from {a.puff0}); density level at the separatrix "
+          f"{last_row.get('level_sep', float('nan')):.3f} of the reference")
+    if not args.no_fuel:
+        ok = ok and abs(np.log(rates[0] / PUFF_TRUE)) < np.log(1.15)
     print("SELFTEST " + ("PASSED" if ok else "FAILED"))
     if not args.keep:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -379,6 +414,8 @@ def main():
     ap.add_argument("--relax", type=float, default=0.7)
     ap.add_argument("--w-target", type=float, default=0.5)
     ap.add_argument("--keep", action="store_true", help="keep the temporary run dir of the self test")
+    ap.add_argument("--no-fuel", action="store_true", help="self test with the (correct) fuelling fixed")
+    ap.add_argument("--puff0", type=float, default=0.6, help="init: first-guess puff rate (true value 1.0)")
     args = ap.parse_args()
     if args.command == "selftest":
         cmd_selftest(None, args)

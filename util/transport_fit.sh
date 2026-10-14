@@ -36,6 +36,12 @@ PSI_MIN=0.7                           # knots below are held (the core equilibra
 W_TARGET=0.5                          # weight of the target width in the SOL knots (0 = upstream only)
 TE_TARGET_WEIGHT=0.5                  # extra factor on W_TARGET for the probe T_e
 CHI_EDGE_MAX=10                       # m2/s cap on chi near the grid edge for the first three iterations
+FUEL_CONTROL=1                        # 1: scale the puff between segments so that the midplane density at FUEL_PSI
+                                      #    stays on its reference value (SOLPS-style); 0: fuelling fixed, level reported
+PUFF_KEY="part_group_configs(1)%puff_ctrl(1)%rates"   # the valve whose %rates the loop scales (all its values)
+FUEL_PSI=1.0                          # where the density level is held
+FUEL_GAIN=0.5                         # puff factor = (level ratio)^-GAIN per iteration, clamped to FUEL_CLAMP
+W_TLEVEL=0.5                          # with FUEL_CONTROL: weight of the probe density LEVEL on the SOL D knots (throughput)
 LINEPOINTS=2000                       # points of the outer-midplane cut
 EXTRA_CFG=""                          # extra KEY=VALUE pairs for tfit.cfg, e.g. "PLATE_ZMAX=-0.5 KNOTS=0,0.5,0.8,..."
 # --- slurm (RUN_MODE=slurm)
@@ -82,6 +88,11 @@ write_cfg() {
     echo "W_TARGET=$W_TARGET"
     echo "TE_TARGET_WEIGHT=$TE_TARGET_WEIGHT"
     echo "CHI_EDGE_MAX=$CHI_EDGE_MAX"
+    echo "FUEL_CONTROL=$FUEL_CONTROL"
+    echo "PUFF_KEY=$PUFF_KEY"
+    echo "FUEL_PSI=$FUEL_PSI"
+    echo "FUEL_GAIN=$FUEL_GAIN"
+    echo "W_TLEVEL=$W_TLEVEL"
     echo "LINEPOINTS=$LINEPOINTS"
     for kv in $EXTRA_CFG; do echo "$kv"; done
   } > "$CFG"

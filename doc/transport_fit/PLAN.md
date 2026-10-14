@@ -302,3 +302,23 @@ SOLPS-ITER manual 3.0.9, sections 3.5.3, 3.5.5, 5.x (local copy).
   equilibration time of 120 steps, 200-step segments) the mismatch goes from 20-30% to ~2% in
   12-14 iterations and the fitted knots recover the hidden coefficients within 2-7% (median), for
   one and two temperatures.
+
+## 10. Fuelling feedback (2026-10-14, after the user's question about the rising inventory)
+
+The design above froze the puff. That only works when the run is already stationary at the
+right fuelling, which the user's kinetic runs are not (continuous puff, inventory ramps). The
+loop now has `FUEL_CONTROL`: between segments the rates of one valve are scaled by
+(n_sim/n_ref at psi_N = FUEL_PSI)^-FUEL_GAIN, clamped, so the puff owns the separatrix
+density while D owns the gradients (SOLPS's nesepm feedback at segment granularity).
+
+The toy showed the expected degeneracy immediately: with only the separatrix level held, the
+loop settled at 81% of the true puff with a correspondingly lower SOL D. Profiles alone do not
+separate throughput from transport (Wilcox's 5x scan, Horvath's 10x D). The independent
+constraint is the target density level from the probes: for a matched separatrix density, too
+little density at the plates means too little SOL transport, so the SOL D knots get
+-W_TLEVEL * <ln(n_sim/n_probe)> added. With that, the toy (whose target density scales with
+the radial flux feeding the plate) recovers the puff from 60% to within 2% of the truth, the
+profiles within 2%, the fitted knots within 3-7% median. The edge-level rule uses the level
+relative to the separatrix in this mode, so the inventory does not leak into the edge band.
+With `FUEL_CONTROL=0` (puff known and fixed) the absolute edge-level rule is kept and the
+separatrix level is reported as an inventory diagnostic.
