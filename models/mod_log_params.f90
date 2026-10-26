@@ -561,8 +561,14 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
   write(*,LOGI_FMT) 'eta_num_T_dependent   ', eta_num_T_dependent
   write(*,LOGI_FMT) 'eta_num_psin_dependent', eta_num_psin_dependent
   write(*,REAL_FMT) 'eta_num_prof          ', eta_num_prof(1:6)
+  write(*,REAL_FMT) 'eta_num_tanh          ', eta_num_tanh
+  write(*,REAL_FMT) 'eta_num_tanh_psin     ', eta_num_tanh_psin
+  write(*,REAL_FMT) 'eta_num_tanh_sig      ', eta_num_tanh_sig
   write(*,REAL_FMT) 'visco_num             ', visco_num
   write(*,LOGI_FMT) 'visco_num_T_dependent ', visco_num_T_dependent
+  write(*,REAL_FMT) 'visco_num_tanh        ', visco_num_tanh
+  write(*,REAL_FMT) 'visco_num_tanh_psin   ', visco_num_tanh_psin
+  write(*,REAL_FMT) 'visco_num_tanh_sig    ', visco_num_tanh_sig
   write(*,REAL_FMT) 'visco_par_num         ', visco_par_num
   write(*,REAL_FMT) 'D_perp_num            ', D_perp_num
   write(*,REAL_FMT) 'D_perp_num_tanh       ', D_perp_num_tanh

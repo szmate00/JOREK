@@ -328,6 +328,8 @@ module phys_module
   
   !> @name Hyper-resistivity, -viscosity and -diffusivities
   real*8  :: eta_num, visco_num, visco_par_num,                                      &
+             eta_num_tanh,   eta_num_tanh_psin,   eta_num_tanh_sig,                  &
+             visco_num_tanh, visco_num_tanh_psin, visco_num_tanh_sig,                &
              D_perp_num, D_perp_num_tanh, D_perp_num_tanh_psin, D_perp_num_tanh_sig, &
              ZK_perp_num, ZK_i_perp_num, ZK_e_perp_num,                              &
              ZK_perp_num_tanh, ZK_perp_num_tanh_psin, ZK_perp_num_tanh_sig,          &

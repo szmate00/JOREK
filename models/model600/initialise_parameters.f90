@@ -83,6 +83,8 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 heatsource_e, heatsource_i, heatsource,             &
                 particlesource, tauIC, Wdia,                        &
                 eta_num, visco_num, visco_par_num,                  &
+                eta_num_tanh,   eta_num_tanh_psin,   eta_num_tanh_sig,   &
+                visco_num_tanh, visco_num_tanh_psin, visco_num_tanh_sig, &
                 D_perp_num,  D_perp_num_tanh,                       &
                 D_perp_num_tanh_psin, D_perp_num_tanh_sig,          &
                 ZK_perp_num, ZK_perp_num_tanh,                      &

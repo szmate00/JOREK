@@ -267,6 +267,10 @@ module mod_plasma_functions
       if (present(deta_num_dT))   deta_num_dT   = 0.d0
     end if
 
+    ! --- Additional core hyper-resistivity: tanh profile in psi_N, eta_num_tanh inside eta_num_tanh_psin, 0 outside
+    ! --- (independent of T, so the derivative is unchanged)
+    eta_num_T = eta_num_T + eta_num_tanh * 0.5d0 * ( 1.d0 - tanh( (psi_norm - eta_num_tanh_psin) / eta_num_tanh_sig ) )
+
   end subroutine hyper_resistivity
 
 
@@ -330,13 +334,14 @@ module mod_plasma_functions
 
 
   !> Determine hyper viscosity (input/output in JOREK units)
-  pure subroutine hyper_viscosity(T_raw, T_corr, T0, visco_num_T, dvisco_num_dT) 
+  pure subroutine hyper_viscosity(T_raw, T_corr, T0, psi_norm, visco_num_T, dvisco_num_dT) 
 
     implicit none
     
     real*8, intent(in)             :: T_raw            ! temperature without correction
     real*8, intent(in)             :: T_corr           ! corrected temperature > 0
     real*8, intent(in)             :: T0               ! central temperature at equilibrium
+    real*8, intent(in)             :: psi_norm         ! normalized poloidal flux
     real*8, intent(out)            :: visco_num_T        ! output viscosity
     real*8, optional, intent(out)  :: dvisco_num_dT      ! Derivative of Zeff w.r.t. the temperature 
 
@@ -351,6 +356,10 @@ module mod_plasma_functions
       visco_num_T     = visco_num
       if (present(dvisco_num_dT))   dvisco_num_dT   = 0.d0
     end if
+
+    ! --- Additional core hyper-viscosity: tanh profile in psi_N, visco_num_tanh inside visco_num_tanh_psin, 0 outside
+    ! --- (independent of T, so the derivative is unchanged)
+    visco_num_T = visco_num_T + visco_num_tanh * 0.5d0 * ( 1.d0 - tanh( (psi_norm - visco_num_tanh_psin) / visco_num_tanh_sig ) )
 
   end subroutine hyper_viscosity
 
