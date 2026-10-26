@@ -1386,7 +1386,7 @@ module mod_expression
         
           call hyper_resistivity(T_or_Te, T_or_Te_corr, T_or_Te_0, psi_norm, eta_num_T) 
           
-          call hyper_viscosity(T_or_Te, T_or_Te_corr, T_or_Te_0, visco_num_T) 
+          call hyper_viscosity(T_or_Te, T_or_Te_corr, T_or_Te_0, psi_norm, visco_num_T) 
           
           if ( with_TiTe ) then ! (with_TiTe) ******************************************************
 
