@@ -124,6 +124,7 @@ def closing_profile(args, pts, cen, area, cval, fields, fld, R, Z, inside, t_now
     kj = [k for k in keys if k.endswith("JxB")][0]
     rows = []
     sketch = None
+    outline = [None, None]                                   # Psi_N = A and Psi_N = B contours: extent of the whole profile
     for a, b in zip(edges[:-1], edges[1:]):
         print(f"  band {a:.3f}:{b:.3f} ...", end="", flush=True)
         tb = cc.tube_budget(R, Z, fld, inside, a, b, args.F0, args.points, args.gap, 0.15)   # narrow sections: fast
@@ -147,6 +148,9 @@ def closing_profile(args, pts, cen, area, cval, fields, fld, R, Z, inside, t_now
         Iout = cc.plate_current(bq, c, pl["outer_sol"], "Jn_par", a, b, False)
         resid_vtk = sum(raw.values()) / raw[kj]
         rows.append((0.5 * (a + b), Iin, Iout, dIpar, dep, jxbW, resid_vtk))
+        if outline[0] is None:
+            outline[0] = tb["paths"]["a"][0]
+        outline[1] = tb["paths"]["b"][0]
         if len(rows) == max(1, n // 3):
             sketch = dict(a=tb["paths"]["a"][0], b=tb["paths"]["b"][0], c=tb["paths"]["c"][0], band=(a, b),
                           s=tb["s"], win_in=tb["win_in"], win_out=tb["win_out"], L=tb["L"])
@@ -179,10 +183,12 @@ def closing_profile(args, pts, cen, area, cval, fields, fld, R, Z, inside, t_now
     for pn, col in (("inner", "#00B1EA"), ("outer", "#EF7C00")):
         ii = pl[pn]; o = np.argsort(bq[0, ii, c["R"]])
         axg.plot(bq[0, ii, c["R"]][o], bq[0, ii, c["Z"]][o], color=col, lw=4, solid_capstyle="butt")
+    if outline[0] is not None:                             # all bands of the profile, light grey
+        oa, ob = outline
+        axg.fill(np.r_[oa[:, 0], ob[::-1, 0]], np.r_[oa[:, 1], ob[::-1, 1]], color="0.82", lw=0, zorder=0)
     if sketch is not None:
         pa, pb, pc = sketch["a"], sketch["b"], sketch["c"]
-        axg.fill(np.r_[pa[:, 0], pb[::-1, 0]], np.r_[pa[:, 1], pb[::-1, 1]], color="#7a9f35", alpha=0.35, lw=0)
-        axg.plot(pa[:, 0], pa[:, 1], color="k", lw=0.7); axg.plot(pb[:, 0], pb[:, 1], color="k", lw=0.7)
+        axg.fill(np.r_[pa[:, 0], pb[::-1, 0]], np.r_[pa[:, 1], pb[::-1, 1]], color="#7a9f35", alpha=0.8, lw=0, zorder=1)
         s0 = np.flatnonzero(sketch["win_in"])[0]; s1 = np.flatnonzero(sketch["win_out"])[-1]
         for k in (s0, s1):
             axg.plot([pa[k, 0], pb[k, 0]], [pa[k, 1], pb[k, 1]], color="k", lw=1.5)
@@ -197,12 +203,13 @@ def closing_profile(args, pts, cen, area, cval, fields, fld, R, Z, inside, t_now
             axg.annotate("", xy=pc[k] + 0.0 * nrm, xytext=pc[k] + 0.14 * nrm, arrowprops=dict(arrowstyle="->", color="#7a9f35" if lab == "viscous" else "#b03a2e", lw=2))
             axg.text(*(pc[k] + 0.16 * nrm), lab, color="#7a9f35" if lab == "viscous" else "#b03a2e", fontsize=10, ha="left", va="center")
         a_, b_ = sketch["band"]
-        axg.set_title(f"one flux tube of the profile: $\\Psi_N$ = {a_:.2f} .. {b_:.2f}\n(shaded; black bars = end windows 1 cm from the plates)", fontsize=9, loc="left")
+        axg.set_title(f"light grey: the {n} flux tubes of the profile, $\\Psi_N$ = {a0:.2f} .. {b0:.2f}\n"
+                      f"green: one of them, $\\Psi_N$ = {a_:.2f} .. {b_:.2f} (black bars = end windows 1 cm from the plates)", fontsize=9, loc="left")
     axg.set_aspect("equal"); axg.set_xlabel("R [m]"); axg.set_ylabel("Z [m]")
     axg.text(0.0, -0.13, "grey: separatrix; blue/orange: inner/outer target.  $I_{in}$, $I_{out}$: parallel current into the target\n"
              "(ions positive), summed over the plate segment whose $\\Psi_N$ lies in the band.  viscous, $\\nabla B$: current\n"
              "crossing the two flux surfaces into the tube, from JOREK's own vorticity-equation terms, integrated\n"
-             "over the shaded volume ($2\\pi$). Every curve on the right is one such tube, one point per band.",
+             "over the green tube volume ($2\\pi$). Every curve on the right is one such tube, one point per band.",
              transform=axg.transAxes, fontsize=7.5, va="top", ha="left")
     axg.margins(x=0.15)
     # ---- right: the profile
