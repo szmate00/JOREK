@@ -123,6 +123,7 @@ def closing_profile(args, pts, cen, area, cval, fields, fld, R, Z, inside, t_now
     keys = [k for k in fields]
     kj = [k for k in keys if k.endswith("JxB")][0]
     rows = []
+    sketch = None
     for a, b in zip(edges[:-1], edges[1:]):
         print(f"  band {a:.3f}:{b:.3f} ...", end="", flush=True)
         tb = cc.tube_budget(R, Z, fld, inside, a, b, args.F0, args.points, args.gap, 0.15)   # narrow sections: fast
@@ -146,6 +147,9 @@ def closing_profile(args, pts, cen, area, cval, fields, fld, R, Z, inside, t_now
         Iout = cc.plate_current(bq, c, pl["outer_sol"], "Jn_par", a, b, False)
         resid_vtk = sum(raw.values()) / raw[kj]
         rows.append((0.5 * (a + b), Iin, Iout, dIpar, dep, jxbW, resid_vtk))
+        if len(rows) == max(1, n // 3):
+            sketch = dict(a=tb["paths"]["a"][0], b=tb["paths"]["b"][0], c=tb["paths"]["c"][0], band=(a, b),
+                          s=tb["s"], win_in=tb["win_in"], win_out=tb["win_out"], L=tb["L"])
         print(f" I_in {Iin * 1e-3:+.3f} I_out {Iout * 1e-3:+.3f} kA, dI_par(rect) {dIpar * 1e-3:+.3f} kA, vtk residual {resid_vtk:+.3f}")
     kv = [k for k in keys if k.endswith("visco_term")][0]; kp = [k for k in keys if k.endswith("grad_p")][0]
     print(f"\nclosing-current profile [kA per band of {edges[1] - edges[0]:.3f} Psi_N], ions into the plate positive;"
@@ -165,20 +169,60 @@ def closing_profile(args, pts, cen, area, cval, fields, fld, R, Z, inside, t_now
     dIp = np.array([r[3] for r in rows])
     vis = np.array([r[4][kv] for r in rows]); pre = np.array([r[4][kp] for r in rows])
     oth = np.array([sum(v for k, v in r[4].items() if k not in (kv, kp)) for r in rows])
-    fig, ax = plt.subplots(figsize=(6.5, 4.2), constrained_layout=True)
-    ax.plot(x, Iin * 1e-3, color="#00B1EA", lw=1.8, label="inner plate, parallel current")
-    ax.plot(x, Iout * 1e-3, color="#EF7C00", lw=1.8, label="outer plate, parallel current")
-    ax.plot(x, (Iin + Iout) * 1e-3, "k-", lw=2.2, label="inner + outer (plates)")
-    ax.plot(x, dIp * 1e-3, "k--", lw=1.2, label=r"parallel current gained along the tube ($I_\parallel$ 1 cm from the plates)")
-    ax.plot(x, vis * 1e-3, color="#7a9f35", lw=1.6, label="viscous current deposited in the tube")
-    ax.plot(x, pre * 1e-3, color="#b03a2e", lw=1.6, label=r"$\nabla B$ (pressure) current deposited in the tube")
+    fig = plt.figure(figsize=(11.5, 6.0), constrained_layout=True)
+    gs = fig.add_gridspec(1, 2, width_ratios=[1.0, 1.7])
+    # ---- left: the geometry of one flux tube of the profile, drawn from the run
+    axg = fig.add_subplot(gs[0, 0])
+    psi_m = np.ma.masked_where(~inside, fld["Psi_N"])
+    for piece in cc.contour_pieces(R, Z, psi_m, 1.0):
+        axg.plot(piece[:, 0], piece[:, 1], color="0.5", lw=0.8)
+    for pn, col in (("inner", "#00B1EA"), ("outer", "#EF7C00")):
+        ii = pl[pn]; o = np.argsort(bq[0, ii, c["R"]])
+        axg.plot(bq[0, ii, c["R"]][o], bq[0, ii, c["Z"]][o], color=col, lw=4, solid_capstyle="butt")
+    if sketch is not None:
+        pa, pb, pc = sketch["a"], sketch["b"], sketch["c"]
+        axg.fill(np.r_[pa[:, 0], pb[::-1, 0]], np.r_[pa[:, 1], pb[::-1, 1]], color="#7a9f35", alpha=0.35, lw=0)
+        axg.plot(pa[:, 0], pa[:, 1], color="k", lw=0.7); axg.plot(pb[:, 0], pb[:, 1], color="k", lw=0.7)
+        s0 = np.flatnonzero(sketch["win_in"])[0]; s1 = np.flatnonzero(sketch["win_out"])[-1]
+        for k in (s0, s1):
+            axg.plot([pa[k, 0], pb[k, 0]], [pa[k, 1], pb[k, 1]], color="k", lw=1.5)
+        # arrows: parallel current into the plates at the ends (along the tube, towards each plate)
+        for k, lab, col, sgn in ((s0, r"$I_{in}$", "#00B1EA", -1.0), (s1, r"$I_{out}$", "#EF7C00", +1.0)):
+            k2 = min(max(k + 3, 0), pc.shape[0] - 1); k1 = min(max(k - 3, 0), pc.shape[0] - 1)
+            t = pc[k2] - pc[k1]; t = t / max(np.hypot(*t), 1e-9) * 0.09 * sgn
+            axg.annotate("", xy=pc[k] + t, xytext=pc[k] - t, arrowprops=dict(arrowstyle="->", color=col, lw=2))
+            axg.text(pc[k][0] + 0.05, pc[k][1], lab, color=col, fontsize=11, fontweight="bold")
+        for frac, lab in ((0.62, "viscous"), (0.72, r"$\nabla B$")):
+            k = int(frac * (pc.shape[0] - 1)); nrm = pb[k] - pa[k]; nrm = nrm / np.hypot(*nrm)
+            axg.annotate("", xy=pc[k] + 0.0 * nrm, xytext=pc[k] + 0.14 * nrm, arrowprops=dict(arrowstyle="->", color="#7a9f35" if lab == "viscous" else "#b03a2e", lw=2))
+            axg.text(*(pc[k] + 0.16 * nrm), lab, color="#7a9f35" if lab == "viscous" else "#b03a2e", fontsize=10, ha="left", va="center")
+        a_, b_ = sketch["band"]
+        axg.set_title(f"one flux tube of the profile: $\\Psi_N$ = {a_:.2f} .. {b_:.2f}\n(shaded; black bars = end windows 1 cm from the plates)", fontsize=9, loc="left")
+    axg.set_aspect("equal"); axg.set_xlabel("R [m]"); axg.set_ylabel("Z [m]")
+    axg.text(0.0, -0.13, "grey: separatrix; blue/orange: inner/outer target.  $I_{in}$, $I_{out}$: parallel current into the target\n"
+             "(ions positive), summed over the plate segment whose $\\Psi_N$ lies in the band.  viscous, $\\nabla B$: current\n"
+             "crossing the two flux surfaces into the tube, from JOREK's own vorticity-equation terms, integrated\n"
+             "over the shaded volume ($2\\pi$). Every curve on the right is one such tube, one point per band.",
+             transform=axg.transAxes, fontsize=7.5, va="top", ha="left")
+    axg.margins(x=0.15)
+    # ---- right: the profile
+    ax = fig.add_subplot(gs[0, 1])
+    dps = edges[1] - edges[0]
+    ax.plot(x, Iin * 1e-3, color="#00B1EA", lw=1.8, label=r"$I_{in}$: inner target, parallel current into the plate")
+    ax.plot(x, Iout * 1e-3, color="#EF7C00", lw=1.8, label=r"$I_{out}$: outer target, parallel current into the plate")
+    ax.plot(x, (Iin + Iout) * 1e-3, "k-", lw=2.2, label=r"$I_{in}+I_{out}$: what the two targets take out of the tube")
+    ax.plot(x, dIp * 1e-3, "k--", lw=1.2, label=r"$I_\parallel$ gained between the end windows (rectangle)")
+    ax.plot(x, vis * 1e-3, color="#7a9f35", lw=1.6, label="viscous current entering the tube through its sides")
+    ax.plot(x, pre * 1e-3, color="#b03a2e", lw=1.6, label=r"$\nabla B$ (pressure) current entering through its sides")
     if np.any(np.abs(oth) > 0.02 * np.max(np.abs(vis))):
-        ax.plot(x, oth * 1e-3, color="0.5", lw=1.2, label="other terms")
+        ax.plot(x, oth * 1e-3, color="0.5", lw=1.2, label="other terms of the vorticity equation")
     ax.plot(x, (Iin + Iout - vis - pre - oth) * 1e-3, color="0.3", lw=1.4, ls=":",
-            label="plates minus all cross-field deposits (charge-conservation residual)")
+            label=r"$I_{in}+I_{out}$ minus all cross-field currents (= 0 if charge is conserved)")
     ax.axhline(0, color="0.5", lw=0.6)
-    ax.set_xlabel(r"$\Psi_N$ (band centre)"); ax.set_ylabel(f"current per band [kA]")
-    ax.legend(frameon=False, fontsize=8)
+    ax.set_xlabel(rf"$\Psi_N$ at the tube centre (tube width $\Delta\Psi_N$ = {dps:.3f}, inner to outer target)")
+    ax.set_ylabel("current per flux tube [kA]")
+    ax.set_title("charge balance per SOL flux tube: targets vs cross-field currents", fontsize=10, loc="left")
+    ax.legend(frameon=False, fontsize=7.5, loc="upper right")
     out = args.o.replace(".pdf", "") + "_profile.pdf"
     fig.savefig(out); print(f"wrote {out}")
     plt.show()
