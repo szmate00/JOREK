@@ -359,17 +359,25 @@ def _smooth(f, inside, sig):
     return gaussian_filter(g, sig)
 
 
-def carrier_budget(R, Z, fld, inside, tb, F0, visco, visco_num, n0, t0, sig, fld_prev=None, dt_norm=None, margin=6):
+def carrier_budget(R, Z, fld, inside, tb, F0, visco, visco_num, n0, t0, sig, fld_prev=None, dt_norm=None, margin=6,
+                   tauic=0.0, visco_old_setup=True):
     """Net current each carrier of the vorticity equation deposits in the tube, from the divergences of the model's
     currents integrated over the tube area (+ = current ENTERING the tube, i.e. collected by the plates), in A.
     Phi is Gaussian-smoothed by sig cells before differentiation; n and p are not.
-    Normalised units of model600 (lengths m, u = Phi_SI*t0/F0, rho = n/n0, p = mu0 p_SI), F0 R div J = rhs term:
-      diamagnetic   div J = 2 dp/dZ / F0                      (term [R^2, p])
-      viscous       div J = visco * Lap(omega) / F0,  omega = Lap_pol u   (term R mu Lap omega)
-      hyperviscous  div J = -visco_num * Lap(Lap(omega)) / F0  (sign as the code's stabilising term; indicative only)
-      Reynolds      div J = ( 1/2 [R^2 |grad u|^2, R^2 rho] + [R^4 rho omega, u] ) / (F0 R)
-      polarisation  div J = -div( rho R^2 grad d_t u ) / F0,  d_t u from a second rectangle (fld_prev, dt_norm)
-    J_SI = J/mu0. The diamagnetic entry is a check against the side integral of the postproc's JR/JZ."""
+    Normalised units of model600 (lengths m, u = Phi_SI*t0/F0, rho = n/n0, p = mu0 p_SI). JOREK's (R, Z, phi) is
+    right-handed, so e_phi x grad p = (-p_Z, +p_R). Each strong-form term of the u row (mod_elt_matrix_fft.f90,
+    integrated by parts with the measure dR dZ) equals F0 R div J_X; the parallel term +[psi, j] fixes the convention:
+      diamagnetic   F0 R div J = -[R^2, p] = -2 R dp/dZ                      (weak: +R^2 [v, p])
+      viscous       old setup (visco_old_setup, the AUG case): F0 R div J = div(mu R grad omega)
+                    new setup: F0 R div J = div(mu R^3 grad omega) + d/dR(2 mu R^2 omega)
+      hyperviscous  F0 R div J = -L^T(mu_num L omega), L = cylindrical Laplacian, L^T its adjoint for dR dZ
+      Reynolds      F0 R div J = 1/2 [R^2 |grad u|^2, R^2 rho] + [R^4 rho omega, u]
+      gyroviscous   F0 R div J = -2 tau R^4 [p_i, omega] + 2 tau div(R^3 dp_i/dZ grad u)
+                                 - 2 tau R^4 ( u_RZ (p_i,RR - p_i,ZZ) - p_i,RZ (u_RR - u_ZZ) ),  p_i = p/2 (1T)
+      polarisation  F0 R div J = -R div( rho R^2 grad d_t u ),  d_t u from a second rectangle (fld_prev, dt_norm)
+    omega is the rectangle expression 'omega' (the model's vorticity variable) when present, else Lap_pol u.
+    J_SI = J/mu0. Entering current = -int div J_X over the tube area. The diamagnetic entry is a check against the
+    side+end fluxes of the postproc's JR/JZ."""
     MU0 = 4e-7 * np.pi; E = 1.602176634e-19
     RR = np.meshgrid(R, Z, indexing="ij")[0]
     dR, dZ = R[1] - R[0], Z[1] - Z[0]
@@ -382,18 +390,29 @@ def carrier_budget(R, Z, fld, inside, tb, F0, visco, visco_num, n0, t0, sig, fld
     rho = _fill(fld["ne"] / n0, inside)                               # first derivatives only: never smoothed (a steep
     Ti = fld["T_i"] if "T_i" in fld else fld["T_e"]                   # pedestal smeared across the separatrix would
     p = _fill(MU0 * E * fld["ne"] * (fld["T_e"] + Ti), inside)       # leak core pressure into the SOL tubes)
-    om = lap(u)
+    om = _smooth(fld["omega"], inside, sig) if "omega" in fld else lap(u)
+    def cdiv(fr, fz): return dr(fr) + dz(fz)                                   # Cartesian 2D divergence (measure dR dZ)
     terms = {}
-    terms["diamagnetic"] = 2.0 * dz(p) / F0
-    terms["viscous"] = visco * lap(om) / F0
+    terms["diamagnetic"] = -2.0 * dz(p) / F0
+    if visco_old_setup:
+        terms["viscous"] = cdiv(visco * RR * dr(om), visco * RR * dz(om)) / (F0 * RR)
+    else:
+        terms["viscous"] = (cdiv(visco * RR ** 3 * dr(om), visco * RR ** 3 * dz(om)) + dr(2.0 * visco * RR ** 2 * om)) / (F0 * RR)
     if visco_num:
-        terms["hyperviscous"] = -visco_num * lap(lap(om)) / F0
+        g = visco_num * lap(om)
+        terms["hyperviscous"] = -(dr(dr(g)) - dr(g / RR) + dz(dz(g))) / (F0 * RR)
     gu2 = dr(u) ** 2 + dz(u) ** 2
     terms["Reynolds"] = (0.5 * br(RR ** 2 * gu2, RR ** 2 * rho) + br(RR ** 4 * rho * om, u)) / (F0 * RR)
+    if tauic:
+        pi = 0.5 * p
+        gyro = (-2.0 * tauic * RR ** 4 * br(pi, om)
+                + 2.0 * tauic * cdiv(RR ** 3 * dz(pi) * dr(u), RR ** 3 * dz(pi) * dz(u))
+                - 2.0 * tauic * RR ** 4 * (dz(dr(u)) * (dr(dr(pi)) - dz(dz(pi))) - dz(dr(pi)) * (dr(dr(u)) - dz(dz(u)))))
+        terms["gyroviscous"] = gyro / (F0 * RR)
     if fld_prev is not None and dt_norm:
         u_prev = _smooth(fld_prev["Phi"] * t0 / F0, inside, sig)
         dtu = (u - u_prev) / dt_norm
-        terms["polarisation d/dt"] = -div(rho * RR ** 2 * dr(dtu), rho * RR ** 2 * dz(dtu)) / F0
+        terms["polarisation d/dt"] = -RR * div(rho * RR ** 2 * dr(dtu), rho * RR ** 2 * dz(dtu)) / (F0 * RR)
     dA = dR * dZ
     m = tb["in_tube"] & inside
     # exclude the two end windows like the side budget (last --gap m next to each plate): points nearest to s outside
@@ -434,6 +453,8 @@ def main():
     ap.add_argument("--central-mass", type=float, default=2.01410177811)
     ap.add_argument("--smooth", type=float, default=1.5, help="Gaussian smoothing [cells] of Phi before its 3rd/4th derivatives (n, p never smoothed)")
     ap.add_argument("--rect-prev", help="rectangle file at an earlier time (same --exprs): enables the polarisation d/dt term")
+    ap.add_argument("--tauic", type=float, default=0.0, help="namelist tauIC: enables the gyroviscous term (0 = off)")
+    ap.add_argument("--visco-new-setup", action="store_true", help="namelist visco_old_setup = .f. (default: old setup, as the AUG case)")
     ap.add_argument("--eta-si", type=float, help="constant parallel resistivity [Ohm m] instead of Spitzer in the thermoelectric estimate")
     ap.add_argument("-o", "--outdir", default=".")
     args = ap.parse_args()
@@ -493,7 +514,8 @@ def main():
         tb = tube_budget(R, Z, fld, inside, a, b, args.F0, args.points, args.gap, args.max_width, args.eta_si)
         if tb is not None and all(n in fld for n in ("Phi", "ne", "T_e")):
             tb["carriers"] = carrier_budget(R, Z, fld, inside, tb, args.F0, args.visco, args.visco_num, n0, t0,
-                                            args.smooth, fld_prev, dt_norm)
+                                            args.smooth, fld_prev, dt_norm, tauic=args.tauic,
+                                            visco_old_setup=not args.visco_new_setup)
         if tb is None:
             print(f"{a:.3f}:{b:.3f}   no open contour (private-region bands need the contour to stay below the X-point;"
                   " try a band further from 1, e.g. 0.975:0.99)")
@@ -594,7 +616,7 @@ def composition(ends, bq, c, pl, lam, outdir):
               f"{cp['L_par']:7.1f}{cp.get('R_tube', np.nan):9.2e}{LdT:7.1f}{dPhi:7.1f}{Ith * k:8.3f}")
         rows.append((a, b, Iin, Iout, thr, clo, cp, sides))
     if any("carriers" in tb for _, _, tb, *_ in ends):
-        names = [k for k in ("diamagnetic", "viscous", "hyperviscous", "Reynolds", "polarisation d/dt") if any(k in tb.get("carriers", {}) for _, _, tb, *_ in ends)]
+        names = [k for k in ("diamagnetic", "viscous", "hyperviscous", "Reynolds", "gyroviscous", "polarisation d/dt") if any(k in tb.get("carriers", {}) for _, _, tb, *_ in ends)]
         print("\ncarriers of the vorticity equation, current ENTERING the tube [kA] (area integral of the model's div J per"
               " term; 'measured' = closing from the plates and the side residual of the postproc current):")
         print(f"{'band':>12s}" + "".join(f"{n:>18s}" for n in names) + f"{'sum':>9s}{'dI_par':>9s}{'closing':>9s}{'dia chk':>9s}")

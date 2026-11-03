@@ -334,11 +334,14 @@ with $\nabla\times\nabla p = 0$,
 \end{equation}
 For a tokamak $\bB \simeq (F_0/R)\,\ephi$ to leading order, so $\bB/B^2 \simeq (R/F_0)\,\ephi$, and in cylindrical
 coordinates $\nabla\times\big(A_\varphi\ephi\big) = -\partial_Z A_\varphi\,\eR + \tfrac1R\partial_R(R A_\varphi)\,\eZ$
-gives $\nabla\times(R\ephi/F_0) = (2/F_0)\,\eZ$. Hence
+gives $\nabla\times(R\ephi/F_0) = (2/F_0)\,\eZ$ up to the orientation of $\varphi$. Hence
 \begin{equation}
-  \boxed{\;\divg\jdia = \frac{2}{F_0}\,\frac{\partial p}{\partial Z} = \frac{2}{B R}\,\frac{\partial p}{\partial Z}\;}
+  \boxed{\;\divg\jdia = \pm\frac{2}{F_0}\,\frac{\partial p}{\partial Z} = \pm\frac{2}{B R}\,\frac{\partial p}{\partial Z}\;}
   \label{eq:divdia}
 \end{equation}
+with the upper sign in a right-handed $(R,\varphi,Z)$ basis and the lower sign in JOREK's right-handed $(R,Z,\varphi)$
+basis, where $\ephi\times\nabla p = (-\partial_Z p,\,+\partial_R p)$ and $\jdia = (R/F_0)(-\partial_Z p,\,\partial_R p)$,
+which is also what the postproc's \code{JR}, \code{JZ} contain.
 This is the ``vertical $\nabla B$ current'' of the SOL literature \cite{rozhansky2001,zhao2026}: wherever the pressure
 varies vertically, charge is being deposited at the rate \eqref{eq:divdia} and something else must carry it away. On a
 closed surface the vertical variation of $p(\psi)$ along the surface is what drives the Pfirsch--Schl\"uter current
@@ -806,7 +809,7 @@ The $u$ row of model600 (\code{rhs\_ij(var\_u)}) is, in strong form \cite{ernote
   R\,\divg\big(R^2\rho\,\gradp\partial_t u\big)
   &= \underbrace{\tfrac12\pb{R^2|\gradp u|^2}{R^2\rho} + \pb{R^4\rho\,\omega}{u}}_{\text{(a) inertia, Reynolds stress}}
    + \underbrace{\pb{\psi}{j} - \frac{F_0}{R}\,\partial_\varphi j}_{\text{(b) parallel current}}
-   + \underbrace{\pb{R^2}{p}}_{\text{(c) diamagnetic}} \\
+   - \underbrace{\pb{R^2}{p}}_{\text{(c) diamagnetic}} \\
   &\quad + \underbrace{R\,\mu\,\nabla^2_{\mathrm{pol}}\omega + \mathcal{V}_{\mathrm{num}}}_{\text{(d) viscosity, hyperviscosity}}
    + \underbrace{\mathcal{G}[\tauic,p_i,u]}_{\text{(e) gyroviscous}}
    + \mathcal{N}_{\mathrm{neo}} + \mathcal{S}_u ,
@@ -815,21 +818,25 @@ The $u$ row of model600 (\code{rhs\_ij(var\_u)}) is, in strong form \cite{ernote
 \label{eq:vort}
 \end{equation}
 We now show that this is $F_0 R\,\divg\bJ = 0$ with $\bJ$ the currents of Sec.~\ref{sec:perp}, evaluated with the
-reduced-MHD field $\bB\simeq(F_0/R)\ephi$, so that $\bB/B^2 \simeq (R/F_0)\ephi$. In the right-handed basis
-$(R,\varphi,Z)$: $\ephi\times\eR = -\eZ$, $\ephi\times\eZ = \eR$, hence for a poloidal gradient
-$\ephi\times\nabla f = (\partial_Z f,\,-\partial_R f)$ in $(R,Z)$ components.
+reduced-MHD field $\bB\simeq(F_0/R)\ephi$, so that $\bB/B^2 \simeq (R/F_0)\ephi$. JOREK's basis $(R,Z,\varphi)$ is
+right-handed: $\eR\times\eZ = \ephi$, $\ephi\times\eR = \eZ$, $\ephi\times\eZ = -\eR$, hence for a poloidal gradient
+$\ephi\times\nabla f = (-\partial_Z f,\,+\partial_R f)$ in $(R,Z)$ components. (With this orientation
+$B_R = \partial_Z\psi/R$, $B_Z = -\partial_R\psi/R$ and $\pb{\psi}{f} = -R\,\bB_{\mathrm{pol}}\!\cdot\!\nabla f$, as in
+the code.)
 
 \paragraph{(c) The diamagnetic current.}
-$\jdia = \bB\times\nabla p/B^2 = (R/F_0)\,\ephi\times\nabla p = (R/F_0)\,(\partial_Z p,\,-\partial_R p)$. Its divergence,
+$\jdia = \bB\times\nabla p/B^2 = (R/F_0)\,\ephi\times\nabla p = (R/F_0)\,(-\partial_Z p,\,\partial_R p)$. Its divergence,
 \begin{equation}
-  \divg\jdia = \frac{1}{R}\partial_R\Big(\frac{R^2}{F_0}\partial_Z p\Big) - \partial_Z\Big(\frac{R}{F_0}\partial_R p\Big)
-  = \frac{2}{F_0}\,\partial_Z p
+  \divg\jdia = -\frac{1}{R}\partial_R\Big(\frac{R^2}{F_0}\partial_Z p\Big) + \partial_Z\Big(\frac{R}{F_0}\partial_R p\Big)
+  = -\frac{2}{F_0}\,\partial_Z p
   \quad\Longrightarrow\quad
-  F_0 R\,\divg\jdia = 2R\,\partial_Z p = \pb{R^2}{p}.
+  F_0 R\,\divg\jdia = -2R\,\partial_Z p = -\pb{R^2}{p}.
   \label{eq:cterm}
 \end{equation}
-This is term (c), exactly, and it is \eqref{eq:divdia}: the curvature term of the reduced-MHD vorticity equation is the
-vertical $\nabla B$ current source of the SOL literature. JOREK contains the drive of the Pfirsch--Schl\"uter current
+This is term (c) exactly: the code assembles it as $+R^2\pb{v}{p}$ against the test function $v$
+(\code{factor(var\_u,4)}), whose strong form after integration by parts is $-\pb{R^2}{p}$. It is \eqref{eq:divdia}:
+the curvature term of the reduced-MHD vorticity equation is the vertical $\nabla B$ current source of the SOL
+literature. JOREK contains the drive of the Pfirsch--Schl\"uter current
 and of the type-1 plate closing current.
 
 \paragraph{(b) The parallel current.}
@@ -858,19 +865,21 @@ gyroviscous block (e) corrects the advecting velocity from $\vE$ to $\vE + \bv_{
 cancellation), as in B2.5 where inertia and gyroviscosity are combined for the same reason.
 
 \paragraph{(d) The viscous current.}
-$\jvis = -\bB\times\mu\nabla^2\vE/B^2 = -(\mu R/F_0)\,\ephi\times\nabla^2\big(-R\nabla u\times\ephi\big)
-\simeq (\mu R^2/F_0)\,\gradp\nabla^2_{\mathrm{pol}}u$ to leading order in the $R$ derivatives, so
-$F_0 R\,\divg\jvis \simeq R\,\mu\,\nabla^2_{\mathrm{pol}}\omega$ with $\omega = \nabla^2_{\mathrm{pol}} u$: term (d). The
-hyperviscosity $\mathcal{V}_{\mathrm{num}} \propto \mu_{\mathrm{num}}\nabla^4\omega$ is a numerical current of the same
-family.
+Physically $\jvis = -\bB\times\mu\nabla^2\vE/B^2 \simeq (\mu R^2/F_0)\,\gradp\omega$ with $\omega = \nabla^2_{\mathrm{pol}}u$.
+The code has two forms (\code{visco\_old\_setup}). The old one, used in the AUG case, assembles
+$-\mu R\,\nabla v\!\cdot\!\nabla\omega$, i.e.\ $F_0R\,\divg\jvis = \divg(\mu R\nabla\omega)$ and
+$\jvis = (\mu/F_0)\gradp\omega$: the $R^2$ of the physical form is absorbed into the definition of $\mu$. The new one
+assembles $-\mu R^3\nabla v\!\cdot\!\nabla\omega - 2\mu R^2\omega\,\partial_R v$, i.e.\
+$F_0R\,\divg\jvis = \divg(\mu R^3\nabla\omega) + \partial_R(2\mu R^2\omega)$, the physical form. The hyperviscosity
+$-\mu_{\mathrm{num}}\,\nabla^2 v\,\nabla^2\omega$ is a numerical current of the same family.
 
 \begin{tcolorbox}[key={Key: the currents JOREK has}]
 The vorticity equation \eqref{eq:vort} is $F_0 R\,\divg\bJ = 0$ with
 \begin{align*}
   \bJ_\parallel &= -\frac{j}{F_0}\,\bB &&\text{(from the induction equation)}\\
-  \jdia &= \frac{R}{F_0}\,\ephi\times\nabla p &&\text{(curvature term; source } \tfrac{2}{F_0}\partial_Z p\text{)}\\
+  \jdia &= \frac{R}{F_0}\,\ephi\times\nabla p = \frac{R}{F_0}(-\partial_Z p, \partial_R p) &&\text{(curvature term; } \divg\jdia = -\tfrac{2}{F_0}\partial_Z p\text{)}\\
   \jpol &= -\frac{\rho R^2}{F_0}\,\Big(\partial_t + \vE\cdot\nabla + \dots\Big)\gradp u &&\text{(lhs + Reynolds + gyroviscous)}\\
-  \jvis &= \frac{\mu R^2}{F_0}\,\gradp\omega \;(+\text{hyperviscous}) &&\text{(viscosity)}
+  \jvis &= \frac{\mu}{F_0}\,\gradp\omega \;\text{(old setup, AUG case)},\quad \simeq\frac{\mu R^2}{F_0}\,\gradp\omega \;\text{(new)} &&\text{(viscosity, + hyperviscous)}
 \end{align*}
 all in normalised units ($\bJ_{SI} = \bJ/\mu_0$). Missing relative to SOLPS: ion--neutral friction and the anomalous
 ohmic conductivity. Present in JOREK but not in SOLPS: the time-dependent polarisation current and the induction
