@@ -59,6 +59,7 @@ integral of the strong-form tauIC gyroviscous terms. A non-zero Jn_par total is 
 up by the pinned rows (review 2026-10-23), not a diagnostic or postproc error.
 """
 import argparse
+import math
 import os
 import sys
 
@@ -341,6 +342,74 @@ def tube_budget(R, Z, fld, inside, a, b, F0, n_s, gap, d_max=1.0, eta_override=N
             "I_pol_in": float(I_pol[win_in].mean()), "I_pol_out": float(I_pol[win_out].mean())}
 
 
+def _fill(f, inside):
+    """f with every point outside the domain replaced by the value of the nearest point inside (so that finite
+    differences near the boundary see no jump)."""
+    from scipy.ndimage import distance_transform_edt
+    idx = distance_transform_edt(~inside, return_distances=False, return_indices=True)
+    return f[tuple(idx)]
+
+
+def _smooth(f, inside, sig):
+    """Nearest-value extrapolation outside the domain, then Gaussian smoothing (sig in cells, 0 = none)."""
+    g = _fill(np.asarray(f, float), inside)
+    if sig <= 0:
+        return g
+    from scipy.ndimage import gaussian_filter
+    return gaussian_filter(g, sig)
+
+
+def carrier_budget(R, Z, fld, inside, tb, F0, visco, visco_num, n0, t0, sig, fld_prev=None, dt_norm=None, margin=6):
+    """Net current each carrier of the vorticity equation deposits in the tube, from the divergences of the model's
+    currents integrated over the tube area (+ = current ENTERING the tube, i.e. collected by the plates), in A.
+    Phi is Gaussian-smoothed by sig cells before differentiation; n and p are not.
+    Normalised units of model600 (lengths m, u = Phi_SI*t0/F0, rho = n/n0, p = mu0 p_SI), F0 R div J = rhs term:
+      diamagnetic   div J = 2 dp/dZ / F0                      (term [R^2, p])
+      viscous       div J = visco * Lap(omega) / F0,  omega = Lap_pol u   (term R mu Lap omega)
+      hyperviscous  div J = -visco_num * Lap(Lap(omega)) / F0  (sign as the code's stabilising term; indicative only)
+      Reynolds      div J = ( 1/2 [R^2 |grad u|^2, R^2 rho] + [R^4 rho omega, u] ) / (F0 R)
+      polarisation  div J = -div( rho R^2 grad d_t u ) / F0,  d_t u from a second rectangle (fld_prev, dt_norm)
+    J_SI = J/mu0. The diamagnetic entry is a check against the side integral of the postproc's JR/JZ."""
+    MU0 = 4e-7 * np.pi; E = 1.602176634e-19
+    RR = np.meshgrid(R, Z, indexing="ij")[0]
+    dR, dZ = R[1] - R[0], Z[1] - Z[0]
+    def dr(f): return np.gradient(f, dR, axis=0)
+    def dz(f): return np.gradient(f, dZ, axis=1)
+    def lap(f): return dr(dr(f)) + dr(f) / RR + dz(dz(f))
+    def br(a, b): return dr(a) * dz(b) - dz(a) * dr(b)
+    def div(fr, fz): return dr(RR * fr) / RR + dz(fz)
+    u = _smooth(fld["Phi"] * t0 / F0, inside, sig)                 # third and fourth derivatives: smoothed
+    rho = _fill(fld["ne"] / n0, inside)                               # first derivatives only: never smoothed (a steep
+    Ti = fld["T_i"] if "T_i" in fld else fld["T_e"]                   # pedestal smeared across the separatrix would
+    p = _fill(MU0 * E * fld["ne"] * (fld["T_e"] + Ti), inside)       # leak core pressure into the SOL tubes)
+    om = lap(u)
+    terms = {}
+    terms["diamagnetic"] = 2.0 * dz(p) / F0
+    terms["viscous"] = visco * lap(om) / F0
+    if visco_num:
+        terms["hyperviscous"] = -visco_num * lap(lap(om)) / F0
+    gu2 = dr(u) ** 2 + dz(u) ** 2
+    terms["Reynolds"] = (0.5 * br(RR ** 2 * gu2, RR ** 2 * rho) + br(RR ** 4 * rho * om, u)) / (F0 * RR)
+    if fld_prev is not None and dt_norm:
+        u_prev = _smooth(fld_prev["Phi"] * t0 / F0, inside, sig)
+        dtu = (u - u_prev) / dt_norm
+        terms["polarisation d/dt"] = -div(rho * RR ** 2 * dr(dtu), rho * RR ** 2 * dz(dtu)) / F0
+    dA = dR * dZ
+    m = tb["in_tube"] & inside
+    # exclude the two end windows like the side budget (last --gap m next to each plate): points nearest to s outside
+    s_pt = tb["s"][tb["i_near"]]
+    keep = np.zeros_like(m); keep[m] = (s_pt >= tb["s"][np.flatnonzero(tb["win_in"])[0]]) & (s_pt <= tb["s"][np.flatnonzero(tb["win_out"])[-1]])
+    # the 3rd/4th-derivative stencils of the viscous, Reynolds and polarisation terms reach `margin` cells inward from
+    # the domain boundary (the fields are only C0 there after the nearest-value fill): leave that strip out of them
+    from scipy.ndimage import distance_transform_edt
+    deep = distance_transform_edt(inside) > margin + 2.0 * sig
+    out = {}
+    for k, v in terms.items():
+        sel = keep if k == "diamagnetic" else (keep & deep)
+        out[k] = -2.0 * np.pi * float(np.nansum(np.where(sel, v, 0.0) * RR * dA)) / MU0     # entering = -int div J
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--rect", required=True, help="rectangle expressions file (h5)")
@@ -359,6 +428,12 @@ def main():
                     help="length [m]: also plot the last --zoom m at each end without the gap mask (current_conservation_ends.pdf);"
                          " use with --points 2000 or more so that the sections resolve the last element")
     ap.add_argument("--sheath-lambda", type=float, default=3.0, help="Lambda of the run (open-circuit voltage Lambda dT_e)")
+    ap.add_argument("--visco", type=float, default=2.3e-8, help="namelist visco (normalised, constant) for the carrier budget")
+    ap.add_argument("--visco-num", type=float, default=0.0, help="namelist visco_num (hyperviscosity); 0 = not evaluated")
+    ap.add_argument("--central-density", type=float, default=0.76464396)
+    ap.add_argument("--central-mass", type=float, default=2.01410177811)
+    ap.add_argument("--smooth", type=float, default=1.5, help="Gaussian smoothing [cells] of Phi before its 3rd/4th derivatives (n, p never smoothed)")
+    ap.add_argument("--rect-prev", help="rectangle file at an earlier time (same --exprs): enables the polarisation d/dt term")
     ap.add_argument("--eta-si", type=float, help="constant parallel resistivity [Ohm m] instead of Spitzer in the thermoelectric estimate")
     ap.add_argument("-o", "--outdir", default=".")
     args = ap.parse_args()
@@ -385,6 +460,16 @@ def main():
     print(f"rectangle {args.rect}: t = {t_now:.4g} (JOREK units), {R.size} x {Z.size} points, "
           f"psi_bnd - psi_axis = {fld['_beta']:.4f} Wb/rad")
 
+    AMU = 1.66053906660e-27
+    n0 = args.central_density * 1e20
+    t0 = math.sqrt(4e-7 * np.pi * n0 * args.central_mass * AMU)
+    fld_prev = dt_norm = None
+    if args.rect_prev:
+        fld_prev, Rp_, Zp_, inside_p, t_prev = read_rectangle(args.rect_prev, exprs)
+        if Rp_.size != R.size or Zp_.size != Z.size:
+            sys.exit("--rect-prev must be sampled on the same rectangle")
+        dt_norm = t_now - t_prev
+        print(f"previous rectangle {args.rect_prev}: t = {t_prev:.4g}, dt = {dt_norm:.4g} JOREK units = {dt_norm * t0 * 1e3:.3f} ms")
     bq = c = pl = None
     if args.boundary:
         names, steps, times, data = read_fast(args.boundary)
@@ -406,6 +491,9 @@ def main():
     ends = []                                                                 # (a, b, tb, Iin, Iout, Sin, Sout) for --zoom
     for r, (a, b) in enumerate(bands):
         tb = tube_budget(R, Z, fld, inside, a, b, args.F0, args.points, args.gap, args.max_width, args.eta_si)
+        if tb is not None and all(n in fld for n in ("Phi", "ne", "T_e")):
+            tb["carriers"] = carrier_budget(R, Z, fld, inside, tb, args.F0, args.visco, args.visco_num, n0, t0,
+                                            args.smooth, fld_prev, dt_norm)
         if tb is None:
             print(f"{a:.3f}:{b:.3f}   no open contour (private-region bands need the contour to stay below the X-point;"
                   " try a band further from 1, e.g. 0.975:0.99)")
@@ -505,6 +593,23 @@ def composition(ends, bq, c, pl, lam, outdir):
               f"{-cp['dia_above'] * k:8.3f}{cp['res_below'] * k:8.3f}{cp['res_above'] * k:8.3f}{sides * k:8.3f} | "
               f"{cp['L_par']:7.1f}{cp.get('R_tube', np.nan):9.2e}{LdT:7.1f}{dPhi:7.1f}{Ith * k:8.3f}")
         rows.append((a, b, Iin, Iout, thr, clo, cp, sides))
+    if any("carriers" in tb for _, _, tb, *_ in ends):
+        names = [k for k in ("diamagnetic", "viscous", "hyperviscous", "Reynolds", "polarisation d/dt") if any(k in tb.get("carriers", {}) for _, _, tb, *_ in ends)]
+        print("\ncarriers of the vorticity equation, current ENTERING the tube [kA] (area integral of the model's div J per"
+              " term; 'measured' = closing from the plates and the side residual of the postproc current):")
+        print(f"{'band':>12s}" + "".join(f"{n:>18s}" for n in names) + f"{'sum':>9s}{'dI_par':>9s}{'closing':>9s}{'dia chk':>9s}")
+        for a, b, tb, Iin, Iout, *_ in ends:
+            cr = tb.get("carriers", {}); cp = tb["comp"]
+            vals = [cr.get(n, np.nan) * k for n in names]
+            dIpar = (tb["I_par_out"] - tb["I_par_in"]) * k                       # parallel current gained along the tube
+            dia_ends = ((tb["I_pol_out"] - tb["I_par_out"]) - (tb["I_pol_in"] - tb["I_par_in"]))   # diamagnetic poloidal current out through the ends
+            dia_chk = -(cp["dia_below"] + cp["dia_above"] + dia_ends) * k         # entering: -(sides + ends)
+            print(f"{a:6.3f}:{b:5.3f}" + "".join(f"{v:18.3f}" for v in vals) + f"{np.nansum(vals):9.3f}{dIpar:9.3f}{(Iin + Iout) * k:9.3f}{dia_chk:9.3f}")
+        print("  Each column is -int div(J_X) over the tube area between the end windows = the current carrier X deposits in"
+              " the tube (through sides and ends). Their sum must equal dI_par, the parallel current gained between the"
+              " windows (closing = the plates' version of it). 'dia chk' is the same for the diamagnetic current from the"
+              " postproc's JR/JZ fluxes (sides + ends) and should match the diamagnetic column. Fourth derivatives of Phi:"
+              " repeat with --smooth 2 and 4; a carrier that moves a lot between the two is not resolved.")
     print("  closing = I_in + I_out should equal 'sum' (side current entering the tube: diamagnetic = grad-B closing current"
           " of JR/JZ, res = polarisation/viscous/inertial, below/above the X-point); LdTe = Lambda (T_e,out - T_e,in) [V],"
           " dPhi = Phi_out - Phi_in [V] at the plates, I_th = -LdTe / R_tube (Spitzer unless --eta-si), same sign convention as through.")
