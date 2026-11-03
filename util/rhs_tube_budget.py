@@ -69,6 +69,38 @@ def read_vtk_cells(path):
     return xyz[:, :2], quads, fields
 
 
+def check_line(pts, fields, fld, R, Z, inside, F0):
+    """Pointwise calibration of the VTK values: along the outer midplane (Z of the magnetic axis, Psi_N 0.97..1.15)
+    print c*R of the JxB and grad_p terms next to the strong forms [psi, j] and -[R^2, p] from the rectangle
+    (normalised units: j = -mu0 R J_phi, p = mu0 e n (T_e+T_i)). Their ratio is the common weight of the VTK terms
+    (time step etc.) and must be the same constant for both terms and along the line; where it is not, the projection
+    does not represent the strong form there (grid-scale structure, leakage from a sharp layer)."""
+    MU0 = 4e-7 * np.pi; E = 1.602176634e-19
+    RR = np.meshgrid(R, Z, indexing="ij")[0]
+    dR, dZ = R[1] - R[0], Z[1] - Z[0]
+    psi = np.where(inside, fld["Psi"], np.nan)
+    j = np.where(inside, -MU0 * RR * fld["currdens"], np.nan)
+    Ti = fld["T_i"] if "T_i" in fld else fld["T_e"]
+    pn = np.where(inside, MU0 * E * fld["ne"] * (fld["T_e"] + Ti), np.nan)
+    br = lambda a, b: np.gradient(a, dR, axis=0) * np.gradient(b, dZ, axis=1) - np.gradient(a, dZ, axis=1) * np.gradient(b, dR, axis=0)
+    jxb_strong = br(psi, j)
+    gp_strong = -br(RR ** 2, pn)
+    # magnetic axis: minimum of Psi_N inside
+    pN = np.where(inside, fld["Psi_N"], np.inf); ia, ja = np.unravel_index(np.argmin(pN), pN.shape)
+    Zax = Z[ja]; jz = ja
+    sel = np.flatnonzero(inside[:, jz] & (fld["Psi_N"][:, jz] > 0.97) & (fld["Psi_N"][:, jz] < 1.15) & (R > R[ia]))
+    kj = [k for k in fields if k.endswith("JxB")][0]; kp = [k for k in fields if k.endswith("grad_p")][0]
+    print(f"\ncheck along the outer midplane, Z = {Zax:.3f} m: VTK c*R against the strong forms from the rectangle")
+    print(f"  {'R [m]':>7s} {'Psi_N':>7s} {'JxB vtk*R':>12s} {'[psi,j]':>12s} {'ratio':>10s} {'grad_p vtk*R':>13s} {'-[R2,p]':>12s} {'ratio':>10s}")
+    for i in sel[:: max(1, sel.size // 14)]:
+        Rl = R[i]
+        d = np.hypot(pts[:, 0] - Rl, pts[:, 1] - Zax)
+        near = np.argsort(d)[:8]                                                   # the subdivision points around (R, Z)
+        vj = np.mean(fields[kj][near]) * Rl; vp = np.mean(fields[kp][near]) * Rl
+        print(f"  {Rl:7.3f} {fld['Psi_N'][i, jz]:7.4f} {vj:12.3e} {jxb_strong[i, jz]:12.3e} {vj / jxb_strong[i, jz]:10.3e}"
+              f" {vp:13.3e} {gp_strong[i, jz]:12.3e} {vp / gp_strong[i, jz]:10.3e}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("vtk", help="RHS.<step>.vtk of RHS_terms_vtk for the u row")
@@ -79,6 +111,8 @@ def main():
     ap.add_argument("--points", type=int, default=400)
     ap.add_argument("--gap", type=float, default=0.01)
     ap.add_argument("--frac", type=float, default=0.02, help="terms below this fraction of the largest are grouped as 'other'")
+    ap.add_argument("--check-line", action="store_true",
+                    help="compare the VTK's JxB and grad_p densities with [psi, j] and -[R^2, p] from the rectangle along the outer midplane")
     ap.add_argument("-o", default="rhs_tube_budget.pdf")
     args = ap.parse_args()
     plt.rcdefaults()
@@ -98,6 +132,8 @@ def main():
     fld, R, Z, inside, t_now = read_rectangle(args.rect, exprs)
     fld["_beta"] = cc.unmirror_psin(fld, inside)
     bands = [tuple(float(x) for x in b.split(":")) for b in args.bands]
+    if args.check_line:
+        check_line(pts, fields, fld, R, Z, inside, args.F0)
     fig, ax = plt.subplots(len(bands), 1, figsize=(8, 3.6 * len(bands)), squeeze=False, constrained_layout=True)
     for r, (a, b) in enumerate(bands):
         tb = cc.tube_budget(R, Z, fld, inside, a, b, args.F0, args.points, args.gap, 1.0)
@@ -112,7 +148,7 @@ def main():
         s0, s1 = tb["s"][np.flatnonzero(tb["win_in"])[0]], tb["s"][np.flatnonzero(tb["win_out"])[-1]]
         keep = (s_c >= s0) & (s_c <= s1)
         idx = np.flatnonzero(in_tube)[keep]
-        w = area[idx]
+        w = area[idx] * cen[idx, 0]                                                # the mass matrix carries R dA: tau = c R
         integ = {k: float(np.sum(cval[k][idx] * w)) for k in fields}
         jxb = [k for k in fields if k.endswith("JxB")]
         if not jxb:
