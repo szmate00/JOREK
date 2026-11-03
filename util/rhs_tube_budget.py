@@ -124,8 +124,10 @@ def closing_profile(args, pts, cen, area, cval, fields, fld, R, Z, inside, t_now
     kj = [k for k in keys if k.endswith("JxB")][0]
     rows = []
     for a, b in zip(edges[:-1], edges[1:]):
-        tb = cc.tube_budget(R, Z, fld, inside, a, b, args.F0, args.points, args.gap, 1.0)
+        print(f"  band {a:.3f}:{b:.3f} ...", end="", flush=True)
+        tb = cc.tube_budget(R, Z, fld, inside, a, b, args.F0, args.points, args.gap, 0.15)   # narrow sections: fast
         if tb is None:
+            print(" no open contour")
             continue
         poly = Path(np.vstack([tb["paths"]["a"][0], tb["paths"]["b"][0][::-1]]))
         in_tube = poly.contains_points(cen)
@@ -140,6 +142,7 @@ def closing_profile(args, pts, cen, area, cval, fields, fld, R, Z, inside, t_now
         Iin = cc.plate_current(bq, c, pl["inner_sol"], "Jn_par", a, b, False)
         Iout = cc.plate_current(bq, c, pl["outer_sol"], "Jn_par", a, b, False)
         rows.append((0.5 * (a + b), Iin, Iout, jxb, dep))
+        print(f" I_in {Iin * 1e-3:+.3f} I_out {Iout * 1e-3:+.3f} kA, parallel gain (vtk) {jxb * 1e-3:+.3f} kA")
     kv = [k for k in keys if k.endswith("visco_term")][0]; kp = [k for k in keys if k.endswith("grad_p")][0]
     print(f"\nclosing-current profile [kA per band of {edges[1] - edges[0]:.3f} Psi_N], ions into the plate positive:")
     print(f"  {'Psi_N':>7s}{'I_in':>8s}{'I_out':>8s}{'I_in+I_out':>11s}{'dI_par(vtk)':>12s}{'viscous':>9s}{'pressure':>9s}{'other':>8s}{'residual':>9s}")
