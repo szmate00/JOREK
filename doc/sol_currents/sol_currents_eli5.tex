@@ -940,7 +940,7 @@ quantity & namelist & conversion & SI value \\
 time unit & $n_0 = 0.7646\times10^{20}$, D & $t_0 = \sqrt{\mu_0 m_i n_0}$ & $5.67\times10^{-7}$ s \\
 resistivity on axis & \code{eta = 3e-8} & $\eta_{SI} = \mu_0\eta_0/t_0$ & $6.7\times10^{-8}\,\Omega$m \\
 resistivity at 30 eV (total) & \code{eta\_T\_dependent}, $T_0 = 7.3$ keV & $\times(T/T_0)^{-3/2}$ & $2.5\times10^{-4}\,\Omega$m $\approx 20\times$ Spitzer \\
-perpendicular viscosity & \code{visco = 2.3e-8}, constant & $\nu_{SI} = \mathrm{visco}/(t_0\,\hat\rho)$ & $0.04/\hat
+perpendicular viscosity & \code{visco = 2.3e-8}, \code{visco\_T\_dependent} (default on): $\mu\propto(T/T_0)^{-3/2}$, $T_0 = 7.3$ keV & $\nu_{SI} = \mathrm{visco}\,(T/T_0)^{-3/2}/(t_0\,\hat\rho)$ & $0.04/\hat\rho$ m$^2$/s on axis; $\times150$ at 250 eV, $\times3800$ at 30 eV: $\sim15$ m$^2$/s in the separatrix layer, hundreds at the plates \\
 ho$ m$^2$/s, i.e.\ 0.2--0.4 m$^2$/s in the SOL \\
 hyper-resistivity & \code{eta\_num = 3e-14} & numerical & -- \\
 hyper-viscosity & \code{visco\_num = 2e-14} & numerical & -- \\
@@ -948,12 +948,14 @@ sheath constant & \code{sheath\_Lambda = 3} & -- & 3 \\
 \bottomrule
 \end{tabular}
 \end{center}
-The viscosity is of the size SOLPS uses for its anomalous perpendicular viscosity ($D^{(AN)}\sim0.3$--$1$ m$^2$/s), so
-JOREK's cross-field channel is ordinary. The parallel resistivity in the divertor is about twenty times Spitzer because
-the $T^{-3/2}$ scaling is anchored at the axis value chosen for the pedestal dynamics. That single number throttles the
-plate-to-plate current of Sec.~\ref{sec:thermo} by the same factor, and is the main reason why, in this run, the
-single-plate loops of Sec.~\ref{sec:loop} dominate over the thermoelectric current, whereas in SOLPS single-null runs
-with Spitzer conductivity the thermoelectric current usually dominates.
+Both coefficients follow the same $T^{-3/2}$ law anchored at the axis temperature, which is chosen for the pedestal
+dynamics. In the SOL this makes the parallel resistivity about twenty times Spitzer, which throttles the plate-to-plate
+current of Sec.~\ref{sec:thermo} by that factor, and it makes the perpendicular viscosity one to three orders of
+magnitude larger than the anomalous value SOLPS uses ($D^{(AN)}\sim0.3$--$1$ m$^2$/s), which feeds the viscous closure
+of Sec.~\ref{sec:loop}. Both push the same way: away from the thermoelectric circuit and towards plate closing currents.
+Artola et al.\ (PPCF 63 (2021) 064004, Sec.~4.3) describe exactly this balance, $\bB\cdot\nabla j \approx \mu_\perp\Delta\omega$,
+as the signature of a too large perpendicular viscosity under sheath current conditions, and prescribe lowering $\mu_\perp$
+until the plate currents no longer depend on it.
 
 \section{SOLPS and JOREK side by side}
 
@@ -1022,8 +1024,9 @@ a radial circuit between its hot strike point and its cold wings, closed across 
 polarisation and viscous currents of the vorticity equation; both plates therefore carry the same sign. The
 plate-to-plate thermoelectric current is small because both plate ends float and the parallel path is resistive. The
 sum of the plate currents is the cross-field current through the outer SOL and private-flux boundaries, the analogue
-of SOLPS's radial boundary currents. Its magnitude depends on the perpendicular current model, as it does in SOLPS on
-the anomalous conductivity and viscosity, and on the parallel resistivity through the competing thermoelectric loop.
+of SOLPS's radial boundary currents. Its magnitude is set by the perpendicular viscosity of the separatrix layer,
+which with the temperature-dependent viscosity of this case is far above the SOLPS anomalous value, and by the
+parallel resistivity through the competing thermoelectric loop; both are inputs, not predictions.
 \end{tcolorbox}
 
 \section{Checklist for a plate-current figure}
