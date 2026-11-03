@@ -108,6 +108,67 @@ def check_line(pts, fields, fld, R, Z, inside, F0):
     return W
 
 
+def closing_profile(args, pts, cen, area, cval, fields, fld, R, Z, inside, t_now, W):
+    """Charge conservation per flux tube across the SOL: for N bands between Psi_N A and B, the two plate currents
+    (boundary file, ions positive), the cross-field current each vorticity-equation term deposits in the tube (VTK,
+    absolute via the calibrated weight W) and the sum. Writes rhs_closing_profile.pdf and a table."""
+    from compare_wall_runs import read_fast
+    a0, b0, n = args.profile; n = int(n)
+    edges = np.linspace(a0, b0, n + 1)
+    names, steps, times, data = read_fast(args.boundary)
+    i = int(np.argmin(np.abs(times - t_now))) if args.step is None else int(np.where(steps == args.step)[0][0])
+    bq = data[i]
+    pl, c = cc.plates(bq, names, z_max=args.plate_zmax)
+    absW = (2 * np.pi / (MU0 * args.F0)) / W
+    keys = [k for k in fields]
+    kj = [k for k in keys if k.endswith("JxB")][0]
+    rows = []
+    for a, b in zip(edges[:-1], edges[1:]):
+        tb = cc.tube_budget(R, Z, fld, inside, a, b, args.F0, args.points, args.gap, 1.0)
+        if tb is None:
+            continue
+        poly = Path(np.vstack([tb["paths"]["a"][0], tb["paths"]["b"][0][::-1]]))
+        in_tube = poly.contains_points(cen)
+        c_pts = tb["paths"]["c"][0]
+        i_near = np.argmin(np.hypot(cen[in_tube, None, 0] - c_pts[None, :, 0], cen[in_tube, None, 1] - c_pts[None, :, 1]), axis=1)
+        s_c = tb["s"][i_near]
+        s0, s1 = tb["s"][np.flatnonzero(tb["win_in"])[0]], tb["s"][np.flatnonzero(tb["win_out"])[-1]]
+        idx = np.flatnonzero(in_tube)[(s_c >= s0) & (s_c <= s1)]
+        w = area[idx] * cen[idx, 0]
+        dep = {k: -float(np.sum(cval[k][idx] * w)) * absW for k in keys if k != kj}      # A entering by each term
+        jxb = float(np.sum(cval[kj][idx] * w)) * absW                                    # A, parallel current gained
+        Iin = cc.plate_current(bq, c, pl["inner_sol"], "Jn_par", a, b, False)
+        Iout = cc.plate_current(bq, c, pl["outer_sol"], "Jn_par", a, b, False)
+        rows.append((0.5 * (a + b), Iin, Iout, jxb, dep))
+    kv = [k for k in keys if k.endswith("visco_term")][0]; kp = [k for k in keys if k.endswith("grad_p")][0]
+    print(f"\nclosing-current profile [kA per band of {edges[1] - edges[0]:.3f} Psi_N], ions into the plate positive:")
+    print(f"  {'Psi_N':>7s}{'I_in':>8s}{'I_out':>8s}{'I_in+I_out':>11s}{'dI_par(vtk)':>12s}{'viscous':>9s}{'pressure':>9s}{'other':>8s}{'residual':>9s}")
+    for x, Iin, Iout, jxb, dep in rows:
+        oth = sum(v for k, v in dep.items() if k not in (kv, kp))
+        clos = Iin + Iout
+        print(f"  {x:7.3f}{Iin * 1e-3:8.3f}{Iout * 1e-3:8.3f}{clos * 1e-3:11.3f}{jxb * 1e-3:12.3f}{dep[kv] * 1e-3:9.3f}{dep[kp] * 1e-3:9.3f}"
+              f"{oth * 1e-3:8.3f}{(clos - dep[kv] - dep[kp] - oth) * 1e-3:9.3f}")
+    print("  I_in + I_out = current the plates take from the tube = sum of the cross-field deposits (viscous + pressure +"
+          " other); residual = what the plates collect beyond what the vorticity equation deposits (0 if closed;"
+          " the band next to the separatrix is unreliable: projection leakage from the layer).")
+    x = np.array([r[0] for r in rows]); Iin = np.array([r[1] for r in rows]); Iout = np.array([r[2] for r in rows])
+    vis = np.array([r[4][kv] for r in rows]); pre = np.array([r[4][kp] for r in rows])
+    oth = np.array([sum(v for k, v in r[4].items() if k not in (kv, kp)) for r in rows])
+    fig, ax = plt.subplots(figsize=(6.5, 4.2), constrained_layout=True)
+    ax.plot(x, Iin * 1e-3, color="#00B1EA", lw=1.8, label="inner plate, parallel current")
+    ax.plot(x, Iout * 1e-3, color="#EF7C00", lw=1.8, label="outer plate, parallel current")
+    ax.plot(x, (Iin + Iout) * 1e-3, "k-", lw=2.2, label="inner + outer")
+    ax.plot(x, -vis * 1e-3, color="#7a9f35", lw=1.6, ls="--", label="viscous cross-field current (sign flipped)")
+    ax.plot(x, -pre * 1e-3, color="#b03a2e", lw=1.6, ls="--", label=r"$\nabla B$ (pressure) cross-field current (sign flipped)")
+    ax.plot(x, (Iin + Iout - vis - pre - oth) * 1e-3, color="0.4", lw=1.2, ls=":", label="plates minus all cross-field deposits")
+    ax.axhline(0, color="0.5", lw=0.6)
+    ax.set_xlabel(r"$\Psi_N$ (band centre)"); ax.set_ylabel(f"current per band [kA]")
+    ax.legend(frameon=False, fontsize=8)
+    out = args.o.replace(".pdf", "") + "_profile.pdf"
+    fig.savefig(out); print(f"wrote {out}")
+    plt.show()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("vtk", help="RHS.<step>.vtk of RHS_terms_vtk for the u row")
@@ -120,6 +181,11 @@ def main():
     ap.add_argument("--frac", type=float, default=0.02, help="terms below this fraction of the largest are grouped as 'other'")
     ap.add_argument("--check-line", action="store_true",
                     help="compare the VTK's JxB and grad_p densities with [psi, j] and -[R^2, p] from the rectangle along the outer midplane")
+    ap.add_argument("--profile", nargs=3, type=float, metavar=("A", "B", "N"),
+                    help="closing-current profile: N bands from Psi_N A to B; needs --boundary and --check-line")
+    ap.add_argument("--boundary", help="boundary_quantities file(s) of the same run, for the plate currents per band")
+    ap.add_argument("--step", type=int, help="boundary step (default: closest in time)")
+    ap.add_argument("--plate-zmax", type=float, default=-0.5)
     ap.add_argument("-o", default="rhs_tube_budget.pdf")
     args = ap.parse_args()
     plt.rcdefaults()
@@ -139,7 +205,10 @@ def main():
     fld, R, Z, inside, t_now = read_rectangle(args.rect, exprs)
     fld["_beta"] = cc.unmirror_psin(fld, inside)
     bands = [tuple(float(x) for x in b.split(":")) for b in args.bands]
-    W = check_line(pts, fields, fld, R, Z, inside, args.F0) if args.check_line else np.nan
+    W = check_line(pts, fields, fld, R, Z, inside, args.F0) if (args.check_line or args.profile) else np.nan
+    if args.profile:
+        closing_profile(args, pts, cen, area, cval, fields, fld, R, Z, inside, t_now, W)
+        return
     fig, ax = plt.subplots(len(bands), 1, figsize=(8, 3.6 * len(bands)), squeeze=False, constrained_layout=True)
     for r, (a, b) in enumerate(bands):
         tb = cc.tube_budget(R, Z, fld, inside, a, b, args.F0, args.points, args.gap, 1.0)
