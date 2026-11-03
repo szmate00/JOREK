@@ -137,33 +137,44 @@ def closing_profile(args, pts, cen, area, cval, fields, fld, R, Z, inside, t_now
         s0, s1 = tb["s"][np.flatnonzero(tb["win_in"])[0]], tb["s"][np.flatnonzero(tb["win_out"])[-1]]
         idx = np.flatnonzero(in_tube)[(s_c >= s0) & (s_c <= s1)]
         w = area[idx] * cen[idx, 0]
-        dep = {k: -float(np.sum(cval[k][idx] * w)) * absW for k in keys if k != kj}      # A entering by each term
-        jxb = float(np.sum(cval[kj][idx] * w)) * absW                                    # A, parallel current gained
+        raw = {k: float(np.sum(cval[k][idx] * w)) for k in keys}
+        dIpar = tb["I_par_out"] - tb["I_par_in"]                                         # A, from the rectangle
+        sc = dIpar / raw[kj] if raw[kj] != 0 else np.nan                                 # per-band scale: JxB = dI_par
+        dep = {k: -raw[k] * sc for k in keys if k != kj}                                  # A entering by each term
+        jxbW = raw[kj] * absW                                                            # cross-check with the global weight
         Iin = cc.plate_current(bq, c, pl["inner_sol"], "Jn_par", a, b, False)
         Iout = cc.plate_current(bq, c, pl["outer_sol"], "Jn_par", a, b, False)
-        rows.append((0.5 * (a + b), Iin, Iout, jxb, dep))
-        print(f" I_in {Iin * 1e-3:+.3f} I_out {Iout * 1e-3:+.3f} kA, parallel gain (vtk) {jxb * 1e-3:+.3f} kA")
+        resid_vtk = sum(raw.values()) / raw[kj]
+        rows.append((0.5 * (a + b), Iin, Iout, dIpar, dep, jxbW, resid_vtk))
+        print(f" I_in {Iin * 1e-3:+.3f} I_out {Iout * 1e-3:+.3f} kA, dI_par(rect) {dIpar * 1e-3:+.3f} kA, vtk residual {resid_vtk:+.3f}")
     kv = [k for k in keys if k.endswith("visco_term")][0]; kp = [k for k in keys if k.endswith("grad_p")][0]
-    print(f"\nclosing-current profile [kA per band of {edges[1] - edges[0]:.3f} Psi_N], ions into the plate positive:")
-    print(f"  {'Psi_N':>7s}{'I_in':>8s}{'I_out':>8s}{'I_in+I_out':>11s}{'dI_par(vtk)':>12s}{'viscous':>9s}{'pressure':>9s}{'other':>8s}{'residual':>9s}")
-    for x, Iin, Iout, jxb, dep in rows:
+    print(f"\nclosing-current profile [kA per band of {edges[1] - edges[0]:.3f} Psi_N], ions into the plate positive;"
+          " VTK terms scaled per band so that the JxB term equals dI_par of the rectangle:")
+    print(f"  {'Psi_N':>7s}{'I_in':>8s}{'I_out':>8s}{'I_in+I_out':>11s}{'dI_par':>8s}{'viscous':>9s}{'pressure':>9s}{'other':>8s}"
+          f"{'ends':>8s}{'dI_par(W)':>10s}{'vtk res':>8s}")
+    for x, Iin, Iout, dIpar, dep, jxbW, rv in rows:
         oth = sum(v for k, v in dep.items() if k not in (kv, kp))
         clos = Iin + Iout
-        print(f"  {x:7.3f}{Iin * 1e-3:8.3f}{Iout * 1e-3:8.3f}{clos * 1e-3:11.3f}{jxb * 1e-3:12.3f}{dep[kv] * 1e-3:9.3f}{dep[kp] * 1e-3:9.3f}"
-              f"{oth * 1e-3:8.3f}{(clos - dep[kv] - dep[kp] - oth) * 1e-3:9.3f}")
-    print("  I_in + I_out = current the plates take from the tube = sum of the cross-field deposits (viscous + pressure +"
-          " other); residual = what the plates collect beyond what the vorticity equation deposits (0 if closed;"
-          " the band next to the separatrix is unreliable: projection leakage from the layer).")
+        print(f"  {x:7.3f}{Iin * 1e-3:8.3f}{Iout * 1e-3:8.3f}{clos * 1e-3:11.3f}{dIpar * 1e-3:8.3f}{dep[kv] * 1e-3:9.3f}{dep[kp] * 1e-3:9.3f}"
+              f"{oth * 1e-3:8.3f}{(clos - dIpar) * 1e-3:8.3f}{jxbW * 1e-3:10.3f}{rv:8.3f}")
+    print("  viscous + pressure + other = dI_par by construction of the per-band scale; their RATIOS are the measurement."
+          " 'ends' = plates minus dI_par = current fed in the last --gap m next to the plates (outside the windows)."
+          " 'dI_par(W)' = the VTK parallel gain with the single global weight W (calibration check, +-50 %)."
+          " 'vtk res' = sum of all VTK terms / JxB (0 = the discrete row is balanced in the tube).")
     x = np.array([r[0] for r in rows]); Iin = np.array([r[1] for r in rows]); Iout = np.array([r[2] for r in rows])
+    dIp = np.array([r[3] for r in rows])
     vis = np.array([r[4][kv] for r in rows]); pre = np.array([r[4][kp] for r in rows])
     oth = np.array([sum(v for k, v in r[4].items() if k not in (kv, kp)) for r in rows])
     fig, ax = plt.subplots(figsize=(6.5, 4.2), constrained_layout=True)
     ax.plot(x, Iin * 1e-3, color="#00B1EA", lw=1.8, label="inner plate, parallel current")
     ax.plot(x, Iout * 1e-3, color="#EF7C00", lw=1.8, label="outer plate, parallel current")
-    ax.plot(x, (Iin + Iout) * 1e-3, "k-", lw=2.2, label="inner + outer")
-    ax.plot(x, -vis * 1e-3, color="#7a9f35", lw=1.6, ls="--", label="viscous cross-field current (sign flipped)")
-    ax.plot(x, -pre * 1e-3, color="#b03a2e", lw=1.6, ls="--", label=r"$\nabla B$ (pressure) cross-field current (sign flipped)")
-    ax.plot(x, (Iin + Iout - vis - pre - oth) * 1e-3, color="0.4", lw=1.2, ls=":", label="plates minus all cross-field deposits")
+    ax.plot(x, (Iin + Iout) * 1e-3, "k-", lw=2.2, label="inner + outer (plates)")
+    ax.plot(x, dIp * 1e-3, "k--", lw=1.2, label=r"parallel current gained along the tube ($I_\parallel$ 1 cm from the plates)")
+    ax.plot(x, vis * 1e-3, color="#7a9f35", lw=1.6, label="viscous current deposited in the tube")
+    ax.plot(x, pre * 1e-3, color="#b03a2e", lw=1.6, label=r"$\nabla B$ (pressure) current deposited in the tube")
+    if np.any(np.abs(oth) > 0.02 * np.max(np.abs(vis))):
+        ax.plot(x, oth * 1e-3, color="0.5", lw=1.2, label="other terms")
+    ax.plot(x, (vis + pre + oth) * 1e-3, color="0.3", lw=1.0, ls=":", label="sum of the deposits (= dashed by construction)")
     ax.axhline(0, color="0.5", lw=0.6)
     ax.set_xlabel(r"$\Psi_N$ (band centre)"); ax.set_ylabel(f"current per band [kA]")
     ax.legend(frameon=False, fontsize=8)
