@@ -39,7 +39,7 @@ program jorek2_SOLcurrent
   use mod_position
   use mod_model_settings
   use corr_neg
-  use mod_plasma_functions, only: coulomb_log_ei
+  use mod_plasma_functions, only: coulomb_log_ei, resistivity
   !$ use omp_lib
   
   implicit none
@@ -64,6 +64,11 @@ program jorek2_SOLcurrent
   real*8, parameter  :: lambda11=1.975d0       !< Spitzer-Härm coefficient, see Hinton table 1
   real*8  :: resisty                           !< running fluxline average of Stangeby 9.35
   real*8  :: av_sigma                          !< average conductivity as calculated from Staebler eq 12
+  logical, parameter :: use_jorek_eta = .false. !< .true.: tube resistance from the run's own resistivity eta(T) (namelist eta, eta_T_dependent,
+                                               !< T_max_eta, T_0, SI = mu0*eta/sqrt(mu0 rho0)) instead of Spitzer-Haerm; for comparing with the
+                                               !< current the simulation itself carries
+  real*8  :: resisty_jorek                     !< running fluxline integral of the run's eta_SI [Ohm m^2] (use_jorek_eta)
+  real*8  :: eta_T_loc, eta_SI_fac             !< the run's normalised eta at the tracer and its conversion to Ohm m
   real*8  :: L                                 !< connection length (m)
   real*8  :: pe_s, pe_t, pe_R, pe_Z, pe_phi    !< pressure and their derivatives at the tracer
   real*8  :: B, B_s, B_t, B_r, B_z, B_phi      !< magnetic field for \grad_\parallel Pe equation
@@ -200,14 +205,16 @@ program jorek2_SOLcurrent
   !normalisation constants to be used
   n_norm = central_density*1.d20                     ! ne[atoms/m³]     = n[jor] * n_norm
   T_norm = 1.d0 / (2.d0 * EL_CHG * MU_ZERO * n_norm) ! Te[eV] = T[eV]/2 = T[jor] * T_norm
+  eta_SI_fac = MU_ZERO / sqrt(MU_ZERO * central_mass * ATOMIC_MASS_UNIT * n_norm) ! eta_SI = eta[jor] * mu0 / sqrt(mu0 rho0)
+  if (use_jorek_eta) write(*,*) 'tube resistance from the run''s eta(T) (use_jorek_eta), not Spitzer-Haerm'
 
   int_I_wall = 0
   
   ! --- Trace the fieldlines
   !$omp parallel do schedule(monotonic:dynamic,1) default(none)                                                                                                  &
-  !$omp shared(np, initial_bnd_pos, Phi_start_list, node_list, element_list, n_norm, T_norm, F0, delta_phi, element_neighbours, alpha, central_mass)             &
+  !$omp shared(np, initial_bnd_pos, Phi_start_list, node_list, element_list, n_norm, T_norm, F0, delta_phi, element_neighbours, alpha, central_mass, eta_SI_fac, eta, T_max_eta, T_0) &
   !$omp private(i_phi0, s_line, t_line, i_elm, i_elm_prev, Phi_b, p_line, P, P_s, P_t, P_phi, R, R_s, R_t, Z, Z_s, Z_t, ne_b, Te_b, R_b, Z_b, R_old, Z_old,      &
-  !$omp         inv_st_jac,psi_R,psi_Z,B3,bdotn,delta_phi_signed,L,resisty,pe_integral,pressure_drop,i_steps,in_domain,s_mid, t_mid, p_mid, delta_s, delta_t,    &
+  !$omp         inv_st_jac,psi_R,psi_Z,B3,bdotn,delta_phi_signed,L,resisty, resisty_jorek, eta_T_loc,pe_integral,pressure_drop,i_steps,in_domain,s_mid, t_mid, p_mid, delta_s, delta_t,    &
   !$omp         small_delta_s, small_delta_t, small_delta, R_in, Z_in, i_elm_tmp, R_out, Z_out, delta_phi_local, r0_corr, ne, ne_s, ne_t, ne_phi, T_corr, Te,    &
   !$omp         Te_s, Te_t, Te_phi, Zjac, dr, lnA, nu_ei, pe_s, pe_t, pe_phi, pe_R, pe_Z, B_R, B_Z, B_phi, B, par_grad_p, R_e, Z_e, ne_e, Te_e, Phi_e, av_sigma, &
   !$omp         hot2cold, Te_h, ne_h, ratio_T, ratio_n, pe_term, c_sh, gamma_fact, j_hat_par, j_par, j_wall, R_average, I_loc)                                   &
@@ -259,6 +266,7 @@ program jorek2_SOLcurrent
       !resetting running integrals
       L             = 0.d0
       resisty       = 0.d0
+      resisty_jorek = 0.d0
       pe_integral   = 0.d0
       pressure_drop = 0.d0
 
@@ -499,6 +507,10 @@ program jorek2_SOLcurrent
         
         L             = L             +  1.d0                 * dr
         resisty       = resisty       + (nu_ei / ne )         * dr !1/(n_e \tau_ei) = \nu_ei / n_e
+        if (use_jorek_eta) then
+          call resistivity(eta, P(3), T_corr, T_max_eta, T_0, 1.d0, lnA, eta_T_loc)
+          resisty_jorek = resisty_jorek + eta_T_loc * eta_SI_fac * dr
+        end if
         pe_integral   = pe_integral   + (1 / ne) * par_grad_p * dr
         pressure_drop = pressure_drop + par_grad_p            * dr !useful sanity check for debugging
         R_old = R
@@ -523,7 +535,9 @@ program jorek2_SOLcurrent
       Te_e = max(Te_e, 0.1d0)
       Phi_e = p_line
       
-      if(resisty .ne. 0.d0) then  
+      if (use_jorek_eta .and. resisty_jorek .ne. 0.d0) then
+        av_sigma = L / resisty_jorek                            ! 1/<eta> along the line, the run's own resistivity
+      else if(resisty .ne. 0.d0) then  
         av_sigma = L * (lambda11 * EL_CHG**2 / MASS_ELECTRON) / resisty
       else
         av_sigma = 0.d0
