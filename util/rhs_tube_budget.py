@@ -174,7 +174,8 @@ def closing_profile(args, pts, cen, area, cval, fields, fld, R, Z, inside, t_now
     ax.plot(x, pre * 1e-3, color="#b03a2e", lw=1.6, label=r"$\nabla B$ (pressure) current deposited in the tube")
     if np.any(np.abs(oth) > 0.02 * np.max(np.abs(vis))):
         ax.plot(x, oth * 1e-3, color="0.5", lw=1.2, label="other terms")
-    ax.plot(x, (vis + pre + oth) * 1e-3, color="0.3", lw=1.0, ls=":", label="sum of the deposits (= dashed by construction)")
+    ax.plot(x, (Iin + Iout - vis - pre - oth) * 1e-3, color="0.3", lw=1.4, ls=":",
+            label="plates minus all cross-field deposits (charge-conservation residual)")
     ax.axhline(0, color="0.5", lw=0.6)
     ax.set_xlabel(r"$\Psi_N$ (band centre)"); ax.set_ylabel(f"current per band [kA]")
     ax.legend(frameon=False, fontsize=8)
