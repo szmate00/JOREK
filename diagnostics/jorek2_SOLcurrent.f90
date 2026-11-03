@@ -139,21 +139,29 @@ program jorek2_SOLcurrent
 
   element_neighbours = 0
 
-  !$omp parallel do default(none)                              &
-  !$omp shared(node_list, element_list, element_neighbours)    &
-  !$omp private(j, iside_i, iside_j)
+  ! The restart file carries the grid's own neighbour table (element%neighbours, same side convention: side i joins
+  ! vertices i and i+1; verified to coincide with the pairing below on an AUG x-point grid). Use it when present;
+  ! the all-pairs search is O(n_elements^2) and takes hours on a 50 000 element grid.
   do i=1,element_list%n_elements
-    
-    do j=i+1,element_list%n_elements
-      
-      if (neighbours(node_list,element_list%element(i),element_list%element(j),iside_i,iside_j)) then
-        element_neighbours(iside_i,i) = j
-        element_neighbours(iside_j,j) = i
-      endif
-      
-    enddo
+    element_neighbours(:,i) = element_list%element(i)%neighbours(1:4)
   enddo
-  !$omp end parallel do
+  if ( all(element_neighbours == 0) ) then
+    write(*,*) '  (no neighbour table in the restart: all-pairs search, O(n_elements^2))'
+    !$omp parallel do default(none)                              &
+    !$omp shared(node_list, element_list, element_neighbours)    &
+    !$omp private(j, iside_i, iside_j)
+    do i=1,element_list%n_elements
+      do j=i+1,element_list%n_elements
+        if (neighbours(node_list,element_list%element(i),element_list%element(j),iside_i,iside_j)) then
+          element_neighbours(iside_i,i) = j
+          element_neighbours(iside_j,j) = i
+        endif
+      enddo
+    enddo
+    !$omp end parallel do
+  else
+    write(*,*) '  (taken from the restart file)'
+  endif
 
   ! maximum stepsize delta_phi (stepsize is automatically made smaller if an element boundary is crossed)
   delta_phi = 2.d0 * PI / float(n_period*n_phi_steps)
