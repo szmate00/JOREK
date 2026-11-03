@@ -92,6 +92,7 @@ def check_line(pts, fields, fld, R, Z, inside, F0):
     kj = [k for k in fields if k.endswith("JxB")][0]; kp = [k for k in fields if k.endswith("grad_p")][0]
     print(f"\ncheck along the outer midplane, Z = {Zax:.3f} m: VTK c*R against the strong forms from the rectangle")
     print(f"  {'R [m]':>7s} {'Psi_N':>7s} {'JxB vtk*R':>12s} {'[psi,j]':>12s} {'ratio':>10s} {'grad_p vtk*R':>13s} {'-[R2,p]':>12s} {'ratio':>10s}")
+    ratios = []
     for i in sel[:: max(1, sel.size // 14)]:
         Rl = R[i]
         d = np.hypot(pts[:, 0] - Rl, pts[:, 1] - Zax)
@@ -99,6 +100,12 @@ def check_line(pts, fields, fld, R, Z, inside, F0):
         vj = np.mean(fields[kj][near]) * Rl; vp = np.mean(fields[kp][near]) * Rl
         print(f"  {Rl:7.3f} {fld['Psi_N'][i, jz]:7.4f} {vj:12.3e} {jxb_strong[i, jz]:12.3e} {vj / jxb_strong[i, jz]:10.3e}"
               f" {vp:13.3e} {gp_strong[i, jz]:12.3e} {vp / gp_strong[i, jz]:10.3e}")
+        if 1.05 <= fld["Psi_N"][i, jz] <= 1.12 and np.isfinite(gp_strong[i, jz]) and gp_strong[i, jz] != 0:
+            ratios.append(vp / gp_strong[i, jz])
+    W = float(np.median(ratios)) if ratios else np.nan
+    print(f"  weight of the VTK terms (median grad_p ratio, Psi_N 1.05..1.12): W = {W:.3e}; absolute current of a term"
+          f" = -(2 pi/(mu0 F0)) * integral / W")
+    return W
 
 
 def main():
@@ -132,8 +139,7 @@ def main():
     fld, R, Z, inside, t_now = read_rectangle(args.rect, exprs)
     fld["_beta"] = cc.unmirror_psin(fld, inside)
     bands = [tuple(float(x) for x in b.split(":")) for b in args.bands]
-    if args.check_line:
-        check_line(pts, fields, fld, R, Z, inside, args.F0)
+    W = check_line(pts, fields, fld, R, Z, inside, args.F0) if args.check_line else np.nan
     fig, ax = plt.subplots(len(bands), 1, figsize=(8, 3.6 * len(bands)), squeeze=False, constrained_layout=True)
     for r, (a, b) in enumerate(bands):
         tb = cc.tube_budget(R, Z, fld, inside, a, b, args.F0, args.points, args.gap, 1.0)
@@ -159,13 +165,17 @@ def main():
         top = max(abs(v) for v in integ.values())
         print(f"\nband {a}:{b}, L = {tb['L']:.2f} m, {idx.size} cells in the tube between the windows; "
               f"dI_par (rectangle) = {dIpar * 1e-3:+.3f} kA")
-        print(f"  {'term':28s}{'integral':>14s}{'/ JxB':>10s}{'entering [kA]':>15s}")
+        absW = (2 * np.pi / (MU0 * args.F0)) / W if np.isfinite(W) else np.nan          # A per unit integral, from the calibration
+        print(f"  {'term':28s}{'integral':>14s}{'/ JxB':>10s}{'entering [kA]':>15s}{'[kA, W-calib.]':>16s}")
         tot = 0.0
         for k, v in sorted(integ.items(), key=lambda kv: -abs(kv[1])):
             tot += v
             ent = -v * scale * 1e-3 if not k.endswith("JxB") else np.nan             # entering by carrier X = -int div J_X
-            print(f"  {k.split('__')[-1]:28s}{v:14.4e}{v / I_jxb:10.3f}{ent:15.3f}")
+            entW = (-v if not k.endswith("JxB") else v) * absW * 1e-3
+            print(f"  {k.split('__')[-1]:28s}{v:14.4e}{v / I_jxb:10.3f}{ent:15.3f}{entW:16.3f}")
         print(f"  {'sum (residual of the step)':28s}{tot:14.4e}{tot / I_jxb:10.3f}")
+        if np.isfinite(W):
+            print(f"  W-calibrated: JxB = parallel current gained = {I_jxb * absW * 1e-3:+.3f} kA against {dIpar * 1e-3:+.3f} kA from the rectangle")
         print("  entering = current the term deposits in the tube, with the JxB term set equal to dI_par; the time term"
               " (zeta_timevol) is the polarisation current; a large tg_num/visco_num share means numerical closure.")
         # cumulative along the tube
