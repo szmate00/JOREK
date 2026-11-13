@@ -256,6 +256,14 @@ if (my_id .eq. 0) then
     freeboundary= .false.
   end if
 
+  ! --- Row swap of the wall rows (mod_boundary_conditions): a boundary type with dirichlet%psi and a free zj puts
+  ! --- the dpsi = 0 penalty into the zj row and lets the induction equation set zj. The psi row then has to be the
+  ! --- plasma's own induction row on every harmonic, which it is not in free boundary (vacuum response in the zj rows).
+  if ( freeboundary .and. any(bcs(:)%dirichlet%psi .and. .not. bcs(:)%dirichlet%zj) ) then
+    write(*,*) 'ERROR: a boundary type with dirichlet%psi = .t. and dirichlet%zj = .f. (zj set by the induction row) is not compatible with freeboundary, EXITING!'
+    call jorek_exit(my_id)
+  endif
+
   ! --- Calculate normalisation factor for MGI source (related to its toroidal shape)
   ns_tor_norm = ns_deltaphi * PI**0.5 * ERF(PI/ns_deltaphi)
 

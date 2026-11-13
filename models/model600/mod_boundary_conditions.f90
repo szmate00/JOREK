@@ -75,7 +75,7 @@ real*8  :: ps0_b, T0_b, Ti0_b, Te0_b, u0_b, Vpar0_b, Vpar0_bb, T0_bb, Ti0_bb, Te
 real*8  :: Btot, grad_psi, u0_s, u0_t, u0_x, u0_y
 real*8  :: element_size_s, element_size_t, element_size_0, element_size_3
 real*8  :: H1(2,n_degrees_1d), H1_s(2,n_degrees_1d), H1_ss(2,n_degrees_1d)
-integer :: i, in, iv, iv2, iv3, inode, inode2, inode3, k
+integer :: i, in, iv, iv2, iv3, inode, inode2, inode3, k, i_var1, i_var2
 integer :: index_large_i, index_node, index_node2, index_node3, ielm
 integer(kind=int_all) :: ijA_position,ijA_position2
 integer :: ilarge2, kv, kT, kTi, kTe, ku, kn, ilarge_vv, ilarge_vT, ilarge_vus, ilarge_vn
@@ -335,6 +335,18 @@ do i=1, n_local_elms !=== do elements
 
 !            if ((k.eq.7) .and. (node_list%node(inode)%boundary .eq. 3)) cycle  !=== better included for ITER extended wall
 
+            ! --- Row swap (J. Artola, b59a649ce): the Dirichlet penalty of a fixed variable is written into the row of
+            ! --- a free partner variable, so that the fixed variable's own equation stays live and determines the free one.
+            ! ---   psi fixed, zj free: entry (row zj, column psi) -> the zj row says dpsi = 0, the psi row (induction
+            ! ---   equation, no time derivative at a fixed psi) becomes the parallel Ohm's law that sets zj at the wall.
+            ! ---   u fixed, w free: entry (row w, column u) -> the vorticity equation sets w at the wall.
+            i_var1 = k ; i_var2 = k
+            if ( (k == var_psi) .and. (.not. bcs(bnd_type)%dirichlet%zj) ) then
+              i_var1 = var_zj ; i_var2 = var_psi
+            else if ( (k == var_u) .and. (.not. bcs(bnd_type)%dirichlet%w) ) then
+              i_var1 = var_w  ; i_var2 = var_u
+            endif
+
             ! --- Fix derivatives in one direction
             do kk = 1,(n_order+1)/2
               if ( (iv_dir .eq. 3) .and. (kk .gt. 1) ) cycle ! do only t-derivatives and node value
@@ -343,7 +355,7 @@ do i=1, n_local_elms !=== do elements
                 index_tmp = node_indices(kk,ll)
                 index_node = node_list%node(inode)%index(index_tmp)
                 call boundary_conditions_add_one_entry(                 &
-                       index_node, k, in, index_node, k, in,            &
+                       index_node, i_var1, in, index_node, i_var2, in,  &
                        zbig, index_min, index_max, a_mat)
               enddo
             enddo
@@ -356,8 +368,11 @@ do i=1, n_local_elms !=== do elements
             if ( ( loop_voltage .ne. 0.d0 ) ) then
               if ( (k == var_psi) .and. (in == 1) ) then
                 index_node = node_list%node(inode)%index(1)
+                ! --- the loop voltage drives the dpsi penalty, so it goes to the row that carries it (zj if swapped)
+                i_var1 = var_psi
+                if ( bcs(bnd_type)%dirichlet%psi .and. (.not. bcs(bnd_type)%dirichlet%zj) ) i_var1 = var_zj
                 call boundary_conditions_add_RHS(       &
-                          index_node, k, in,     &
+                          index_node, i_var1, in,     &
                           index_min, index_max,  &
                           RHS_loc, ZBIG*(loop_voltage*sqrt(MU_ZERO*central_density*central_mass*ATOMIC_MASS_UNIT*1.d20))* tstep, &
                           a_mat%i_tor_min, a_mat%i_tor_max)
