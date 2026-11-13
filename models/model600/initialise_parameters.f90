@@ -261,7 +261,7 @@ if (my_id .eq. 0) then
   ! --- plasma's own induction row on every harmonic, which it is not in free boundary (vacuum response in the zj rows).
   if ( freeboundary .and. any(bcs(:)%dirichlet%psi .and. .not. bcs(:)%dirichlet%zj) ) then
     write(*,*) 'ERROR: a boundary type with dirichlet%psi = .t. and dirichlet%zj = .f. (zj set by the induction row) is not compatible with freeboundary, EXITING!'
-    call jorek_exit(my_id)
+    stop
   endif
 
   ! --- Calculate normalisation factor for MGI source (related to its toroidal shape)
