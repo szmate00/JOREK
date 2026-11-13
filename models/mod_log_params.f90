@@ -832,6 +832,16 @@ write(*,'(1x,a)',advance='no') ' USE_DOMM            : '
     write(*,REAL_FMT) 'vpar_smoothing_coef   ', vpar_smoothing_coef(:)
   end if
   write(*,REAL_FMT) 'min_sheath_angle      ', min_sheath_angle     
+  if ( any(bcs(:)%floating_u) .or. any(bcs(:)%sheath_u) ) then
+    write(*,REAL_FMT) 'sheath_Lambda         ', sheath_Lambda
+    write(*,REAL_FMT) 'sheath_V_wall         ', sheath_V_wall
+  endif
+  if ( any(bcs(:)%floating_u) ) write(*,'(1X,A,30I3)') 'floating_u on boundary types:', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%floating_u )
+  if ( any(bcs(:)%sheath_u) ) then
+    write(*,REAL_FMT) 'sheath_j_ion_slope    ', sheath_j_ion_slope
+    write(*,REAL_FMT) 'sheath_j_e_slope      ', sheath_j_e_slope
+    write(*,'(1X,A,30I3)') 'sheath_u on boundary types:  ', pack( (/ (i, i=1,max_bnd_types) /), bcs(:)%sheath_u )
+  endif
 
   write(*,LOGI_FMT) 'bc_natural_open       ', bc_natural_open
   write(*,LOGI_FMT) 'produce_live_data     ', produce_live_data

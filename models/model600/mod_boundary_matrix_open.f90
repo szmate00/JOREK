@@ -17,6 +17,7 @@ use phys_module
 use corr_neg
 use mod_interp
 use diffusivities, only: get_dperp, get_zkperp
+use mod_floating_u, only: floating_u_norm, sheath_j_norm, wall_node_bn, sheath_u_edge
 
 implicit none
 
@@ -58,6 +59,9 @@ real*8     :: r0, r0_s, r0_t, r0_p, r0_x, r0_y, rho, rho_s, rho_t, rho_x, rho_y
 real*8     :: c_1, c_2, c_3, c_angle, neutral_source
 real*8     :: element_size_ij, element_size_kl, element_size_perp
 real*8     :: grad_t(2), B0_R, B0_Z, factor_cs_bnd_integral
+logical    :: su_on                                              ! sheath edge term (bcs%sheath_u) on this edge
+real*8     :: su_bn(2), sj_an, sj_csat, sj_CT, sj_CV, sj_jsat, sj_ut, sj_G   ! normalisation, j_sat, u - C_V*V_wall, R*B_pol.n*dl
+real*8     :: sc_x, sc_ex, sc_f, sc_dfdu, sc_dfdTe, sc_res, sc_Tc, sc_dTc, sc_drc   ! the characteristic and its derivatives
 logical    :: xpoint2
 integer    :: n_tor_local 
 logical    :: apply_natural_bc(0:n_var)
@@ -128,6 +132,30 @@ apply_natural_bc(:) = .false.
 
 bnd_type1 = nodes(1)%boundary 
 bnd_type2 = nodes(2)%boundary 
+
+! --- Sheath wall current (bcs%sheath_u): the vorticity row of the u value DOFs keeps develop's strong-form parallel
+! --- term and gets the edge integral  oint N (J_sh - J_par b_n) dS, i.e. per unit edge parameter
+! ---   rhs(u) += tstep * v * (zj - j_sh) * G,   G = R B_pol.n dl = ps0_s*normal_sign3,   j_sh = j_sat*f(x),
+! --- which turns the parallel term into its weak form with the sheath current as the wall flux: the row then states
+! --- J_par b_n + J_perp.n = J_sh(Phi) (total current through the wall face = sheath current, SOLPS form). zj at the
+! --- wall comes from the induction row (dirichlet%zj = .f., row swap in mod_boundary_conditions). The edge carries
+! --- the term under the same rule as the release of the u value DOF (sheath_u_edge, from the two end nodes).
+! --- j_sat = c_sat*rho*(+-cs)/|B|, f = 1 - e^x with the tangent continuations sheath_j_ion_slope / sheath_j_e_slope,
+! --- x = Lambda - a_n*(u - C_V*V_wall)/(2Te). Time weights theta, tstep like every natural row; no Zbig, no dl.
+su_on = .false.
+if ( bcs(bnd_type1)%sheath_u .and. bcs(bnd_type2)%sheath_u ) then
+  do i = 1, 2
+    su_bn(i) = wall_node_bn(nodes(i)%x(1,1:3,1:2), nodes(i)%values(1,2,var_psi), nodes(i)%values(1,3,var_psi), &
+                            element%size(vertex(i),2), element%size(vertex(i),3), vertex(i), direction(2) .eq. 3)
+  enddo
+  su_on = sheath_u_edge(bnd_type1, bnd_type2, su_bn(1), su_bn(2))
+endif
+sj_an = 0.d0 ; sj_csat = 0.d0 ; sj_CT = 0.d0 ; sj_CV = 0.d0
+if ( su_on ) then
+  apply_natural_bc(var_u) = .true.
+  call sheath_j_norm(sj_an, sj_csat)
+  call floating_u_norm(sj_an, sj_CT, sj_CV)
+endif
 
 ! --- If one of the nodes has a boundary type where natural BCs are applied, apply boundary integral for the full bnd element
 do i_var=1, n_var
@@ -320,6 +348,37 @@ do ms=1, n_gauss
     factor_cs_bnd_integral = 0.d0
     if (mach_one_bnd_integral) factor_cs_bnd_integral = 1.d0
 
+    ! --- Sheath characteristic at this Gauss point (bcs%sheath_u): j_sh = j_sat*f(x) and its derivatives.
+    ! --- corr_neg-corrected Te and rho as in every natural row; Btot and sign(B.n) lagged.
+    sj_jsat = 0.d0 ; sj_G = 0.d0
+    sc_x = 0.d0 ; sc_ex = 1.d0 ; sc_f = 0.d0 ; sc_dfdu = 0.d0 ; sc_dfdTe = 0.d0 ; sc_res = 0.d0
+    sc_Tc = 1.d0 ; sc_dTc = 1.d0 ; sc_drc = 1.d0
+    if ( su_on ) then
+      sj_G    = ps0_s * normal_sign3
+      sj_jsat = sj_csat * r0_corr * normal_sign * cs0 / Btot
+      sc_Tc   = Te0_corr
+      sc_dTc  = dcorr_neg_temp_dT(Te0)
+      sc_drc  = dcorr_neg_dens_drho(r0)
+      sj_ut   = eq_g(mp,var_u,ms) - sj_CV * sheath_V_wall
+      sc_x    = sheath_Lambda - sj_an * sj_ut / (2.d0*sc_Tc)
+      sc_ex   = exp( min(sc_x, sheath_Lambda) )
+      sc_f    = 1.d0 - sc_ex - sheath_j_ion_slope * min(sc_x, 0.d0)
+      if ( sc_x .lt. sheath_Lambda ) then                            ! d(-e^x)/dx = -e^x, zero at and beyond the cap
+        sc_dfdu  =   sc_ex * sj_an / (2.d0*sc_Tc)
+        sc_dfdTe = - sc_ex * sj_an * sj_ut / (2.d0*sc_Tc**2) * sc_dTc
+      endif
+      if ( sc_x .lt. 0.d0 ) then                                     ! ion side beyond floating: -s*x
+        sc_dfdu  = sc_dfdu  + sheath_j_ion_slope * sj_an / (2.d0*sc_Tc)
+        sc_dfdTe = sc_dfdTe - sheath_j_ion_slope * sj_an * sj_ut / (2.d0*sc_Tc**2) * sc_dTc
+      endif
+      if ( sc_x .gt. sheath_Lambda ) then                            ! beyond electron saturation: -s_e*(x - Lambda)
+        sc_f     = sc_f - sheath_j_e_slope * ( sc_x - sheath_Lambda )
+        sc_dfdu  = sc_dfdu  + sheath_j_e_slope * sj_an / (2.d0*sc_Tc)
+        sc_dfdTe = sc_dfdTe - sheath_j_e_slope * sj_an * sj_ut / (2.d0*sc_Tc**2) * sc_dTc
+      endif
+      sc_res  = eq_g(mp,var_zj,ms) - sj_jsat * sc_f
+    endif
+
     do i=1,2                ! loop over nodes
 
       do j=1,2              ! loop over basis functions
@@ -335,6 +394,9 @@ do ms=1, n_gauss
           if (with_neutrals) then
             rhs_ij(var_rhon) =  v * neutral_source * BigR * dl * tstep     
           endif
+
+          ! --- Sheath wall current (bcs%sheath_u): edge term of the vorticity row, F = + v*(zj - j_sh)*G
+          rhs_ij(var_u) = + v * sc_res * sj_G * tstep
 
           ! --- Most B.C.s need vpar
           if (with_vpar) then
@@ -411,6 +473,21 @@ do ms=1, n_gauss
                 cs_T   = gamma * T  / (2.d0 * cs0)
                 cs_Ti  = gamma * Ti / (2.d0 * cs0)
                 cs_Te  = gamma * Te / (2.d0 * cs0)
+
+                ! --- Sheath wall current: exact columns of F = v*(zj - j_sat*f)*G, amat = -theta*tstep*dF/dX
+                ! --- (amat is assigned per (k,l,in), never accumulated). The zj column is what makes the (u,zj)
+                ! --- coupling the transpose of the induction coupling; it must never be lagged or dropped.
+                amat(var_u,var_zj)  = - v * psi * sj_G * theta * tstep
+                amat(var_u,var_u)   = + v * sj_jsat * sc_dfdu * psi * sj_G * theta * tstep
+                amat(var_u,var_rho) = + v * sj_csat * normal_sign * cs0 / Btot * sc_f * sc_drc * rho * sj_G * theta * tstep
+                if (with_TiTe) then
+                  amat(var_u,var_Ti)  = + v * sj_csat * r0_corr * normal_sign / Btot * sc_f * cs_Ti * sj_G * theta * tstep
+                  amat(var_u,var_Te)  = + v * ( sj_csat * r0_corr * normal_sign / Btot * sc_f * cs_Te &
+                                              + sj_jsat * sc_dfdTe * Te ) * sj_G * theta * tstep
+                else
+                  amat(var_u,var_T)   = + v * ( sj_csat * r0_corr * normal_sign / Btot * sc_f * cs_T &
+                                              + sj_jsat * sc_dfdTe * 0.5d0 * T ) * sj_G * theta * tstep
+                endif
 
                 ! --- Most of natural BCs need vpar
                 if (with_vpar) then

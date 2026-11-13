@@ -95,6 +95,10 @@ subroutine preset_parameters
   Vpar_smoothing        = .false. ! smooth the transitions of Vpar positive/negavtive at B.n
   Vpar_smoothing_coef   = (/0.01d0, 0.d0, 0.d0 /) !(/ 0.01d0, 0.016d0, 0.00575446347d0/)
   min_sheath_angle      = 1.d0   ! 1 degree (not in radians)
+  sheath_Lambda         = 3.d0   ! floating sheath drop, e*Phi/Te
+  sheath_V_wall         = 0.d0   ! wall potential [V]
+  sheath_j_ion_slope    = 0.d0   ! bcs%sheath_u characteristic: 1 = tangent continuation beyond floating
+  sheath_j_e_slope      = 0.d0   ! bcs%sheath_u characteristic: exp(sheath_Lambda) = tangent continuation beyond electron saturation
 
   amix                 = 0.d0
   amix_freeb           = 0.85d0
@@ -386,6 +390,8 @@ subroutine preset_parameters
   bcs(:)%dirichlet%AR      = .true.
   bcs(:)%dirichlet%AZ      = .true.
   bcs(:)%dirichlet%A3      = .true.
+  bcs(:)%floating_u        = .false.
+  bcs(:)%sheath_u          = .false.
 
   bcs(  1)%dirichlet%rho   = .false.
   bcs(4:5)%dirichlet%rho   = .false.

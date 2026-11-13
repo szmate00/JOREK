@@ -3,6 +3,8 @@ subroutine initialise_parameters(my_id, filename)
 
 use tr_module
 use phys_module
+use constants,      only: EL_CHG, MU_ZERO, ATOMIC_MASS_UNIT
+use mod_floating_u, only: floating_u_selftest
 use mod_plasma_functions, only: initialise_reference_parameters
 use vacuum
 use pellet_module
@@ -208,6 +210,8 @@ namelist /in1/  tstep, nstep, tstep_n, nstep_n,                     &
                 fluid_configs, init_particles_only,                 &
                 find_RZ_nearby_iter, find_RZ_nearby_tol,            &
                 min_sheath_angle, bcs, part_kill_ratio,             &
+                sheath_Lambda, sheath_V_wall,                       &
+                sheath_j_ion_slope, sheath_j_e_slope,               &
                 use_sc, add_sources_in_sc, visco_sc_num,            &
                 D_perp_sc_num, D_par_sc_num, ZK_perp_sc_num,        &
                 ZK_par_sc_num, ZK_i_perp_sc_num, ZK_i_par_sc_num,   &
@@ -262,6 +266,47 @@ if (my_id .eq. 0) then
   if ( freeboundary .and. any(bcs(:)%dirichlet%psi .and. .not. bcs(:)%dirichlet%zj) ) then
     write(*,*) 'ERROR: a boundary type with dirichlet%psi = .t. and dirichlet%zj = .f. (zj set by the induction row) is not compatible with freeboundary, EXITING!'
     stop
+  endif
+
+  ! --- Sheath wall current (bcs%sheath_u) and floating potential (bcs%floating_u): consistency of the wall rows
+  if ( any(bcs(:)%sheath_u) .or. any(bcs(:)%floating_u) ) then
+    if ( .not. floating_u_selftest(my_id) ) then
+      write(*,*) 'ERROR: sheath normalisation selftest failed, EXITING!'
+      stop
+    endif
+  endif
+  if ( any(bcs(:)%sheath_u) ) then
+    if ( any(bcs(:)%sheath_u .and. .not. (bcs(:)%dirichlet%psi .and. bcs(:)%dirichlet%u .and. .not. bcs(:)%dirichlet%zj)) ) then
+      write(*,*) 'ERROR: bcs%sheath_u needs dirichlet%psi = .t., dirichlet%u = .t. (the value DOF is released by the switch) and dirichlet%zj = .f. (zj from the induction row), EXITING!'
+      stop
+    endif
+    if ( any(bcs(:)%sheath_u .and. bcs(:)%floating_u) ) then
+      write(*,*) 'ERROR: bcs%sheath_u and bcs%floating_u on the same boundary type, EXITING!'
+      stop
+    endif
+    if ( any(bcs(:)%sheath_u .and. .not. bcs(:)%mach1) ) then
+      write(*,*) 'ERROR: bcs%sheath_u needs the Mach-1 row on the same type (j_sat is the Bohm flux that row imposes), EXITING!'
+      stop
+    endif
+    if ( (time_evol_scheme .ne. 'Gears') .and. (time_evol_scheme .ne. 'implicit Euler') ) then
+      write(*,*) 'ERROR: bcs%sheath_u: the wall induction row is an algebraic constraint on zj and needs theta = 1 (time_evol_scheme = Gears or implicit Euler), EXITING!'
+      stop
+    endif
+    if ( tauIC .eq. 0.d0 ) then
+      write(*,*) 'WARNING: bcs%sheath_u with tauIC = 0: the wall Ohm row has no electron-pressure EMF while the sheath law assumes the electron Boltzmann factor'
+    else if ( abs(tauIC * 2.d0 * EL_CHG * F0 * sqrt(MU_ZERO * central_density * 1.d20 * central_mass * ATOMIC_MASS_UNIT) &
+                  / (central_mass * ATOMIC_MASS_UNIT) - 1.d0) .gt. 1.d-6 ) then
+      write(*,*) 'ERROR: bcs%sheath_u: tauIC must be its physical value 1/a_n = m_i/(2 e F0 sqrt(mu0 rho0)) so that Ohm''s law and the sheath exponent use the same e*Phi/Te, EXITING!'
+      stop
+    endif
+    if ( keep_current_prof ) then
+      write(*,*) 'ERROR: bcs%sheath_u with keep_current_prof: the current source is an EMF in the wall Ohm row, EXITING!'
+      stop
+    endif
+    if ( bootstrap ) then
+      write(*,*) 'ERROR: bcs%sheath_u with bootstrap: Jb is an EMF in the wall Ohm row, EXITING!'
+      stop
+    endif
   endif
 
   ! --- Calculate normalisation factor for MGI source (related to its toroidal shape)

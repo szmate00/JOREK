@@ -37,7 +37,9 @@ use phys_module, only: F0, GAMMA, freeboundary, RMP_on, psi_RMP_cos, dpsi_RMP_co
        RMP_start_time, tstep, RMP_har_cos, RMP_har_sin, T_min,                                             &
        mach_one_bnd_integral, Vpar_smoothing, vpar_smoothing_coef, no_mach1_bc,                            &
        Number_RMP_harmonics, RMP_har_cos_spectrum,RMP_har_sin_spectrum, grid_to_wall, n_wall_blocks, keep_n0_const, &
-       bcs, loop_voltage, central_density, central_mass 
+       bcs, loop_voltage, central_density, central_mass, sheath_V_wall
+use mod_model_settings, only: with_TiTe
+use mod_floating_u, only: floating_u_norm, wall_node_bn, sheath_u_edge
 use tr_module
 use mpi_mod
 use mod_basisfunctions
@@ -98,6 +100,10 @@ integer :: n_rmp_harm, N_rmp_har_block_size
 real*8  :: R_out, Z_out, s_elm, t_elm, QR,QR_s,QR_t,QR_st,QR_ss,QR_tt,QZ,QZ_s,QZ_t,QZ_st,QZ_ss,QZ_tt
 real*8  :: QPs0,QPs0_s,QPs0_t,QPs0_st,QPs0_ss,QPs0_tt
 integer :: ifail, i_elm
+real*8  :: fu_a_n, fu_C_T, fu_C_V, fu_target   ! floating-potential row: u = C_T*Te + C_V*V_wall
+integer :: fu_var_T                            ! temperature trace variable: Te, or T in a single-T build
+logical :: su_edge, su_rel, fu_dof             ! this wall edge carries the sheath term; u value DOF released on this visit; floating row
+real*8  :: su_bn1, su_bn2
 
 real*8  ::   Mach1BC,   Mach1BC_v,   Mach1BC_T,   Mach1BC_u
 real*8  ::  dMach1BC,  dMach1BC_v,  dMach1BC_T,  dMach1BC_Ti, dMach1BC_Te,  dMach1BC_Tb, dMach1BC_ubb
@@ -156,6 +162,11 @@ end if RMPspectrum
 
 zbig        = 1.d12
 zbig_backup = zbig
+
+! --- Floating-potential row constants (mod_floating_u); the temperature trace variable it reads
+call floating_u_norm(fu_a_n, fu_C_T, fu_C_V)
+fu_var_T = var_T
+if ( with_TiTe ) fu_var_T = var_Te
 
 ! --- calculate node_indices
 call calculate_node_indices(node_indices)
@@ -222,6 +233,24 @@ do i=1, n_local_elms !=== do elements
       normal_direction = (/R_mid - R_center, Z_mid - Z_center /) / norm2((/R_mid - R_center, Z_mid - Z_center /))
 
       bnd_type = node_list%node(inode)%boundary
+
+      ! --- Sheath wall current (bcs%sheath_u): does the wall edge inode-inode2 carry the sheath edge term
+      ! --- (mod_boundary_matrix_open)? Both end nodes of sheath_u types and the incidence |b.n| above the gate at both
+      ! --- ends, from the same function BMO uses. The u VALUE DOF is released only if every wall edge of the node
+      ! --- qualifies: this visit releases it when its edge does, and a visit whose edge does not assigns the Zbig
+      ! --- entry, which pins the DOF whatever the other visits did (AND over the wall edges of the node). An edge of
+      ! --- a released node that kept the strong form of the parallel current would add an indefinite operator to
+      ! --- the potential row (doc/sheath_option_a, Sec. 3).
+      su_edge = .false.
+      if ( bcs(bnd_type)%sheath_u ) then
+        su_bn1 = wall_node_bn(node_list%node(inode )%x(1,1:3,1:2), node_list%node(inode )%values(1,2,var_psi), &
+                              node_list%node(inode )%values(1,3,var_psi), element_list%element(ielm)%size(iv ,2),  &
+                              element_list%element(ielm)%size(iv ,3), iv,  s_constant_boundary)
+        su_bn2 = wall_node_bn(node_list%node(inode2)%x(1,1:3,1:2), node_list%node(inode2)%values(1,2,var_psi), &
+                              node_list%node(inode2)%values(1,3,var_psi), element_list%element(ielm)%size(iv2,2),  &
+                              element_list%element(ielm)%size(iv2,3), iv2, s_constant_boundary)
+        su_edge = sheath_u_edge(bnd_type, node_list%node(inode2)%boundary, su_bn1, su_bn2)
+      endif
 
       do in=a_mat%i_tor_min, a_mat%i_tor_max  ! === do n_tor
       
@@ -354,9 +383,32 @@ do i=1, n_local_elms !=== do elements
                 if ( (iv_dir .eq. 2) .and. (ll .gt. 1) ) cycle ! do only s-derivatives and node value
                 index_tmp = node_indices(kk,ll)
                 index_node = node_list%node(inode)%index(index_tmp)
+
+                ! --- Sheath wall current: the u value DOF is released (owned by the vorticity row with its
+                ! --- sheath edge term) when this edge carries the term
+                su_rel = ( k == var_u ) .and. ( index_tmp .eq. 1 ) .and. su_edge
+                if ( su_rel ) cycle
+
                 call boundary_conditions_add_one_entry(                 &
                        index_node, i_var1, in, index_node, i_var2, in,  &
                        zbig, index_min, index_max, a_mat)
+
+                ! --- Floating potential: u = C_T*Te + C_V*V_wall on every u trace DOF of a floating_u type, and on
+                ! --- the u DOFs of a sheath_u type that are not released (the derivative DOFs, and the value DOF
+                ! --- where an edge does not carry the term). The Te column and the RHS make the row exact; V_wall
+                ! --- enters the n=0 value DOF only.
+                fu_dof = bcs(bnd_type)%floating_u .or. bcs(bnd_type)%sheath_u
+                if ( (k == var_u) .and. fu_dof ) then
+                  fu_target = fu_C_T * node_list%node(inode)%values(in, index_tmp, fu_var_T)
+                  if ( (index_tmp .eq. 1) .and. (in .eq. 1) ) fu_target = fu_target + fu_C_V * sheath_V_wall
+                  call boundary_conditions_add_one_entry(                        &
+                         index_node, var_u, in, index_node, fu_var_T, in,        &
+                         - zbig * fu_C_T, index_min, index_max, a_mat)
+                  call boundary_conditions_add_RHS(                              &
+                         index_node, var_u, in, index_min, index_max, RHS_loc,   &
+                         - zbig * ( node_list%node(inode)%values(in, index_tmp, var_u) - fu_target ), &
+                         a_mat%i_tor_min, a_mat%i_tor_max)
+                endif
               enddo
             enddo
             
